@@ -1,6 +1,21 @@
 #+TITLE: Emacs Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes
 
+* System Packages
+#+begin_src emacs-lisp
+;; Auto-install system packages via brew (Mac) or apt (Linux/Docker)
+(use-package system-packages
+  :ensure t
+  :custom
+  (system-packages-package-manager
+   (if (executable-find "brew") 'brew 'apt))
+  (system-packages-use-sudo
+   (not (executable-find "brew"))))
+
+(use-package use-package-ensure-system-package
+  :ensure t)
+#+end_src
+
 * UI & Appearance
 #+begin_src emacs-lisp
 (add-to-list 'default-frame-alist '(inhibit-double-buffering . t))
@@ -20,6 +35,12 @@
 
 * Font
 #+begin_src emacs-lisp
+(unless (find-font (font-spec :name "JetBrains Mono"))
+  (when (executable-find "brew")
+    (start-process "install-font" "*install-font*"
+                   "brew" "install" "--cask" "font-jetbrains-mono")
+    (message "JetBrains Mono: installing in background — restart Emacs when done.")))
+
 (when (find-font (font-spec :name "JetBrains Mono"))
   (set-face-attribute 'default nil :font "JetBrains Mono-13")
   (add-to-list 'default-frame-alist '(font . "JetBrains Mono-13")))
@@ -1054,6 +1075,12 @@
 (setq org-preview-latex-default-process 'dvipng)
 (setq org-format-latex-options
       (plist-put org-format-latex-options :scale 1.5))
+
+;; Auto-install texlive if latex not found (brew only, runs in background)
+(unless (executable-find "latex")
+  (when (executable-find "brew")
+    (start-process "install-texlive" "*install-texlive*" "brew" "install" "texlive")
+    (message "LaTeX not found — installing brew texlive in background. Restart Emacs when done.")))
 #+end_src
 
 * Abbreviations & Skeletons
@@ -1178,8 +1205,12 @@
 
 * Spelling
 #+begin_src emacs-lisp
-(setq ispell-program-name "aspell")
-(setq ispell-dictionary "german")
+(use-package ispell
+  :ensure nil
+  :ensure-system-package (aspell . "aspell")
+  :config
+  (setq ispell-program-name "aspell"
+        ispell-dictionary "german"))
 (add-hook 'org-mode-hook 'turn-on-flyspell 'append)
 #+end_src
 
