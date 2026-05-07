@@ -26,6 +26,8 @@ SCRIPTS=(
   setup-emacs-mac.conf.template
   config.org
   init.el
+  README.md
+  '!STARTHERE.md'
 )
 
 echo "==> Downloading scripts to $DEST/..."
