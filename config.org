@@ -3,6 +3,8 @@
 
 * System Packages
 #+begin_src emacs-lisp
+(message "Loading config... (first start may take a few minutes while packages install)")
+
 ;; Auto-install system packages via brew (Mac) or apt (Linux/Docker)
 (use-package system-packages
   :ensure t
