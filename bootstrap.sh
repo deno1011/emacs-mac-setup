@@ -102,7 +102,15 @@ if [ -n "$CONF_REPO" ]; then
         echo "    Bitwarden unlocked — fetching GitHub token..."
         bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
         _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']; print(f[0].strip() if f else '')" 2>/dev/null) || true
+          | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']
+if f:
+    print(f[0].strip())
+else:
+    print((d.get('login',{}).get('password') or '').strip())
+" 2>/dev/null) || true
       else
         echo "    WARN: Bitwarden unlock failed — falling back to manual token."
       fi
