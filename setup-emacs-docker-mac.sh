@@ -334,6 +334,7 @@ else
   docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
   if [ -f "$SCRIPT_DIR/init.el" ]; then
     docker cp "$SCRIPT_DIR/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
     echo "==> init.el installiert."
   else
     echo "ERROR: ~/init.el nicht gefunden — bootstrap.sh erneut ausführen."
@@ -510,7 +511,8 @@ fi
 [ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
 EOF
   docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
-  docker exec "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
+  docker exec --user root "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/bin/startup-sync.sh
   rm -f "$_SYNC_TMP"
 fi
 
@@ -773,7 +775,7 @@ else
       > /tmp/_gckey_docker
     docker cp /tmp/_gckey_docker "$DOCKER_CONTAINER:/home/emacs/.git-crypt-key"
     docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.git-crypt-key
-    docker exec "$DOCKER_CONTAINER" chmod 600 /home/emacs/.git-crypt-key
+    docker exec --user root "$DOCKER_CONTAINER" chmod 600 /home/emacs/.git-crypt-key
     docker exec "$DOCKER_CONTAINER" git -C "/home/emacs/${GH_REPO}" crypt unlock /home/emacs/.git-crypt-key 2>/dev/null \
       && echo "    git-crypt entsperrt." \
       || echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
