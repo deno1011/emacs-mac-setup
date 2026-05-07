@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
 # --- Emacs-Version prüfen ---
@@ -182,8 +183,8 @@ if [ -n "$GH_USER" ]; then
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
     # config.org aus lokalem Fallback kopieren falls im Repo noch nicht vorhanden
-    if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$HOME/config.org" ]; then
-      cp "$HOME/config.org" "$ICLOUD_REPO_PATH/config.org"
+    if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+      cp "$SCRIPT_DIR/config.org" "$ICLOUD_REPO_PATH/config.org"
       echo "    config.org aus lokalem Fallback kopiert."
     fi
 
@@ -229,8 +230,8 @@ else
     mkdir -p "$EMACS_CONFIG_DIR"
     echo "==> ~/emacs-config/ erstellt."
   fi
-  if [ ! -f "$EMACS_CONFIG_DIR/config.org" ] && [ -f "$HOME/config.org" ]; then
-    cp "$HOME/config.org" "$EMACS_CONFIG_DIR/config.org"
+  if [ ! -f "$EMACS_CONFIG_DIR/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config.org"
     echo "==> config.org nach ~/emacs-config/ kopiert."
   elif [ -f "$EMACS_CONFIG_DIR/config.org" ]; then
     skip "config.org (already present)"
@@ -244,11 +245,11 @@ if [ -f "$EMACS_INIT" ]; then
   skip "init.el"
 else
   mkdir -p "$HOME/.emacs.d"
-  if [ -f "$HOME/init.el" ]; then
-    cp "$HOME/init.el" "$EMACS_INIT"
+  if [ -f "$SCRIPT_DIR/init.el" ]; then
+    cp "$SCRIPT_DIR/init.el" "$EMACS_INIT"
     echo "==> init.el installiert."
   else
-    echo "ERROR: ~/init.el nicht gefunden — bootstrap.sh erneut ausführen."
+    echo "ERROR: init.el nicht gefunden — bootstrap.sh erneut ausführen."
     exit 1
   fi
 fi

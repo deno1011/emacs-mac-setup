@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
 # --- Konfiguration laden ---
@@ -314,8 +315,8 @@ else
 
   # Copy init.el from host into container
   docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
-  if [ -f "$HOME/init.el" ]; then
-    docker cp "$HOME/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
+  if [ -f "$SCRIPT_DIR/init.el" ]; then
+    docker cp "$SCRIPT_DIR/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
     echo "==> init.el installiert."
   else
     echo "ERROR: ~/init.el nicht gefunden — bootstrap.sh erneut ausführen."
