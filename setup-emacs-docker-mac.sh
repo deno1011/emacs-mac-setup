@@ -143,11 +143,22 @@ else
 fi
 
 # --- Docker context ---
-# Create context if missing (happens when Colima was started outside this script)
+# Resolve Colima socket path (varies by version/platform)
+COLIMA_SOCK=""
+for CANDIDATE in \
+    "$HOME/.colima/docker.sock" \
+    "$HOME/.colima/default/docker.sock"; do
+  [ -S "$CANDIDATE" ] && COLIMA_SOCK="$CANDIDATE" && break
+done
+if [ -z "$COLIMA_SOCK" ]; then
+  echo "ERROR: Colima socket not found — is Colima running?"
+  exit 1
+fi
+# Create context if missing or broken
 if ! docker context inspect colima &>/dev/null 2>&1; then
   echo "==> Creating Docker context for Colima..."
-  docker context create colima \
-    --docker "host=unix://${HOME}/.colima/default/docker.sock" &>/dev/null || true
+  docker context rm colima 2>/dev/null || true
+  docker context create colima --docker "host=unix://${COLIMA_SOCK}"
 fi
 if docker context show 2>/dev/null | grep -q "colima"; then
   skip "Docker context (already set to colima)"
