@@ -3,9 +3,9 @@
 # --- Emacs-Version prüfen ---
 echo "==> Emacs-Check..."
 PLUS_INSTALLED=false
-if brew list | grep -q "emacs-plus"; then
+if brew list | grep -q "emacs-plus@30"; then
   PLUS_INSTALLED=true
-  echo "  HINWEIS: emacs-plus ist ebenfalls installiert — bleibt erhalten."
+  echo "  HINWEIS: emacs-plus@30 ist ebenfalls installiert — bleibt erhalten."
 fi
 if ! brew list emacs-mac@30exp &>/dev/null 2>&1; then
   echo "  emacs-mac@30exp ist nicht installiert — nichts zu tun."
@@ -67,7 +67,7 @@ if [ "$PLUS_INSTALLED" = false ]; then
 else
   echo "  Shared resources (~/emacs.d, iCloud repo, packages) bleiben erhalten (emacs-plus noch installiert)."
   echo "  emacs-plus wird als aktive Version verlinkt..."
-  brew link --overwrite emacs-plus 2>/dev/null || true
+  brew link --overwrite emacs-plus@30 2>/dev/null || true
 fi
 
 echo ""
