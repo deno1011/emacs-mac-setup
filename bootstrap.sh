@@ -53,14 +53,70 @@ if [ -n "$CONF_REPO" ]; then
     echo "    Installing GitHub CLI..."
     brew install gh &>/dev/null
   fi
-  # Authenticate gh if not yet done
+
+  # Authenticate gh — fetch token from Bitwarden automatically
   if ! gh auth status &>/dev/null 2>&1; then
-    echo "    GitHub Personal Access Token eingeben (Settings → Developer settings → PAT Classic, scope: repo):"
-    printf "    Token: "
-    read -rs _GH_TOKEN
-    echo ""
-    echo "$_GH_TOKEN" | gh auth login --with-token
-    unset _GH_TOKEN
+    echo "    Authenticating GitHub CLI..."
+
+    # Defaults matching setup-emacs-mac.conf.template
+    _BS_BW_KC_SVC="bitwarden-master"
+    _BS_BW_KC_ACC="$USER"
+    _BS_BW_GH_ITEM="github-cli-token"
+    _BS_BW_FIELD="Key"
+
+    if ! command -v bw &>/dev/null; then
+      echo "    Installing Bitwarden CLI..."
+      brew install bitwarden-cli &>/dev/null
+    fi
+
+    _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
+    if [ -z "$_BS_BW_MASTER" ]; then
+      printf "    Bitwarden master password: "
+      read -rs _BS_BW_MASTER
+      echo ""
+    fi
+
+    _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
+    export __BS_BW_MASTER="$_BS_BW_MASTER"
+    _BS_BW_SESSION=""
+
+    if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
+      printf "    Bitwarden email: "
+      read -r _BS_BW_EMAIL
+      _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+      if [ -z "$_BS_BW_SESSION" ]; then
+        echo "    Auto-login failed (2FA?) — running interactive login:"
+        unset __BS_BW_MASTER
+        bw login
+        export __BS_BW_MASTER="$_BS_BW_MASTER"
+        _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+      fi
+    fi
+    if [ -z "$_BS_BW_SESSION" ]; then
+      _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+    fi
+    unset __BS_BW_MASTER
+
+    _BS_GH_TOKEN=""
+    if [ -n "$_BS_BW_SESSION" ]; then
+      bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
+      _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']; print(f[0].strip() if f else '')" 2>/dev/null) || true
+    fi
+
+    if [ -n "$_BS_GH_TOKEN" ]; then
+      echo "$_BS_GH_TOKEN" | gh auth login --with-token
+      echo "    GitHub CLI authenticated via Bitwarden."
+    else
+      echo "    Token not in Bitwarden — enter GitHub PAT manually:"
+      echo "    (Settings → Developer settings → Personal access tokens → Classic, scope: repo)"
+      printf "    Token: "
+      read -rs _BS_GH_TOKEN
+      echo ""
+      echo "$_BS_GH_TOKEN" | gh auth login --with-token
+    fi
+    unset _BS_GH_TOKEN _BS_BW_SESSION _BS_BW_MASTER _BS_BW_EMAIL _BS_BW_STATUS \
+          _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
   fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     if gh repo clone "$CONF_REPO" "$CONF_TMP/conf" &>/dev/null 2>&1; then
