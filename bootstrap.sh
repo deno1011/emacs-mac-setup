@@ -54,7 +54,7 @@ if [ -n "$CONF_REPO" ]; then
     fi
   fi
   if [ "$CONF_PULLED" = false ]; then
-    if git clone "https://github.com/${CONF_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
+    if GIT_TERMINAL_PROMPT=0 git clone "https://github.com/${CONF_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
       CONF_PULLED=true
     fi
   fi
