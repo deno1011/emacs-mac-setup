@@ -68,8 +68,7 @@ if [ -n "$CONF_REPO" ]; then
       echo "    Installing Bitwarden CLI..."
       brew install bitwarden-cli &>/dev/null
       # Ensure bw is in PATH after fresh install
-      [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-      [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     fi
 
     _BS_GH_TOKEN=""
