@@ -211,7 +211,7 @@ if [ -n "$GH_USER" ]; then
 REPO_ORG="$(git rev-parse --show-toplevel)/org"
 BEORG="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
 [ -d "$BEORG" ] && rsync -a --delete "$REPO_ORG/" "$BEORG/" 2>/dev/null || true
-git push origin main
+git push origin main &
 HOOKEOF
     chmod +x "$ICLOUD_REPO_PATH/.git/hooks/post-commit"
     echo "    iCloud-Repo eingerichtet."

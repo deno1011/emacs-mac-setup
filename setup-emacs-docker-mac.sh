@@ -254,7 +254,7 @@ else
 REPO_ORG="$(git rev-parse --show-toplevel)/org"
 BEORG="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
 [ -d "$BEORG" ] && rsync -a --delete "$REPO_ORG/" "$BEORG/" 2>/dev/null || true
-git push origin main
+git push origin main &
 HOOKEOF
   chmod +x "$ICLOUD_REPO_PATH/.git/hooks/post-commit"
 
@@ -476,7 +476,7 @@ fi
 # Set up post-commit hook (beorg sync + auto-push)
 HOOK="$REPO/.git/hooks/post-commit"
 if [ ! -f "$HOOK" ]; then
-  printf '"'"'#!/bin/bash\nREPO="$(git rev-parse --show-toplevel)"\nrsync -a --delete "$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true\n'"'"' > "$HOOK"
+  printf '"'"'#!/bin/bash\nREPO="$(git rev-parse --show-toplevel)"\nrsync -a --delete "$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n'"'"' > "$HOOK"
   chmod +x "$HOOK"
 fi
 
