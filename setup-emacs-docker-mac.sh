@@ -478,30 +478,34 @@ if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/bin/startup-sync.sh 2>/de
 else
   echo "==> startup-sync.sh im Container erstellen..."
   docker exec "$DOCKER_CONTAINER" mkdir -p /home/emacs/bin
-  docker exec "$DOCKER_CONTAINER" bash -c 'cat > /home/emacs/bin/startup-sync.sh << '"'"'SYNCEOF'"'"'
+  # Write via tmpfile so $GH_USER/$GH_REPO are expanded by the host shell
+  _SYNC_TMP=$(mktemp)
+  cat > "$_SYNC_TMP" << EOF
 #!/bin/bash
 REPO="/home/emacs/emacs-config"
 BEORG="/beorg"
-GH_URL="https://github.com/$GH_USER/$GH_REPO.git"
+GH_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
 
 # Clone if not present, pull if present
-if [ ! -d "$REPO/.git" ]; then
-  git clone "$GH_URL" "$REPO" 2>/dev/null || true
+if [ ! -d "\$REPO/.git" ]; then
+  git clone "\$GH_URL" "\$REPO" 2>/dev/null || true
 else
-  cd "$REPO" && git pull origin main 2>/dev/null || true
+  cd "\$REPO" && git pull origin main 2>/dev/null || true
 fi
 
 # Set up post-commit hook (beorg sync + auto-push)
-HOOK="$REPO/.git/hooks/post-commit"
-if [ ! -f "$HOOK" ]; then
-  printf '"'"'#!/bin/bash\nREPO="$(git rev-parse --show-toplevel)"\nrsync -a --delete "$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n'"'"' > "$HOOK"
-  chmod +x "$HOOK"
+HOOK="\$REPO/.git/hooks/post-commit"
+if [ ! -f "\$HOOK" ]; then
+  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
+  chmod +x "\$HOOK"
 fi
 
 # Sync org files to beorg on startup
-[ -d "$BEORG" ] && [ -d "$REPO/org" ] && rsync -a --delete "$REPO/org/" "$BEORG/" 2>/dev/null || true
-SYNCEOF'
+[ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
+EOF
+  docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
   docker exec "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
+  rm -f "$_SYNC_TMP"
 fi
 
 # --- Create macOS app bundle in ~/Applications ---
