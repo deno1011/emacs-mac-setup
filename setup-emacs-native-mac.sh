@@ -179,20 +179,6 @@ if [ -n "$GH_USER" ]; then
       echo "    config.org aus lokalem Fallback kopiert."
     fi
 
-    GC_KEY=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
-    if [ -n "$GC_KEY" ]; then
-      if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
-        git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null \
-          && echo "    git-crypt entsperrt." \
-          || echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
-      else
-        echo "WARN: Bitwarden-Wert ist kein gültiges Base64."
-      fi
-      rm -f /tmp/gckey
-    else
-      echo "WARN: git-crypt Key nicht in Bitwarden gefunden."
-    fi
-
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
     git -C "$ICLOUD_REPO_PATH" config user.name "$GIT_NAME"
 
@@ -205,6 +191,30 @@ git push origin main &
 HOOKEOF
     chmod +x "$ICLOUD_REPO_PATH/.git/hooks/post-commit"
     echo "    iCloud-Repo eingerichtet."
+  fi
+
+  # --- git-crypt: immer prüfen und ggf. entsperren ---
+  _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/org" -name "*.org" 2>/dev/null | head -1)
+  if [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data"; then
+    echo "==> org/ Dateien verschlüsselt — git-crypt entsperren..."
+    GC_KEY=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+    if [ -n "$GC_KEY" ]; then
+      if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
+        if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
+          git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
+          echo "    git-crypt entsperrt und org/ ausgecheckt."
+        else
+          echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
+        fi
+      else
+        echo "WARN: Bitwarden-Wert ist kein gültiges Base64."
+      fi
+      rm -f /tmp/gckey
+    else
+      echo "WARN: git-crypt Key nicht in Bitwarden gefunden."
+    fi
+  else
+    skip "git-crypt (org/ bereits entschlüsselt)"
   fi
 
   if [ -L "$EMACS_CONFIG_DIR" ] && [ "$(readlink "$EMACS_CONFIG_DIR")" = "$ICLOUD_REPO_PATH" ]; then
