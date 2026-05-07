@@ -68,8 +68,8 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `init.el` | Emacs entry point — copied to `~/.emacs.d/init.el` |
 | `config.org` | Default Emacs config — used when `emacs-config` repo is empty |
 | `fill-config.sh` | Interactive guided config fill |
-| `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries |
-| `setup-secrets.sh` | (Re-)write `~/.emacs.d/secrets.el` from Bitwarden |
+| `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
+| `setup-secrets.sh` | Re-fetch Anthropic API key from Bitwarden and rewrite `~/.emacs.d/secrets.el` |
 
 ### Install
 
@@ -197,6 +197,23 @@ Both use the same GitHub repo. Concurrent edits lead to git conflicts on the nex
 
 **`emacs` in the terminal while a GUI instance is running:**  
 The Homebrew wrapper starts a second instance with the same config.
+
+---
+
+## beorg iPhone Setup
+
+**One-time configuration in the beorg app:**
+
+1. Open beorg on iPhone
+2. Tap the **gear icon** (Settings) → **Files**
+3. Set **Directory** to: `iCloud Drive → beorg → Documents → org`
+   - This is the folder beorg creates automatically on first launch
+   - On Mac the full path is: `~/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org/`
+4. Tap **Done**
+
+The setup scripts sync the repo's `org/` folder to that path automatically. beorg picks up changes via iCloud within seconds.
+
+> If the `org/` folder is empty on first launch (fresh repo), beorg will show no files — that is expected. Add or commit an `.org` file in Emacs and it will appear in beorg after the next sync.
 
 ---
 
