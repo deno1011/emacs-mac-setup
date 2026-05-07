@@ -198,6 +198,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     ripgrep \
+    aspell \
+    aspell-de \
+    aspell-en \
     texlive \
     texlive-latex-extra \
     texlive-fonts-recommended \
@@ -423,27 +426,9 @@ else
   fi
 fi
 
-# --- Install Emacs packages ---
-if docker exec "$DOCKER_CONTAINER" test -d /home/emacs/.emacs.d/elpa 2>/dev/null; then
-  skip "Emacs packages (already installed)"
-else
-  echo "==> Installing Emacs packages (this may take a few minutes)..."
-  docker exec "$DOCKER_CONTAINER" emacs --batch --eval "
-(require 'package)
-(setq package-archives '((\"melpa\"  . \"https://melpa.org/packages/\")
-                         (\"gnu\"    . \"https://elpa.gnu.org/packages/\")
-                         (\"nongnu\" . \"https://elpa.nongnu.org/packages/\")))
-(package-initialize)
-(package-refresh-contents)
-(dolist (pkg '(use-package magit doom-themes doom-modeline git-auto-commit-mode))
-  (unless (package-installed-p pkg)
-    (package-install pkg)))
-(message \"Packages installed.\")
-"
-  echo "==> Verifying..."
-  docker exec "$DOCKER_CONTAINER" emacs --version
-  docker exec "$DOCKER_CONTAINER" git --version
-fi
+echo "==> Verifying container..."
+docker exec "$DOCKER_CONTAINER" emacs --version
+docker exec "$DOCKER_CONTAINER" git --version
 
 # --- git-crypt key (repo must exist first, cloned above) ---
 if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/null; then
