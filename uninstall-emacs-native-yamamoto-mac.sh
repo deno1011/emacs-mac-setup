@@ -46,8 +46,6 @@ if [ "$PLUS_INSTALLED" = false ]; then
   brew uninstall --ignore-dependencies bitwarden-cli 2>/dev/null && echo "    bitwarden-cli removed." || echo "    bitwarden-cli not found."
   brew uninstall --ignore-dependencies gh 2>/dev/null && echo "    gh removed." || echo "    gh not found."
   brew uninstall --ignore-dependencies git-crypt 2>/dev/null && echo "    git-crypt removed." || echo "    git-crypt not found."
-  brew uninstall --ignore-dependencies aspell 2>/dev/null && echo "    aspell removed." || echo "    aspell not found."
-  brew uninstall --cask font-jetbrains-mono 2>/dev/null && echo "    JetBrains Mono removed." || echo "    JetBrains Mono not found."
 
   echo "==> Clearing global git identity..."
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
