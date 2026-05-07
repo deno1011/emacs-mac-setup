@@ -500,6 +500,12 @@ if [ ! -f "\$HOOK" ]; then
   chmod +x "\$HOOK"
 fi
 
+# Unlock git-crypt if key is present and repo is locked
+KEY="\$HOME/.git-crypt-key"
+if [ -f "\$KEY" ] && [ -d "\$REPO/.git" ]; then
+  git -C "\$REPO" crypt unlock "\$KEY" 2>/dev/null || true
+fi
+
 # Sync org files to beorg on startup
 [ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
 EOF
@@ -752,6 +758,29 @@ if docker exec "$DOCKER_CONTAINER" git config --global user.email 2>/dev/null | 
 else
   echo "==> Git-Identität im Container setzen..."
   docker exec "$DOCKER_CONTAINER" bash -c "git config --global user.email '${GIT_EMAIL}' && git config --global user.name '${GIT_NAME}'"
+fi
+
+# --- git-crypt im Container entsperren ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/null; then
+  skip "git-crypt key (already stored in container)"
+else
+  echo "==> git-crypt Key aus Bitwarden holen und Container entsperren..."
+  GC_KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" 2>/dev/null \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')") || true
+  if [ -n "$GC_KEY_B64" ]; then
+    echo "$GC_KEY_B64" | tr -d '[:space:]' \
+      | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
+      > /tmp/_gckey_docker
+    docker cp /tmp/_gckey_docker "$DOCKER_CONTAINER:/home/emacs/.git-crypt-key"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.git-crypt-key
+    docker exec "$DOCKER_CONTAINER" chmod 600 /home/emacs/.git-crypt-key
+    docker exec "$DOCKER_CONTAINER" git -C "/home/emacs/${GH_REPO}" crypt unlock /home/emacs/.git-crypt-key 2>/dev/null \
+      && echo "    git-crypt entsperrt." \
+      || echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
+    rm -f /tmp/_gckey_docker
+  else
+    echo "WARN: git-crypt Key nicht in Bitwarden gefunden — org/ Dateien bleiben verschlüsselt."
+  fi
 fi
 
 # --- GitHub credentials im Container einrichten ---
