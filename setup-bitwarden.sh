@@ -10,24 +10,30 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 source "$CONFIG_FILE"
 
-# --- Bitwarden App ---
-if [ -d "/Applications/Bitwarden.app" ] || [ -d "$HOME/Applications/Bitwarden.app" ]; then
-  echo "==> Bitwarden App already installed."
-else
-  printf "==> Bitwarden App not installed. Install it? [Y/n] "
-  read -r ans
-  if [ "$ans" != "n" ] && [ "$ans" != "N" ]; then
-    echo "==> Installing Bitwarden App..."
-    brew install --cask bitwarden
-  fi
-fi
-
 # --- Bitwarden CLI ---
 if command -v bw &>/dev/null; then
   echo "==> Bitwarden CLI already installed."
 else
   echo "==> Installing Bitwarden CLI..."
-  brew install bitwarden-cli
+  if ! brew install bitwarden-cli; then
+    echo "    Install had a link error — trying to fix..."
+    brew link --overwrite bitwarden-cli 2>/dev/null || true
+    if ! command -v bw &>/dev/null; then
+      echo "ERROR: Bitwarden CLI install failed. Run manually:"
+      echo "  brew uninstall bitwarden-cli && brew install bitwarden-cli"
+      exit 1
+    fi
+  fi
+  echo "    Bitwarden CLI installed."
+fi
+
+# --- Bitwarden App (optional, GUI only) ---
+if [ -d "/Applications/Bitwarden.app" ] || [ -d "$HOME/Applications/Bitwarden.app" ]; then
+  echo "==> Bitwarden App already installed."
+else
+  echo ""
+  echo "  NOTE: The Bitwarden desktop app is optional — the setup scripts only need the CLI."
+  echo "  Install it from the Mac App Store or https://bitwarden.com/download/ if you want the GUI."
 fi
 
 echo ""
