@@ -59,6 +59,18 @@ rm -f "$HOME/.emacs-icloud-repo" || true
 
 echo "    Bitwarden keychain entry bleibt erhalten — zum Löschen: ~/remove-bitwarden-keychain.sh"
 
+echo "==> Removing brew packages installed by setup..."
+brew uninstall --ignore-dependencies bitwarden-cli 2>/dev/null && echo "    bitwarden-cli removed." || echo "    bitwarden-cli not found."
+brew uninstall --ignore-dependencies gh 2>/dev/null && echo "    gh removed." || echo "    gh not found."
+brew uninstall --ignore-dependencies git-crypt 2>/dev/null && echo "    git-crypt removed." || echo "    git-crypt not found."
+
+echo "==> Logging out GitHub CLI..."
+gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."
+
+echo "==> Clearing global git identity..."
+git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
+git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
+
 echo "==> Cleaning Homebrew cache..."
 rm -f ~/Library/Caches/Homebrew/downloads/*.incomplete
 brew cleanup 2>/dev/null || true
