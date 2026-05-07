@@ -7,8 +7,8 @@ if brew list emacs-mac@30exp &>/dev/null 2>&1; then
   YAMAMOTO_INSTALLED=true
   echo "  HINWEIS: emacs-mac@30exp (Yamamoto) ist ebenfalls installiert — bleibt erhalten."
 fi
-if ! brew list | grep -q "emacs-plus"; then
-  echo "  emacs-plus ist nicht installiert — nichts zu tun."
+if ! brew list | grep -q "emacs-plus@30"; then
+  echo "  emacs-plus@30 ist nicht installiert — nichts zu tun."
 fi
 
 # --- Konfiguration laden ---
@@ -23,7 +23,7 @@ ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 SYMLINK="$HOME/$GH_REPO"
 
 echo "==> Removing Emacs (emacs-plus)..."
-brew uninstall emacs-plus 2>/dev/null && echo "    emacs-plus removed." || echo "    emacs-plus not found."
+brew uninstall emacs-plus@30 2>/dev/null && echo "    emacs-plus@30 removed." || echo "    emacs-plus@30 not found."
 rm -rf "/Applications/Emacs (emacs-plus).app" 2>/dev/null && echo "    Emacs (emacs-plus).app removed." || echo "    Emacs (emacs-plus).app not found."
 
 if [ "$YAMAMOTO_INSTALLED" = false ]; then
