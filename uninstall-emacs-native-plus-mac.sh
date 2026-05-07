@@ -46,6 +46,20 @@ if [ "$YAMAMOTO_INSTALLED" = false ]; then
   brew uninstall --ignore-dependencies gh 2>/dev/null && echo "    gh removed." || echo "    gh not found."
   brew uninstall --ignore-dependencies git-crypt 2>/dev/null && echo "    git-crypt removed." || echo "    git-crypt not found."
 
+  # Remove packages that config.org installed (tracked in system-packages.log)
+  _LOG="$HOME/.emacs.d/system-packages.log"
+  if [ -f "$_LOG" ]; then
+    echo "==> Removing packages installed by Emacs/config.org..."
+    while IFS=: read -r _TYPE _PKG; do
+      [ -z "$_TYPE" ] || [ -z "$_PKG" ] && continue
+      case "$_TYPE" in
+        formula) brew uninstall --ignore-dependencies "$_PKG" 2>/dev/null && echo "    $_PKG removed." || echo "    $_PKG not found." ;;
+        cask)    brew uninstall --cask "$_PKG" 2>/dev/null && echo "    $_PKG removed." || echo "    $_PKG not found." ;;
+      esac
+    done < "$_LOG"
+    rm -f "$_LOG"
+  fi
+
   echo "==> Clearing global git identity..."
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
