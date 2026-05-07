@@ -8,14 +8,14 @@ skip() { echo "==> Already done: $1 — skipping."; }
 case "${EMACS_FLAVOR:-plus}" in
   yamamoto)
     _EMACS_PKG="emacs-mac@30exp"
-    _EMACS_OTHER_PKG="emacs-plus"
+    _EMACS_OTHER_PKG="emacs-plus@30"
     _EMACS_TAP="railwaycat/emacsmacport"
     _EMACS_APP_NAME="Emacs (Yamamoto).app"
     _EMACS_LABEL="Yamamoto"
     _EMACS_UNINSTALL="uninstall-emacs-native-yamamoto-mac.sh"
     ;;
   plus|*)
-    _EMACS_PKG="emacs-plus"
+    _EMACS_PKG="emacs-plus@30"
     _EMACS_OTHER_PKG="emacs-mac@30exp"
     _EMACS_TAP="d12frosted/emacs-plus"
     _EMACS_APP_NAME="Emacs (emacs-plus).app"
@@ -112,7 +112,7 @@ else
       exit 1
     fi
   else
-    brew install emacs-plus --with-xwidgets
+    brew install emacs-plus@30 --with-xwidgets
   fi
 fi
 brew link --overwrite "$_EMACS_PKG" 2>/dev/null || true
