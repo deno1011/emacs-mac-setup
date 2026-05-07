@@ -754,6 +754,22 @@ else
   docker exec "$DOCKER_CONTAINER" bash -c "git config --global user.email '${GIT_EMAIL}' && git config --global user.name '${GIT_NAME}'"
 fi
 
+# --- GitHub credentials im Container einrichten ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-credentials 2>/dev/null; then
+  skip "GitHub credentials (already configured in container)"
+else
+  echo "==> GitHub credentials im Container einrichten..."
+  GH_TOKEN_CONTAINER=$(gh auth token 2>/dev/null) || true
+  if [ -n "$GH_TOKEN_CONTAINER" ]; then
+    docker exec "$DOCKER_CONTAINER" git config --global credential.helper store
+    docker exec "$DOCKER_CONTAINER" bash -c \
+      "printf 'https://${GH_USER}:%s@github.com\n' '${GH_TOKEN_CONTAINER}' > ~/.git-credentials && chmod 600 ~/.git-credentials"
+    echo "    GitHub credentials configured."
+  else
+    echo "WARN: GitHub token not available — container will not be able to clone/push."
+  fi
+fi
+
 # --- Claude Code credentials ---
 if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.claude/auth.json 2>/dev/null; then
   skip "Claude Code credentials (already in container)"
