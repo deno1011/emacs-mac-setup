@@ -55,8 +55,12 @@ if [ -n "$CONF_REPO" ]; then
   fi
   # Authenticate gh if not yet done
   if ! gh auth status &>/dev/null 2>&1; then
-    echo "    Authenticating GitHub CLI..."
-    gh auth login
+    echo "    GitHub Personal Access Token eingeben (Settings → Developer settings → PAT Classic, scope: repo):"
+    printf "    Token: "
+    read -rs _GH_TOKEN
+    echo ""
+    echo "$_GH_TOKEN" | gh auth login --with-token
+    unset _GH_TOKEN
   fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     if gh repo clone "$CONF_REPO" "$CONF_TMP/conf" &>/dev/null 2>&1; then
