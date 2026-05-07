@@ -6,48 +6,23 @@
 
 set -e
 
-BASE_URL="https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main"
 CONF_REPO="${1:-}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
-SCRIPTS=(
-  setup-emacs-native-plus-mac.sh
-  setup-emacs-native-yamamoto-mac.sh
-  setup-emacs-docker-mac.sh
-  uninstall-emacs-native-plus-mac.sh
-  uninstall-emacs-native-yamamoto-mac.sh
-  uninstall-emacs-docker-mac.sh
-  unlock-git-crypt.sh
-  remove-bitwarden-keychain.sh
-  fill-config.sh
-  setup-bitwarden.sh
-  setup-secrets.sh
-  setup-emacs-mac.conf.template
-  config.org
-  init.el
-  README.md
-  '!STARTHERE.md'
-)
-
-echo "==> Downloading scripts to $DEST/..."
-for SCRIPT in "${SCRIPTS[@]}"; do
-  echo "    $SCRIPT"
-  curl -fsSL "${BASE_URL}/${SCRIPT}" -o "$DEST/${SCRIPT}"
+echo "==> Downloading all scripts to $DEST/..."
+_DL_TMP=$(mktemp -d)
+curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/main.tar.gz" \
+  | tar -xz -C "$_DL_TMP" --strip-components=1
+for _F in "$_DL_TMP"/*; do
+  _NAME="$(basename "$_F")"
+  [ "$_NAME" = "bootstrap.sh" ] && continue
+  cp "$_F" "$DEST/$_NAME"
+  echo "    $_NAME"
 done
+rm -rf "$_DL_TMP"
 
-chmod +x \
-  "$DEST/setup-emacs-native-plus-mac.sh" \
-  "$DEST/setup-emacs-native-yamamoto-mac.sh" \
-  "$DEST/setup-emacs-docker-mac.sh" \
-  "$DEST/uninstall-emacs-native-plus-mac.sh" \
-  "$DEST/uninstall-emacs-native-yamamoto-mac.sh" \
-  "$DEST/uninstall-emacs-docker-mac.sh" \
-  "$DEST/unlock-git-crypt.sh" \
-  "$DEST/remove-bitwarden-keychain.sh" \
-  "$DEST/fill-config.sh" \
-  "$DEST/setup-bitwarden.sh" \
-  "$DEST/setup-secrets.sh"
+chmod +x "$DEST"/*.sh
 
 # --- Pull personal config from private repo ---
 CONF_PULLED=false
