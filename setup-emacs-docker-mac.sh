@@ -139,10 +139,16 @@ if colima status 2>/dev/null | grep -q "Running"; then
   skip "Colima (already running)"
 else
   echo "==> Starting Colima (Docker runtime)..."
-  colima start
+  colima start 2>/dev/null || true
 fi
 
 # --- Docker context ---
+# Create context if missing (happens when Colima was started outside this script)
+if ! docker context inspect colima &>/dev/null 2>&1; then
+  echo "==> Creating Docker context for Colima..."
+  docker context create colima \
+    --docker "host=unix://${HOME}/.colima/default/docker.sock" &>/dev/null || true
+fi
 if docker context show 2>/dev/null | grep -q "colima"; then
   skip "Docker context (already set to colima)"
 else
