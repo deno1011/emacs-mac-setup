@@ -96,6 +96,7 @@ fi
 
 # --- Emacs installieren ---
 brew unlink "$_EMACS_OTHER_PKG" 2>/dev/null || true
+brew unlink coreutils 2>/dev/null || true
 if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
   skip "Emacs ($_EMACS_PKG)"
 else
