@@ -12,6 +12,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
+source "$HOME/bw-unlock.sh"
 
 # --- Pflichtfelder prüfen ---
 MISSING=()
@@ -32,7 +33,7 @@ ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 # Admin-Passwort nur einlesen wenn XQuartz noch nicht installiert ist
 if [ ! -d "/Applications/Utilities/XQuartz.app" ]; then
   echo "==> Admin-Passwort eingeben (einmalig, für XQuartz):"
-  read -rs ADMIN_PASS
+  read -rs ADMIN_PASS < /dev/tty
   echo ""
 fi
 
@@ -43,41 +44,7 @@ if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "
     echo "==> Installing Bitwarden CLI (needed for setup)..."
     brew install bitwarden-cli
   fi
-
-  BW_MASTER=$(security find-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" -w 2>/dev/null) || true
-  if [ -z "$BW_MASTER" ]; then
-    echo "==> Bitwarden Master-Passwort eingeben (wird einmalig im Mac Keychain gespeichert):"
-    read -rs BW_MASTER
-    echo ""
-    security delete-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" 2>/dev/null || true
-    security add-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" -w "$BW_MASTER" -A
-  fi
-  BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
-  export _BW_MASTER="$BW_MASTER"
-  if [ "$BW_STATUS" = "unauthenticated" ]; then
-    echo "==> Bitwarden: Erstanmeldung auf diesem Mac..."
-    printf "  Bitwarden E-Mail: "
-    read -r BW_EMAIL
-    BW_SESSION=$(bw login "$BW_EMAIL" --passwordenv _BW_MASTER --raw 2>/dev/null) || true
-    if [ -z "$BW_SESSION" ]; then
-      echo "  Auto-Login fehlgeschlagen (2FA oder falsche Zugangsdaten) — interaktiver Login:"
-      unset _BW_MASTER
-      bw login
-      export _BW_MASTER="$BW_MASTER"
-      BW_SESSION=$(bw unlock --passwordenv _BW_MASTER --raw 2>/dev/null) || true
-    fi
-  fi
-  if [ -z "$BW_SESSION" ]; then
-    BW_SESSION=$(bw unlock --passwordenv _BW_MASTER --raw 2>/dev/null) || true
-  fi
-  unset _BW_MASTER
-  if [ -z "$BW_SESSION" ]; then
-    echo "ERROR: Bitwarden konnte nicht entsperrt werden. Keychain-Eintrag löschen und neu versuchen:"
-    echo "  security delete-generic-password -a \"$USER\" -s \"$BW_KEYCHAIN_SERVICE\""
-    exit 1
-  fi
-  export BW_SESSION
-  bw sync --session "$BW_SESSION" &>/dev/null || true
+  bw_ensure_session || exit 1
 fi
 
 # --- Clean incomplete Homebrew downloads ---
@@ -125,8 +92,7 @@ if gh auth status &>/dev/null 2>&1; then
   skip "GitHub CLI auth (already authenticated)"
 else
   echo "==> GitHub CLI mit Token aus Bitwarden authentifizieren..."
-  GH_TOKEN=$(bw get item "$BW_GH_ITEM" --session "$BW_SESSION" 2>/dev/null \
-    | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')") || true
+  GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
   if [ -n "$GH_TOKEN" ]; then
     echo "$GH_TOKEN" | gh auth login --with-token
   else
@@ -268,7 +234,7 @@ if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
   git -C "$ICLOUD_REPO_PATH" pull origin main || true
 else
   echo "==> Schlüssel aus Bitwarden abrufen..."
-  KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')")
+  KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD")
 
   echo "==> GitHub Credential-Helper einrichten..."
   gh auth setup-git
@@ -452,8 +418,7 @@ if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/nul
   skip "git-crypt key (already stored in container)"
 else
   echo "==> Fetching git-crypt key from Bitwarden..."
-  GC_KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" 2>/dev/null \
-    | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')") || true
+  GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
   if [ -n "$GC_KEY_B64" ]; then
     echo "$GC_KEY_B64" | tr -d '[:space:]' \
       | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
@@ -475,8 +440,7 @@ if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/secrets.el 2>/de
   skip "ANTHROPIC_API_KEY (already in secrets.el)"
 else
   echo "==> Fetching Anthropic API key from Bitwarden..."
-  ANTHROPIC_API_KEY=$(bw get item "$BW_ANTHROPIC_ITEM" --session "$BW_SESSION" 2>/dev/null \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(next((f['value'] for f in d.get('fields',[]) if f['name']=='$BW_FIELD'), ''))") || true
+  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
   if [ -n "$ANTHROPIC_API_KEY" ]; then
     _SECRET_TMP=$(mktemp)
     printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SECRET_TMP"
