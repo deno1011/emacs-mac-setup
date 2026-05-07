@@ -93,10 +93,15 @@ if [ "$CONF_PULLED" = true ]; then
   printf "  Fill in config now to verify or update values? [y/N] "
   read -r FILL
   if [ "$FILL" = "y" ] || [ "$FILL" = "Y" ]; then
+    echo "  Tip: press Enter at any prompt to keep the value shown in [brackets]."
+    echo "       Repo defaults: emacs-config  /  mac-setup-conf"
+    echo ""
     bash "$DEST/fill-config.sh"
   fi
 else
   echo "  Config created from template — fill in your details."
+  echo "  Tip: press Enter at any prompt to accept the proposed default value."
+  echo "       Repo defaults: emacs-config  /  mac-setup-conf"
   echo ""
   printf "  Fill in config now interactively? [Y/n] "
   read -r FILL
