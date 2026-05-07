@@ -264,17 +264,6 @@ if [ -n "$GH_USER" ]; then
   fi
 fi
 
-# --- Emacs Pakete installieren ---
-echo "==> Installing Emacs packages (this may take a few minutes)..."
-"$EMACS_BIN" --batch --no-init-file \
-  --eval "(require 'package)" \
-  --eval "(setq package-archives '((\"melpa\" . \"https://melpa.org/packages/\") (\"gnu\" . \"https://elpa.gnu.org/packages/\") (\"nongnu\" . \"https://elpa.nongnu.org/packages/\")))" \
-  --eval "(package-initialize)" \
-  --eval "(package-refresh-contents)" \
-  --eval "(dolist (pkg '(use-package magit doom-themes doom-modeline git-auto-commit-mode which-key rainbow-delimiters ace-window neotree undo-tree expand-region smex ivy counsel swiper org-bullets org-download htmlize gptel)) (unless (package-installed-p pkg) (message \"Installing %s...\" pkg) (package-install pkg)))" \
-  --eval "(message \"All packages installed.\")" \
-  2>&1 | grep -E "Installing|All packages|Error|error" || true
-
 echo ""
 echo "======================================================================"
 echo "Native Emacs (emacs-plus) setup complete!"
