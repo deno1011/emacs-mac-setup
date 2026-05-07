@@ -344,6 +344,7 @@ else
   if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config.org" 2>/dev/null; then
     skip "config.org (already present from cloned repo)"
   else
+  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}"
   docker exec "$DOCKER_CONTAINER" bash -c 'cat > ~/'"${GH_REPO}"'/config.org << '"'"'CONFIGEOF'"'"'
 #+TITLE: Emacs Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes
