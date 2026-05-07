@@ -48,11 +48,22 @@ if [ -n "$CONF_REPO" ]; then
   echo "==> Trying to pull personal config from github.com/${CONF_REPO}..."
   CONF_TMP=$(mktemp -d)
 
+  # Install gh if missing — needed for private repo access
+  if ! command -v gh &>/dev/null; then
+    echo "    Installing GitHub CLI..."
+    brew install gh &>/dev/null
+  fi
+  # Authenticate gh if not yet done
+  if ! gh auth status &>/dev/null 2>&1; then
+    echo "    Authenticating GitHub CLI..."
+    gh auth login
+  fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     if gh repo clone "$CONF_REPO" "$CONF_TMP/conf" &>/dev/null 2>&1; then
       CONF_PULLED=true
     fi
   fi
+  # Fallback: try unauthenticated (works if repo is public, fails silently if private)
   if [ "$CONF_PULLED" = false ]; then
     if GIT_TERMINAL_PROMPT=0 git clone "https://github.com/${CONF_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
       CONF_PULLED=true
