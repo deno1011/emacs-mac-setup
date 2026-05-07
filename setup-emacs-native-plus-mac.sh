@@ -90,22 +90,6 @@ if [ -n "$GH_USER" ]; then
   command -v git-crypt &>/dev/null && skip "git-crypt"     || { echo "==> Installing git-crypt...";     brew install git-crypt; }
 fi
 
-# --- aspell ---
-if command -v aspell &>/dev/null && aspell dump dicts 2>/dev/null | grep -q "^de"; then
-  skip "aspell + German dictionary"
-else
-  echo "==> Installing aspell with German dictionary..."
-  brew install aspell
-fi
-
-# --- JetBrains Mono Font ---
-if ls ~/Library/Fonts/JetBrainsMono* &>/dev/null; then
-  skip "JetBrains Mono font"
-else
-  echo "==> Installing JetBrains Mono font..."
-  brew install --cask font-jetbrains-mono
-fi
-
 # --- Emacs (emacs-plus, native comp) ---
 brew unlink emacs-mac@30exp 2>/dev/null || true
 if brew list | grep -q "emacs-plus"; then
