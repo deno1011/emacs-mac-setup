@@ -16,6 +16,26 @@
 
 (use-package use-package-ensure-system-package
   :ensure t)
+
+;; Install a brew package in the background and log it for clean uninstall.
+;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
+;; the full brew arguments (e.g. "install" "--cask" "font-jetbrains-mono").
+(defun my/brew-install-and-log (type package &rest brew-args)
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "%s:%s\n" type package))
+         (proc     (apply #'start-process
+                          (format "install-%s" package)
+                          (format "*install-%s*" package)
+                          "brew" brew-args)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
 #+end_src
 
 * UI & Appearance
@@ -39,8 +59,8 @@
 #+begin_src emacs-lisp
 (unless (find-font (font-spec :name "JetBrains Mono"))
   (when (executable-find "brew")
-    (start-process "install-font" "*install-font*"
-                   "brew" "install" "--cask" "font-jetbrains-mono")
+    (my/brew-install-and-log "cask" "font-jetbrains-mono"
+                             "install" "--cask" "font-jetbrains-mono")
     (message "JetBrains Mono: installing in background — restart Emacs when done.")))
 
 (when (find-font (font-spec :name "JetBrains Mono"))
@@ -1081,7 +1101,7 @@
 ;; Auto-install texlive if latex not found (brew only, runs in background)
 (unless (executable-find "latex")
   (when (executable-find "brew")
-    (start-process "install-texlive" "*install-texlive*" "brew" "install" "texlive")
+    (my/brew-install-and-log "formula" "texlive" "install" "texlive")
     (message "LaTeX not found — installing brew texlive in background. Restart Emacs when done.")))
 #+end_src
 
@@ -1209,7 +1229,10 @@
 #+begin_src emacs-lisp
 (use-package ispell
   :ensure nil
-  :ensure-system-package (aspell . "aspell")
+  :init
+  (unless (executable-find "aspell")
+    (when (executable-find "brew")
+      (my/brew-install-and-log "formula" "aspell" "install" "aspell")))
   :config
   (setq ispell-program-name "aspell"
         ispell-dictionary "german"))
