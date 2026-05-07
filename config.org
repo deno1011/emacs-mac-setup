@@ -1047,7 +1047,13 @@
  'org-babel-load-languages
  '((emacs-lisp . t)
    (python     . t)
-   (shell      . t)))
+   (shell      . t)
+   (latex      . t)))
+
+;; LaTeX math preview in org buffers (requires dvipng or imagemagick)
+(setq org-preview-latex-default-process 'dvipng)
+(setq org-format-latex-options
+      (plist-put org-format-latex-options :scale 1.5))
 #+end_src
 
 * Abbreviations & Skeletons
