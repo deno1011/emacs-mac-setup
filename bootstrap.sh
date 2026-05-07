@@ -67,44 +67,44 @@ if [ -n "$CONF_REPO" ]; then
     if ! command -v bw &>/dev/null; then
       echo "    Installing Bitwarden CLI..."
       brew install bitwarden-cli &>/dev/null
-      # Ensure bw is in PATH after fresh install
       export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
     fi
 
     _BS_GH_TOKEN=""
     if command -v bw &>/dev/null; then
+      # Get master password from keychain, or prompt once
       _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
       if [ -z "$_BS_BW_MASTER" ]; then
         printf "    Bitwarden master password: "
         read -rs _BS_BW_MASTER < /dev/tty
         echo ""
       fi
+      export __BS_BW_MASTER="$_BS_BW_MASTER"
 
       _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
-      export __BS_BW_MASTER="$_BS_BW_MASTER"
+      echo "    Bitwarden: $_BS_BW_STATUS"
       _BS_BW_SESSION=""
 
       if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
         printf "    Bitwarden email: "
         read -r _BS_BW_EMAIL < /dev/tty
-        _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-        if [ -z "$_BS_BW_SESSION" ]; then
-          echo "    Auto-login failed (2FA?) — running interactive login:"
-          unset __BS_BW_MASTER
-          bw login < /dev/tty
-          export __BS_BW_MASTER="$_BS_BW_MASTER"
-          _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-        fi
+        # stdin connected to /dev/tty so 2FA prompt works interactively
+        _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw < /dev/tty) || true
       fi
+
+      # If still no session (locked state or login returned no session), try unlock
       if [ -z "$_BS_BW_SESSION" ]; then
         _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
       fi
       unset __BS_BW_MASTER
 
       if [ -n "$_BS_BW_SESSION" ]; then
+        echo "    Bitwarden unlocked — fetching GitHub token..."
         bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
         _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
           | python3 -c "import sys,json; d=json.load(sys.stdin); f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']; print(f[0].strip() if f else '')" 2>/dev/null) || true
+      else
+        echo "    WARN: Bitwarden unlock failed — falling back to manual token."
       fi
     fi
 
@@ -112,12 +112,11 @@ if [ -n "$CONF_REPO" ]; then
       echo "$_BS_GH_TOKEN" | gh auth login --with-token
       echo "    GitHub CLI authenticated via Bitwarden."
     else
-      echo "    Token not in Bitwarden — enter GitHub PAT manually:"
-      echo "    (Settings → Developer settings → Personal access tokens → Classic, scope: repo)"
+      echo "    Enter GitHub PAT (Settings → Developer settings → Personal access tokens → Classic, scope: repo):"
       printf "    Token: "
       read -rs _BS_GH_TOKEN < /dev/tty
       echo ""
-      echo "$_BS_GH_TOKEN" | gh auth login --with-token
+      [ -n "$_BS_GH_TOKEN" ] && echo "$_BS_GH_TOKEN" | gh auth login --with-token
     fi
     unset _BS_GH_TOKEN _BS_BW_SESSION _BS_BW_MASTER _BS_BW_EMAIL _BS_BW_STATUS \
           _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
