@@ -10,7 +10,7 @@ set -e
 if ! command -v brew &>/dev/null; then
   echo "==> Homebrew not found."
   printf "    Install Homebrew now? [Y/n] "
-  read -r _BREW_ANS
+  read -r _BREW_ANS < /dev/tty
   if [ "$_BREW_ANS" != "n" ] && [ "$_BREW_ANS" != "N" ]; then
     echo "==> Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -67,41 +67,46 @@ if [ -n "$CONF_REPO" ]; then
     if ! command -v bw &>/dev/null; then
       echo "    Installing Bitwarden CLI..."
       brew install bitwarden-cli &>/dev/null
+      # Ensure bw is in PATH after fresh install
+      eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
+      eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || true
     fi
-
-    _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
-    if [ -z "$_BS_BW_MASTER" ]; then
-      printf "    Bitwarden master password: "
-      read -rs _BS_BW_MASTER
-      echo ""
-    fi
-
-    _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
-    export __BS_BW_MASTER="$_BS_BW_MASTER"
-    _BS_BW_SESSION=""
-
-    if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
-      printf "    Bitwarden email: "
-      read -r _BS_BW_EMAIL
-      _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-      if [ -z "$_BS_BW_SESSION" ]; then
-        echo "    Auto-login failed (2FA?) — running interactive login:"
-        unset __BS_BW_MASTER
-        bw login
-        export __BS_BW_MASTER="$_BS_BW_MASTER"
-        _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-      fi
-    fi
-    if [ -z "$_BS_BW_SESSION" ]; then
-      _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-    fi
-    unset __BS_BW_MASTER
 
     _BS_GH_TOKEN=""
-    if [ -n "$_BS_BW_SESSION" ]; then
-      bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
-      _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']; print(f[0].strip() if f else '')" 2>/dev/null) || true
+    if command -v bw &>/dev/null; then
+      _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
+      if [ -z "$_BS_BW_MASTER" ]; then
+        printf "    Bitwarden master password: "
+        read -rs _BS_BW_MASTER < /dev/tty
+        echo ""
+      fi
+
+      _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
+      export __BS_BW_MASTER="$_BS_BW_MASTER"
+      _BS_BW_SESSION=""
+
+      if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
+        printf "    Bitwarden email: "
+        read -r _BS_BW_EMAIL < /dev/tty
+        _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+        if [ -z "$_BS_BW_SESSION" ]; then
+          echo "    Auto-login failed (2FA?) — running interactive login:"
+          unset __BS_BW_MASTER
+          bw login < /dev/tty
+          export __BS_BW_MASTER="$_BS_BW_MASTER"
+          _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+        fi
+      fi
+      if [ -z "$_BS_BW_SESSION" ]; then
+        _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+      fi
+      unset __BS_BW_MASTER
+
+      if [ -n "$_BS_BW_SESSION" ]; then
+        bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
+        _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']; print(f[0].strip() if f else '')" 2>/dev/null) || true
+      fi
     fi
 
     if [ -n "$_BS_GH_TOKEN" ]; then
@@ -111,7 +116,7 @@ if [ -n "$CONF_REPO" ]; then
       echo "    Token not in Bitwarden — enter GitHub PAT manually:"
       echo "    (Settings → Developer settings → Personal access tokens → Classic, scope: repo)"
       printf "    Token: "
-      read -rs _BS_GH_TOKEN
+      read -rs _BS_GH_TOKEN < /dev/tty
       echo ""
       echo "$_BS_GH_TOKEN" | gh auth login --with-token
     fi
@@ -156,7 +161,7 @@ if [ "$CONF_PULLED" = true ]; then
   echo "  Personal config pulled and ready."
   echo ""
   printf "  Fill in config now to verify or update values? [y/N] "
-  read -r FILL
+  read -r FILL < /dev/tty
   if [ "$FILL" = "y" ] || [ "$FILL" = "Y" ]; then
     echo "  Tip: press Enter at any prompt to keep the value shown in [brackets]."
     echo "       Repo defaults: emacs-config  /  mac-setup-conf"
@@ -169,7 +174,7 @@ else
   echo "       Repo defaults: emacs-config  /  mac-setup-conf"
   echo ""
   printf "  Fill in config now interactively? [Y/n] "
-  read -r FILL
+  read -r FILL < /dev/tty
   if [ "$FILL" != "n" ] && [ "$FILL" != "N" ]; then
     bash "$DEST/fill-config.sh"
   else
@@ -184,7 +189,7 @@ source "$CONFIG_FILE"
 echo ""
 if [ -n "$GH_USER" ]; then
   printf "  Set up Bitwarden entries now? [Y/n] "
-  read -r BW_ANS
+  read -r BW_ANS < /dev/tty
   if [ "$BW_ANS" != "n" ] && [ "$BW_ANS" != "N" ]; then
     bash "$DEST/setup-bitwarden.sh"
   else
