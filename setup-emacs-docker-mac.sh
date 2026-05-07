@@ -52,8 +52,24 @@ if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "
     security delete-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" 2>/dev/null || true
     security add-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" -w "$BW_MASTER" -A
   fi
+  BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
   export _BW_MASTER="$BW_MASTER"
-  BW_SESSION=$(bw unlock --passwordenv _BW_MASTER --raw 2>/dev/null) || true
+  if [ "$BW_STATUS" = "unauthenticated" ]; then
+    echo "==> Bitwarden: Erstanmeldung auf diesem Mac..."
+    printf "  Bitwarden E-Mail: "
+    read -r BW_EMAIL
+    BW_SESSION=$(bw login "$BW_EMAIL" --passwordenv _BW_MASTER --raw 2>/dev/null) || true
+    if [ -z "$BW_SESSION" ]; then
+      echo "  Auto-Login fehlgeschlagen (2FA oder falsche Zugangsdaten) — interaktiver Login:"
+      unset _BW_MASTER
+      bw login
+      export _BW_MASTER="$BW_MASTER"
+      BW_SESSION=$(bw unlock --passwordenv _BW_MASTER --raw 2>/dev/null) || true
+    fi
+  fi
+  if [ -z "$BW_SESSION" ]; then
+    BW_SESSION=$(bw unlock --passwordenv _BW_MASTER --raw 2>/dev/null) || true
+  fi
   unset _BW_MASTER
   if [ -z "$BW_SESSION" ]; then
     echo "ERROR: Bitwarden konnte nicht entsperrt werden. Keychain-Eintrag löschen und neu versuchen:"
@@ -61,6 +77,7 @@ if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "
     exit 1
   fi
   export BW_SESSION
+  bw sync --session "$BW_SESSION" &>/dev/null || true
 fi
 
 # --- Clean incomplete Homebrew downloads ---
