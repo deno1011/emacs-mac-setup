@@ -248,7 +248,7 @@ if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
   git -C "$ICLOUD_REPO_PATH" pull origin main || true
 else
   echo "==> Schlüssel aus Bitwarden abrufen..."
-  KEY_B64=$(bw get item "$BW_ITEM" | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')")
+  KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')")
 
   echo "==> GitHub Credential-Helper einrichten..."
   gh auth setup-git
@@ -324,134 +324,109 @@ if ! docker ps -aq -f name="$DOCKER_CONTAINER" 2>/dev/null | grep -q .; then
     "$DOCKER_IMAGE" sleep infinity
 fi
 
-# --- Emacs setup inside container (piped directly, no file created) ---
+# --- init.el ---
 if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/init.el 2>/dev/null; then
-  skip "Emacs configuration (init.el already present)"
+  skip "init.el (already present)"
 else
-  echo "==> Running Emacs setup inside container..."
-
-  # Copy init.el from host into container
+  echo "==> Installing init.el..."
   docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
   if [ -f "$SCRIPT_DIR/init.el" ]; then
     docker cp "$SCRIPT_DIR/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
     docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
-    echo "==> init.el installiert."
   else
-    echo "ERROR: ~/init.el nicht gefunden — bootstrap.sh erneut ausführen."
+    echo "ERROR: init.el not found — run bootstrap.sh first."
     exit 1
   fi
+fi
 
-  # Write starter config.org only if not already present (e.g. cloned from GitHub)
-  if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config.org" 2>/dev/null; then
-    skip "config.org (already present from cloned repo)"
+# --- Git identity ---
+if docker exec "$DOCKER_CONTAINER" git config --global user.email 2>/dev/null | grep -q "@"; then
+  skip "Git identity (already set)"
+else
+  echo "==> Setting git identity in container..."
+  docker exec "$DOCKER_CONTAINER" bash -c "git config --global user.email '${GIT_EMAIL}' && git config --global user.name '${GIT_NAME}'"
+fi
+
+# --- GitHub credentials (must be set before startup-sync.sh clones) ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-credentials 2>/dev/null; then
+  skip "GitHub credentials (already configured in container)"
+else
+  echo "==> Setting up GitHub credentials in container..."
+  GH_TOKEN_CONTAINER=$(gh auth token 2>/dev/null) || true
+  if [ -n "$GH_TOKEN_CONTAINER" ]; then
+    docker exec "$DOCKER_CONTAINER" git config --global credential.helper store
+    docker exec "$DOCKER_CONTAINER" bash -c \
+      "printf 'https://${GH_USER}:%s@github.com\n' '${GH_TOKEN_CONTAINER}' > ~/.git-credentials && chmod 600 ~/.git-credentials"
+    echo "    GitHub credentials configured."
   else
-  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}"
-  docker exec "$DOCKER_CONTAINER" bash -c 'cat > ~/'"${GH_REPO}"'/config.org << '"'"'CONFIGEOF'"'"'
-#+TITLE: Emacs Configuration
-#+PROPERTY: header-args:emacs-lisp :tangle yes
-
-* UI & Appearance
-#+begin_src emacs-lisp
-;; Prevent XQuartz rendering glitches
-(add-to-list '"'"'default-frame-alist '"'"'(inhibit-double-buffering . t))
-
-(tool-bar-mode -1)
-(scroll-bar-mode -1)
-(menu-bar-mode -1)
-(setq inhibit-startup-screen t)
-(setq-default line-spacing 3)
-(add-to-list '"'"'default-frame-alist '"'"'(internal-border-width . 12))
-(defalias '"'"'yes-or-no-p '"'"'y-or-n-p)
-(show-paren-mode 1)
-(delete-selection-mode 1)
-(column-number-mode 1)
-(global-auto-revert-mode t)
-#+end_src
-
-* Font
-#+begin_src emacs-lisp
-(set-face-attribute '"'"'default nil :font "JetBrains Mono-13")
-(add-to-list '"'"'default-frame-alist '"'"'(font . "JetBrains Mono-13"))
-#+end_src
-
-* Theme & Modeline
-#+begin_src emacs-lisp
-(load-theme '"'"'modus-vivendi t)
-
-(use-package doom-themes
-  :config
-  (doom-themes-org-config))
-
-(use-package doom-modeline
-  :hook (after-init . doom-modeline-mode)
-  :custom
-  (doom-modeline-height 28)
-  (doom-modeline-icon nil))
-#+end_src
-
-* Scrolling
-#+begin_src emacs-lisp
-(setq scroll-conservatively 101
-      scroll-margin 3
-      fast-but-imprecise-scrolling t)
-#+end_src
-
-* Version Control
-#+begin_src emacs-lisp
-(use-package magit
-  :bind ("C-x g" . magit-status))
-#+end_src
-
-* Auto-commit Org files
-#+begin_src emacs-lisp
-(use-package git-auto-commit-mode
-  :config
-  (setq gac-automatically-push-p t
-        gac-automatically-add-new-files-p t))
-(add-hook '"'"'org-mode-hook '"'"'git-auto-commit-mode)
-#+end_src
-
-* Org Mode
-#+begin_src emacs-lisp
-(use-package org
-  :ensure nil
-  :config
-  (setq org-directory "~/emacs-config/org"
-        org-default-notes-file "~/emacs-config/org/inbox.org"
-        org-agenda-files '"'"'("~/emacs-config/org")
-        org-confirm-babel-evaluate nil
-        org-startup-indented t
-        org-startup-folded t
-        org-hide-emphasis-markers t
-        org-return-follows-link t
-        org-log-done '"'"'time
-        org-log-into-drawer t)
-  (org-babel-do-load-languages
-   '"'"'org-babel-load-languages
-   '"'"'((emacs-lisp . t)
-     (python     . t)
-     (shell      . t)))
-  (require '"'"'ox-latex)
-  (setq org-latex-compiler "pdflatex"))
-#+end_src
-
-* Org Capture
-#+begin_src emacs-lisp
-(global-set-key (kbd "C-c c") '"'"'org-capture)
-(global-set-key (kbd "C-c a") '"'"'org-agenda)
-(global-set-key (kbd "C-c l") '"'"'org-store-link)
-(setq org-capture-templates
-      '"'"'(("i" "Inbox" entry (file "~/emacs-config/org/inbox.org")
-         "* %?\n%U\n")))
-#+end_src
-
-* Terminal
-#+begin_src emacs-lisp
-(global-set-key (kbd "C-c t") '"'"'eshell)
-#+end_src
-CONFIGEOF'
+    echo "WARN: GitHub token not available — container will not be able to clone/push."
   fi
+fi
 
+# --- startup-sync.sh ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/bin/startup-sync.sh 2>/dev/null; then
+  skip "startup-sync.sh (already present)"
+else
+  echo "==> Creating startup-sync.sh in container..."
+  docker exec "$DOCKER_CONTAINER" mkdir -p /home/emacs/bin
+  _SYNC_TMP=$(mktemp)
+  cat > "$_SYNC_TMP" << EOF
+#!/bin/bash
+REPO="/home/emacs/${GH_REPO}"
+BEORG="/beorg"
+GH_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
+
+if [ ! -d "\$REPO/.git" ]; then
+  git clone "\$GH_URL" "\$REPO" 2>/dev/null || true
+else
+  cd "\$REPO" && git pull origin main 2>/dev/null || true
+fi
+
+HOOK="\$REPO/.git/hooks/post-commit"
+if [ ! -f "\$HOOK" ]; then
+  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
+  chmod +x "\$HOOK"
+fi
+
+KEY="\$HOME/.git-crypt-key"
+if [ -f "\$KEY" ] && [ -d "\$REPO/.git" ]; then
+  git -C "\$REPO" crypt unlock "\$KEY" 2>/dev/null || true
+fi
+
+[ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
+EOF
+  docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
+  docker exec --user root "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/bin/startup-sync.sh
+  rm -f "$_SYNC_TMP"
+fi
+
+# --- Clone repo inside container (run startup-sync.sh now so repo exists for git-crypt) ---
+if docker exec "$DOCKER_CONTAINER" test -d "/home/emacs/${GH_REPO}/.git" 2>/dev/null; then
+  skip "Repo (already cloned in container)"
+else
+  echo "==> Cloning repo inside container..."
+  docker exec "$DOCKER_CONTAINER" /home/emacs/bin/startup-sync.sh || true
+fi
+
+# --- config.org fallback (only if repo didn't provide one) ---
+if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config.org" 2>/dev/null; then
+  skip "config.org (already present from cloned repo)"
+else
+  echo "==> Copying starter config.org into container..."
+  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}"
+  if [ -f "$SCRIPT_DIR/config.org" ]; then
+    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config.org"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config.org"
+  else
+    echo "WARN: config.org not found in script dir — Emacs will use built-in defaults."
+  fi
+fi
+
+# --- Install Emacs packages ---
+if docker exec "$DOCKER_CONTAINER" test -d /home/emacs/.emacs.d/elpa 2>/dev/null; then
+  skip "Emacs packages (already installed)"
+else
   echo "==> Installing Emacs packages (this may take a few minutes)..."
   docker exec "$DOCKER_CONTAINER" emacs --batch --eval "
 (require 'package)
@@ -465,55 +440,70 @@ CONFIGEOF'
     (package-install pkg)))
 (message \"Packages installed.\")
 "
-
-  echo "==> Verifying installations..."
+  echo "==> Verifying..."
   docker exec "$DOCKER_CONTAINER" emacs --version
   docker exec "$DOCKER_CONTAINER" git --version
-
-  echo "Emacs setup complete."
 fi
 
-# --- startup-sync.sh im Container ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/bin/startup-sync.sh 2>/dev/null; then
-  skip "startup-sync.sh (already present)"
+# --- git-crypt key (repo must exist first, cloned above) ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/null; then
+  skip "git-crypt key (already stored in container)"
 else
-  echo "==> startup-sync.sh im Container erstellen..."
-  docker exec "$DOCKER_CONTAINER" mkdir -p /home/emacs/bin
-  # Write via tmpfile so $GH_USER/$GH_REPO are expanded by the host shell
-  _SYNC_TMP=$(mktemp)
-  cat > "$_SYNC_TMP" << EOF
-#!/bin/bash
-REPO="/home/emacs/emacs-config"
-BEORG="/beorg"
-GH_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
+  echo "==> Fetching git-crypt key from Bitwarden..."
+  GC_KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" 2>/dev/null \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')") || true
+  if [ -n "$GC_KEY_B64" ]; then
+    echo "$GC_KEY_B64" | tr -d '[:space:]' \
+      | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
+      > /tmp/_gckey_docker
+    docker cp /tmp/_gckey_docker "$DOCKER_CONTAINER:/home/emacs/.git-crypt-key"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.git-crypt-key
+    docker exec --user root "$DOCKER_CONTAINER" chmod 600 /home/emacs/.git-crypt-key
+    docker exec "$DOCKER_CONTAINER" git -C "/home/emacs/${GH_REPO}" crypt unlock /home/emacs/.git-crypt-key 2>/dev/null \
+      && echo "    git-crypt unlocked." \
+      || echo "WARN: git-crypt unlock failed — org/ files still encrypted."
+    rm -f /tmp/_gckey_docker
+  else
+    echo "WARN: git-crypt key not found in Bitwarden — org/ files will remain encrypted."
+  fi
+fi
 
-# Clone if not present, pull if present
-if [ ! -d "\$REPO/.git" ]; then
-  git clone "\$GH_URL" "\$REPO" 2>/dev/null || true
+# --- Anthropic API Key ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/secrets.el 2>/dev/null; then
+  skip "ANTHROPIC_API_KEY (already in secrets.el)"
 else
-  cd "\$REPO" && git pull origin main 2>/dev/null || true
+  echo "==> Fetching Anthropic API key from Bitwarden..."
+  ANTHROPIC_API_KEY=$(bw get item "$BW_ANTHROPIC_ITEM" --session "$BW_SESSION" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(next((f['value'] for f in d.get('fields',[]) if f['name']=='$BW_FIELD'), ''))") || true
+  if [ -n "$ANTHROPIC_API_KEY" ]; then
+    _SECRET_TMP=$(mktemp)
+    printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SECRET_TMP"
+    docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
+    docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/secrets.el"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/secrets.el
+    rm -f "$_SECRET_TMP"
+    echo "    API key set in secrets.el."
+  else
+    echo "WARN: Anthropic API key not found in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
+  fi
 fi
 
-# Set up post-commit hook (beorg sync + auto-push)
-HOOK="\$REPO/.git/hooks/post-commit"
-if [ ! -f "\$HOOK" ]; then
-  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
-  chmod +x "\$HOOK"
-fi
-
-# Unlock git-crypt if key is present and repo is locked
-KEY="\$HOME/.git-crypt-key"
-if [ -f "\$KEY" ] && [ -d "\$REPO/.git" ]; then
-  git -C "\$REPO" crypt unlock "\$KEY" 2>/dev/null || true
-fi
-
-# Sync org files to beorg on startup
-[ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
-EOF
-  docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
-  docker exec --user root "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
-  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/bin/startup-sync.sh
-  rm -f "$_SYNC_TMP"
+# --- Claude Code credentials ---
+if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.claude/auth.json 2>/dev/null; then
+  skip "Claude Code credentials (already in container)"
+elif [ -f ~/.claude/auth.json ]; then
+  echo "==> Copying Claude Code credentials to container..."
+  docker cp ~/.claude/. "$DOCKER_CONTAINER":/home/emacs/.claude/
+  docker exec --user root "$DOCKER_CONTAINER" chown -R emacs:emacs /home/emacs/.claude/
+  echo "    Claude Code credentials copied."
+else
+  echo ""
+  echo "---------------------------------------------------------------------"
+  echo "NOTE: Claude Code not yet authenticated"
+  echo "---------------------------------------------------------------------"
+  echo "Run:  claude"
+  echo "Then re-run this script to copy credentials into the container."
+  echo "---------------------------------------------------------------------"
 fi
 
 # --- Create macOS app bundle in ~/Applications ---
@@ -736,87 +726,6 @@ alias emacs='(){
 }'
 ZSHEOF
   sed -i '' "s|CONTAINER_PLACEHOLDER|${DOCKER_CONTAINER}|g" ~/.zshrc
-fi
-
-# --- Anthropic API Key im Container setzen ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/secrets.el 2>/dev/null; then
-  skip "ANTHROPIC_API_KEY (already in secrets.el)"
-else
-  echo "==> Anthropic API Key aus Bitwarden holen..."
-  ANTHROPIC_API_KEY=$(bw get item "$BW_ANTHROPIC_ITEM" --session "$BW_SESSION" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(next(f['value'] for f in d.get('fields',[]) if f['name']=='$BW_FIELD'))") || true
-  if [ -n "$ANTHROPIC_API_KEY" ]; then
-    docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/.emacs.d && cat > ~/.emacs.d/secrets.el << 'SECRETEOF'
-(setenv \"ANTHROPIC_API_KEY\" \"${ANTHROPIC_API_KEY}\")
-SECRETEOF"
-    echo "    API Key in secrets.el gesetzt."
-  else
-    echo "WARN: Anthropic API Key nicht in Bitwarden gefunden (Item: $BW_ANTHROPIC_ITEM, Feld: $BW_FIELD)"
-  fi
-fi
-
-# --- Git-Identität im Container setzen ---
-if docker exec "$DOCKER_CONTAINER" git config --global user.email 2>/dev/null | grep -q "@"; then
-  skip "Git-Identität (already set)"
-else
-  echo "==> Git-Identität im Container setzen..."
-  docker exec "$DOCKER_CONTAINER" bash -c "git config --global user.email '${GIT_EMAIL}' && git config --global user.name '${GIT_NAME}'"
-fi
-
-# --- git-crypt im Container entsperren ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/null; then
-  skip "git-crypt key (already stored in container)"
-else
-  echo "==> git-crypt Key aus Bitwarden holen und Container entsperren..."
-  GC_KEY_B64=$(bw get item "$BW_ITEM" --session "$BW_SESSION" 2>/dev/null \
-    | python3 -c "import sys,json;d=json.load(sys.stdin);fields=d.get('fields',[]);key=[f['value'] for f in fields if f['name']=='${BW_FIELD}'];print(key[0].strip() if key else '')") || true
-  if [ -n "$GC_KEY_B64" ]; then
-    echo "$GC_KEY_B64" | tr -d '[:space:]' \
-      | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
-      > /tmp/_gckey_docker
-    docker cp /tmp/_gckey_docker "$DOCKER_CONTAINER:/home/emacs/.git-crypt-key"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.git-crypt-key
-    docker exec --user root "$DOCKER_CONTAINER" chmod 600 /home/emacs/.git-crypt-key
-    docker exec "$DOCKER_CONTAINER" git -C "/home/emacs/${GH_REPO}" crypt unlock /home/emacs/.git-crypt-key 2>/dev/null \
-      && echo "    git-crypt entsperrt." \
-      || echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
-    rm -f /tmp/_gckey_docker
-  else
-    echo "WARN: git-crypt Key nicht in Bitwarden gefunden — org/ Dateien bleiben verschlüsselt."
-  fi
-fi
-
-# --- GitHub credentials im Container einrichten ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-credentials 2>/dev/null; then
-  skip "GitHub credentials (already configured in container)"
-else
-  echo "==> GitHub credentials im Container einrichten..."
-  GH_TOKEN_CONTAINER=$(gh auth token 2>/dev/null) || true
-  if [ -n "$GH_TOKEN_CONTAINER" ]; then
-    docker exec "$DOCKER_CONTAINER" git config --global credential.helper store
-    docker exec "$DOCKER_CONTAINER" bash -c \
-      "printf 'https://${GH_USER}:%s@github.com\n' '${GH_TOKEN_CONTAINER}' > ~/.git-credentials && chmod 600 ~/.git-credentials"
-    echo "    GitHub credentials configured."
-  else
-    echo "WARN: GitHub token not available — container will not be able to clone/push."
-  fi
-fi
-
-# --- Claude Code credentials ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.claude/auth.json 2>/dev/null; then
-  skip "Claude Code credentials (already in container)"
-elif [ -f ~/.claude/auth.json ]; then
-  echo "==> Copying Claude Code credentials to container..."
-  docker cp ~/.claude/. "$DOCKER_CONTAINER":/home/emacs/.claude/
-  docker exec --user root "$DOCKER_CONTAINER" chown -R emacs:emacs /home/emacs/.claude/
-  echo "    Claude Code credentials copied."
-else
-  echo ""
-  echo "---------------------------------------------------------------------"
-  echo "HINWEIS: Claude Code noch nicht authentifiziert"
-  echo "---------------------------------------------------------------------"
-  echo "Führe zuerst aus:  claude"
-  echo "Dann das Skript erneut starten um die Credentials in den Container zu kopieren."
-  echo "---------------------------------------------------------------------"
 fi
 
 echo ""
