@@ -122,21 +122,29 @@ if colima status 2>/dev/null | grep -q "Running"; then
   skip "Colima (already running)"
 else
   echo "==> Starting Colima (Docker runtime)..."
-  colima start 2>/dev/null || true
+  colima start || { echo "ERROR: Colima start fehlgeschlagen."; exit 1; }
 fi
 
 # --- Docker context ---
-# Resolve Colima socket path (varies by version/platform)
+# Resolve Colima socket path — wait up to 30s for socket to appear
 COLIMA_SOCK=""
-for CANDIDATE in \
-    "$HOME/.colima/docker.sock" \
-    "$HOME/.colima/default/docker.sock"; do
-  [ -S "$CANDIDATE" ] && COLIMA_SOCK="$CANDIDATE" && break
+echo "==> Warte auf Colima socket..."
+for _I in $(seq 1 30); do
+  for CANDIDATE in \
+      "$HOME/.colima/docker.sock" \
+      "$HOME/.colima/default/docker.sock" \
+      "$HOME/.colima/_default/docker.sock"; do
+    [ -S "$CANDIDATE" ] && COLIMA_SOCK="$CANDIDATE" && break 2
+  done
+  sleep 1
 done
 if [ -z "$COLIMA_SOCK" ]; then
-  echo "ERROR: Colima socket not found — is Colima running?"
+  echo "ERROR: Colima socket nicht gefunden nach 30s."
+  echo "       Verfügbare Colima-Dateien:"
+  ls "$HOME/.colima/" 2>/dev/null || echo "       ~/.colima/ existiert nicht"
   exit 1
 fi
+echo "    Socket gefunden: $COLIMA_SOCK"
 # Create context if missing or broken
 if ! docker context inspect colima &>/dev/null 2>&1; then
   echo "==> Creating Docker context for Colima..."
