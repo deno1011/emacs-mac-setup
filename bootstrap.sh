@@ -243,17 +243,22 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
     "Emacs configuration and org files" || true
 
   if [ -n "${CONF_REPO:-}" ]; then
-    if _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config"; then
-      echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO hochladen..."
-      _CONF_B64=$(base64 -i "$CONFIG_FILE" | tr -d '\n')
+    _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config" || true
+    echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO hochladen..."
+    _CONF_B64=$(base64 -i "$CONFIG_FILE" | tr -d '\n')
+    _CONF_SHA=$(gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" --jq '.sha' 2>/dev/null || true)
+    if [ -n "$_CONF_SHA" ]; then
       gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
-        -X PUT \
-        -f message="Initial config" \
-        -f content="$_CONF_B64" \
+        -X PUT -f message="Update config" -f content="$_CONF_B64" -f sha="$_CONF_SHA" \
+        &>/dev/null && echo "    setup-emacs-mac.conf aktualisiert." \
+        || echo "WARN: Upload fehlgeschlagen — bitte setup-emacs-mac.conf manuell in $GH_USER/$CONF_REPO ablegen."
+    else
+      gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
+        -X PUT -f message="Initial config" -f content="$_CONF_B64" \
         &>/dev/null && echo "    setup-emacs-mac.conf hochgeladen." \
         || echo "WARN: Upload fehlgeschlagen — bitte setup-emacs-mac.conf manuell in $GH_USER/$CONF_REPO ablegen."
-      unset _CONF_B64
     fi
+    unset _CONF_B64 _CONF_SHA
   fi
 fi
 
@@ -267,5 +272,10 @@ echo "    bash $DEST/setup-emacs-native-plus-mac.sh      # recommended (LSP, nat
 echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad"
 echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
 echo ""
+if [ -n "${GH_USER:-}" ] && [ -n "${CONF_REPO:-}" ]; then
+  echo "  On a new Mac, skip config questions by passing your config repo:"
+  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh) $GH_USER/$CONF_REPO"
+  echo ""
+fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
 echo ""
