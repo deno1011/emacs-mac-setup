@@ -6,6 +6,10 @@
 
 set -e
 
+# Ensure Homebrew is in PATH (Apple Silicon: /opt/homebrew, Intel: /usr/local)
+[ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+
 # --- Homebrew ---
 if ! command -v brew &>/dev/null; then
   echo "==> Installing Homebrew (sudo password required)..."
