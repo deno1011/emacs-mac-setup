@@ -1106,7 +1106,7 @@
 (setq org-export-with-timestamps nil)
 (setq org-export-coding-system 'utf-8)
 (setq org-babel-results-keyword "results")
-(setq org-startup-with-inline-images nil)
+(setq org-startup-with-inline-images t)
 (setq org-src-fontify-natively t)
 (setq org-src-preserve-indentation nil)
 (setq org-edit-src-content-indentation 0)
@@ -1134,6 +1134,293 @@
     (my/brew-install-and-log "formula" "texlive" "install" "texlive")
     (message "LaTeX not found — installing brew texlive in background. Restart Emacs when done.")))
 #+end_src
+
+* Inline Graphics & Math Preview
+
+Brücke zwischen org-mode, Babel und Claude-Executor: alle inline-render-
+baren Grafiken (mathematische Plots, Diagramme, LaTeX-Math) zentral
+konfiguriert plus Auto-Install der externen Tools via brew.
+
+** Übersicht
+
+*** Was inline gerendert wird
+
+| Quelle              | Mechanismus                       | Trigger                     |
+|---------------------+-----------------------------------+-----------------------------|
+| LaTeX-Math (~$...$~)| dvipng / imagemagick → PNG        | ~C-c C-x C-l~, org-fragtog  |
+| Babel ~:file foo.png~ | matplotlib o.ä. → PNG schreiben | ~C-c C-c~, after-exec hook  |
+| ~gnuplot~           | ob-gnuplot → PNG                  | ~C-c C-c~                   |
+| ~R~ / ggplot        | ob-R, PNG-Output                  | ~C-c C-c~                   |
+| ~dot~ (graphviz)    | ob-dot → PNG                      | ~C-c C-c~                   |
+| ~plantuml~          | ob-plantuml (jar/exec)            | ~C-c C-c~                   |
+| ~mermaid~           | ob-mermaid via mmdc               | ~C-c C-c~                   |
+
+*** External-Tools
+
+~gnuplot~, ~r~, ~graphviz~, ~plantuml~, ~mermaid-cli~ — werden weiter
+unten per brew auto-installiert (analog zum texlive-Pattern aus
+=* Export & Babel=).
+
+*** Verhältnis zum Claude-Executor
+
+Der Standard-Babel-Pfad im Claude-Executor (Temp-File + Shell-CLI)
+umgeht ~org-babel-after-execute-hook~ → generierte Bilder erscheinen
+nicht inline. Die unten definierte *Bridge* erkennt Grafik-Blöcke und
+delegiert stattdessen an ~org-babel-execute-src-block~ — damit greift
+der inline-image-Hook automatisch.
+
+** Inline-Image-Defaults
+
+#+begin_src emacs-lisp
+;; Bilder beim Öffnen einer Datei direkt anzeigen
+(setq org-startup-with-inline-images t)
+
+;; Plots auf max 800px Breite begrenzen, sonst überfüllen sie den Buffer
+(setq org-image-actual-size '(800))
+
+;; Nach jeder Babel-Ausführung Bilder neu zeichnen
+(setq org-redisplay-inline-images t)
+#+end_src
+
+** External-Tools Auto-Install (brew)
+
+Pattern wie bei texlive: pro Tool checken ob das Binary da ist; falls
+nicht → ~brew install~ im Hintergrund + Log-Eintrag.
+
+#+begin_src emacs-lisp
+(dolist (tool '(("gnuplot"  . "gnuplot")
+                ("R"        . "r")
+                ("dot"      . "graphviz")
+                ("plantuml" . "plantuml")
+                ("mmdc"     . "mermaid-cli")))
+  (let ((bin (car tool)) (formula (cdr tool)))
+    (unless (executable-find bin)
+      (when (executable-find "brew")
+        (my/brew-install-and-log "formula" formula "install" formula)
+        (message "%s nicht gefunden — installiere brew %s im Hintergrund. Emacs neu starten."
+                 bin formula)))))
+#+end_src
+
+** Babel-Sprachen für Grafiken aktivieren
+
+Erweitert die Liste aus =* Export & Babel= um die Plot/Diagramm-Sprachen.
+~ob-mermaid~ wird im nächsten Block geladen und dann hinzugefügt.
+
+#+begin_src emacs-lisp
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ '((emacs-lisp . t)
+   (python     . t)
+   (shell      . t)
+   (latex      . t)
+   (gnuplot    . t)
+   (R          . t)
+   (dot        . t)
+   (plantuml   . t)))
+#+end_src
+
+** LaTeX-Preview Auto-Toggle (org-fragtog)
+
+Beim Cursor-Eintritt in eine LaTeX-Math-Region wird das Preview-Bild
+durch den Source ersetzt; beim Verlassen wieder gerendert. Killer-
+Feature für Mathe-Notebooks.
+
+#+begin_src emacs-lisp
+(use-package org-fragtog
+  :ensure t
+  :hook (org-mode . org-fragtog-mode))
+
+;; Imagemagick als Fallback wenn dvipng fehlt (z.B. auf Apple Silicon
+;; ohne TeXLive-Bins)
+(when (and (not (executable-find "dvipng"))
+           (or (executable-find "magick") (executable-find "convert")))
+  (setq org-preview-latex-default-process 'imagemagick))
+#+end_src
+
+** Diagramm-Sprach-Modes
+
+Syntax-Highlighting für die Diagramm-Sprachen plus ~ob-mermaid~ für
+Mermaid-Diagramme (kein eingebautes ob-Backend).
+
+#+begin_src emacs-lisp
+(use-package gnuplot :ensure t)
+
+(use-package graphviz-dot-mode :ensure t)
+
+(use-package plantuml-mode
+  :ensure t
+  :config
+  (setq plantuml-default-exec-mode 'executable)
+  (when (executable-find "plantuml")
+    (setq org-plantuml-exec-mode 'plantuml)))
+
+(use-package ob-mermaid
+  :ensure t
+  :config
+  ;; mermaid ergänzen, ohne die obige Liste zu duplizieren
+  (add-to-list 'org-babel-load-languages '(mermaid . t))
+  (org-babel-do-load-languages
+   'org-babel-load-languages org-babel-load-languages))
+#+end_src
+
+** Skeletons für Plot-Blöcke
+
+Schnelles Einfügen via Abbrev (~splot~ → matplotlib, ~sgnu~ → gnuplot).
+
+#+begin_src emacs-lisp
+(define-skeleton skel-org-plot-python
+  "Insert a Python/matplotlib plot block with file output."
+  "Filename (z.B. plot.png): "
+  "#+begin_src python :results file graphics :file " str "\n"
+  "import matplotlib.pyplot as plt\n"
+  "import numpy as np\n\n"
+  _ "\n\n"
+  "plt.savefig('" str "')\n"
+  "#+end_src\n")
+(define-abbrev org-mode-abbrev-table "splot" "" 'skel-org-plot-python)
+
+(define-skeleton skel-org-plot-gnuplot
+  "Insert a gnuplot block."
+  "Filename (z.B. fn.png): "
+  "#+begin_src gnuplot :file " str "\n"
+  "set terminal png size 800,500\n"
+  "set xlabel 'x'\n"
+  "set ylabel 'y'\n"
+  _ "\n"
+  "#+end_src\n")
+(define-abbrev org-mode-abbrev-table "sgnu" "" 'skel-org-plot-gnuplot)
+#+end_src
+
+** Claude-Executor Bridge für Grafik-Blöcke
+
+Erkennt Plot/Diagramm-Blöcke in Claude-Antworten und führt sie nativ
+aus, statt durch den Shell-Wrapper zu gehen.
+
+*** Detektor
+
+#+begin_src emacs-lisp
+(defun claude-executor--graphics-block-p (block)
+  "Liefert t wenn BLOCK ein Plot/Diagramm-Block ist.
+Erkannt anhand der Sprache ODER eines :file-Headers."
+  (let ((lang (plist-get block :lang))
+        (hdr  (or (plist-get block :header) "")))
+    (or (member lang '("gnuplot" "dot" "plantuml" "mermaid" "R"))
+        (string-match-p ":file\\s-+\\S-+" hdr))))
+#+end_src
+
+*** Native Ausführung mit inline-image Hook
+
+#+begin_src emacs-lisp
+(defun claude-executor--execute-graphics-block (block)
+  "Führt BLOCK via org-babel-execute-src-block aus.
+BLOCK muss im aktuellen Buffer liegen (Response-Region).
+Logs landen in *Claude Actions*."
+  (let ((log-buf (get-buffer-create "*Claude Actions*")))
+    (save-excursion
+      (goto-char (plist-get block :begin))
+      (forward-line 1)
+      (let ((org-confirm-babel-evaluate nil))
+        (condition-case err
+            (progn
+              (org-babel-execute-src-block)
+              (with-current-buffer log-buf
+                (goto-char (point-max))
+                (insert (format "\n✓ [%s] Grafik gerendert: %s\n"
+                                (format-time-string "%H:%M:%S")
+                                (plist-get block :lang)))))
+          (error
+           (with-current-buffer log-buf
+             (goto-char (point-max))
+             (insert (format "\n✗ [%s] Grafik-Block Fehler: %s\n"
+                             (format-time-string "%H:%M:%S") err))
+             (display-buffer log-buf))))))))
+#+end_src
+
+*** Bridge: vorhandenen Babel-Executor erweitern
+
+Plot-Blöcke gehen den nativen Weg, alle anderen wie bisher durch
+~claude-executor--do-execute~.
+
+#+begin_src emacs-lisp
+(advice-add 'claude-executor--execute-babel-block :around
+            (lambda (orig-fun block)
+              (if (claude-executor--graphics-block-p block)
+                  (claude-executor--execute-graphics-block block)
+                (funcall orig-fun block))))
+#+end_src
+
+*** Eigener Hook: Grafiken immer rendern, auch ohne auto-execute
+
+Plot-Blöcke sind read-only und sicher → werden auch dann ausgeführt
+wenn ~claude-executor-auto-execute~ aus ist.
+
+#+begin_src emacs-lisp
+(defun claude-executor-graphics-hook (beg end)
+  "Findet und rendert alle Grafik-Blöcke in der Antwort-Region.
+Unabhängig von `claude-executor-auto-execute'."
+  (save-restriction
+    (narrow-to-region beg end)
+    (dolist (block (claude-executor--find-babel-blocks))
+      (when (claude-executor--graphics-block-p block)
+        (claude-executor--execute-graphics-block block)))))
+
+(add-hook 'gptel-post-response-functions
+          #'claude-executor-graphics-hook)
+#+end_src
+
+** Beispiele
+
+*** Mathematische Funktion plotten (gnuplot)
+
+#+begin_example
+,#+begin_src gnuplot :file sin.png
+set terminal png size 800,500
+plot [0:2*pi] sin(x), cos(x)
+,#+end_src
+#+end_example
+
+*** matplotlib via Python
+
+#+begin_example
+,#+begin_src python :results file graphics :file curve.png
+import numpy as np, matplotlib.pyplot as plt
+x = np.linspace(0, 10, 200)
+plt.plot(x, np.sin(x))
+plt.savefig('curve.png')
+,#+end_src
+#+end_example
+
+*** Statistik-Plot mit R/ggplot
+
+#+begin_example
+,#+begin_src R :file iris.png :results graphics file
+library(ggplot2)
+ggplot(iris, aes(Sepal.Length, Sepal.Width, color=Species)) + geom_point()
+,#+end_src
+#+end_example
+
+*** LaTeX-Math inline
+
+Tippe ~$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$~ und verlasse
+das Math-Environment — ~org-fragtog~ rendert automatisch zum PNG.
+
+*** Graphviz / dot
+
+#+begin_example
+,#+begin_src dot :file graph.png
+digraph G { rankdir=LR; A -> B -> C; A -> C }
+,#+end_src
+#+end_example
+
+*** Mermaid Sequenzdiagramm
+
+#+begin_example
+,#+begin_src mermaid :file seq.png
+sequenceDiagram
+  Alice->>Bob: Hi
+  Bob-->>Alice: Hallo
+,#+end_src
+#+end_example
 
 * Abbreviations & Skeletons
 #+begin_src emacs-lisp
@@ -1802,6 +2089,47 @@ TODO einfügen:
 
 Datei öffnen:
 (find-file \"~/datei.org\")
+
+GRAFIKEN UND PLOTS:
+Wenn der User einen Plot, Graphen, Diagramm oder mathematische Funktion
+visualisieren will, antworte mit einem Babel-Block in passender Sprache
+und einem :file-Header. Diese Blöcke werden automatisch nativ via
+org-babel-execute-src-block ausgeführt — das Bild erscheint inline.
+KEIN :AUTORUN bei Grafik-Blöcken.
+
+Mathematische Funktion (gnuplot):
+,#+begin_src gnuplot :file sin.png
+set terminal png size 800,500
+plot [0:2*pi] sin(x), cos(x)
+,#+end_src
+
+Allgemeiner Plot mit matplotlib:
+,#+begin_src python :results file graphics :file plot.png
+import numpy as np, matplotlib.pyplot as plt
+x = np.linspace(0, 10, 200)
+plt.plot(x, np.sin(x))
+plt.savefig('plot.png')
+,#+end_src
+
+Statistik mit R/ggplot:
+,#+begin_src R :file stats.png :results graphics file
+library(ggplot2)
+ggplot(mtcars, aes(wt, mpg)) + geom_point()
+,#+end_src
+
+Diagramm mit graphviz:
+,#+begin_src dot :file graph.png
+digraph G { A -> B; B -> C }
+,#+end_src
+
+Sequenzdiagramm mit mermaid:
+,#+begin_src mermaid :file seq.png
+sequenceDiagram
+  Alice->>Bob: Hi
+,#+end_src
+
+LaTeX-Math inline schreibst du einfach mit $...$ oder \\\\[...\\\\] —
+org-fragtog rendert beim Cursor-Move automatisch.
 
 Antworte immer auf Deutsch.
 Führe Aktionen direkt aus ohne lange zu erklären."))
