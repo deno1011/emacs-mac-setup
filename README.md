@@ -8,7 +8,6 @@ Automated Emacs setup for macOS. Three installation variants share a common conf
 
 **Have these ready before you begin:**
 
-- [ ] [Homebrew](https://brew.sh) installed
 - [ ] GitHub account + personal access token — Settings › Developer settings › Personal access tokens › Classic › scope: `repo`
 - [ ] Bitwarden account with vault entries (`setup-bitwarden.sh` creates these interactively):
 
@@ -101,8 +100,8 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 
 **System:**
 - macOS 13 Ventura or newer
-- [Homebrew](https://brew.sh)
 - iCloud Drive enabled (native variants store the repo in iCloud)
+- Homebrew — installed automatically by `bootstrap.sh` if not present
 - XQuartz — Docker GUI only, installed automatically
 
 **Accounts:**
