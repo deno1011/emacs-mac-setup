@@ -1310,11 +1310,17 @@ aus, statt durch den Shell-Wrapper zu gehen.
 
 #+begin_src emacs-lisp
 (defun claude-executor--graphics-block-p (block)
-  "Liefert t wenn BLOCK ein Plot/Diagramm-Block ist.
-Erkannt anhand der Sprache ODER eines :file-Headers."
+  "Liefert t wenn BLOCK nativ via `org-babel-execute-src-block' laufen soll.
+Trifft zu für:
+- Plot/Diagramm-Sprachen (gnuplot, dot, plantuml, mermaid, R)
+- Blöcke mit :file-Header (jede Sprache, die ein File schreibt)
+- elisp / emacs-lisp (damit der Code Zugriff auf den laufenden
+  Emacs-State hat, z.B. (org-agenda-files), Buffer, Variablen — der
+  Shell-Wrapper würde ein separates Batch-Emacs starten ohne State)."
   (let ((lang (plist-get block :lang))
         (hdr  (or (plist-get block :header) "")))
-    (or (member lang '("gnuplot" "dot" "plantuml" "mermaid" "R"))
+    (or (member lang '("gnuplot" "dot" "plantuml" "mermaid" "R"
+                       "elisp" "emacs-lisp"))
         (string-match-p ":file\\s-+\\S-+" hdr))))
 #+end_src
 
@@ -2143,25 +2149,58 @@ org-fragtog rendert beim Cursor-Move automatisch.
 
 AUSFÜHRUNG IST PFLICHT:
 Jeder Code-Block den du schreibst MUSS so geschrieben sein, dass er
-automatisch ausgeführt wird UND Output produziert. Drei Wege:
+automatisch ausgeführt wird UND (falls Output erwartet) ein sichtbares
+Ergebnis produziert.
 
-(A) Elisp / Emacs-Aktionen → :AUTORUN
+ENTSCHEIDUNGSREGEL — was nimmst du wann:
+
+  Will der User eine AKTION (etwas tun, Side-Effect)?
+    → :AUTORUN — Result-Log in *Claude Actions*, im Buffer nicht sichtbar.
+    Beispiele: Datei öffnen, TODO einfügen, Fenster schließen, Buffer wechseln.
+
+  Will der User DATEN sehen (Information aus Emacs/org/dem System)?
+    → Babel mit :results output — Result erscheint als #+RESULTS:
+    direkt unter dem Block. ELISP-Babel ist Pflicht für alles was den
+    laufenden Emacs-State liest (Agenda, Buffer, Variablen).
+    Beispiele: TODOs auflisten, Tag-Zähler, Datei-Inhalte zeigen.
+
+  Will der User ein BILD / einen Plot?
+    → Babel mit :file foo.png (siehe Grafik-Beispiele oben).
+
+(A) AUTORUN — für Aktionen:
     ,#+begin_src elisp :AUTORUN
     (dein-code)
     ,#+end_src
 
-(B) Berechnung / Shell-Output → Babel mit :results output
-    Output erscheint automatisch als #+RESULTS: unter dem Block.
+(B) Babel :results output — für Daten:
     Standard-Header je Sprache:
+      elisp:  ,#+begin_src elisp :results output
       python: ,#+begin_src python :results output
       sh:     ,#+begin_src sh     :results output
       bash:   ,#+begin_src bash   :results output
       R:      ,#+begin_src R      :results output
 
-(C) Grafik / Plot → Babel mit :file foo.png
-    Bild erscheint inline (siehe Beispiele oben).
+(C) Babel :file — für Grafiken (siehe oben).
 
 Konkrete Beispiele:
+
+Alle TODOs aus den Agenda-Dateien auflisten (elisp, liest Org-State):
+,#+begin_src elisp :results output
+(dolist (file (org-agenda-files))
+  (with-current-buffer (find-file-noselect file)
+    (org-map-entries
+     (lambda ()
+       (when (org-get-todo-state)
+         (princ (format \"%-8s %s\\n\"
+                        (org-get-todo-state)
+                        (org-get-heading t t t t))))))))
+,#+end_src
+
+Aktuelle Buffer-Liste:
+,#+begin_src elisp :results output
+(dolist (b (buffer-list))
+  (princ (format \"%s\\n\" (buffer-name b))))
+,#+end_src
 
 Python-Berechnung:
 ,#+begin_src python :results output
