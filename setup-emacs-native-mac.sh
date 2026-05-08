@@ -146,11 +146,17 @@ if [ -n "$GH_USER" ]; then
     echo "==> GitHub CLI mit Token aus Bitwarden authentifizieren..."
     GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
     if [ -n "$GH_TOKEN" ]; then
-      echo "$GH_TOKEN" | gh auth login --with-token
-      gh auth setup-git
+      if echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null; then
+        gh auth setup-git
+      else
+        echo "WARN: GitHub Token abgelaufen oder ungültig — bitte manuell einloggen:"
+        gh auth login < /dev/tty
+        gh auth setup-git
+      fi
     else
       echo "WARN: GitHub Token nicht in Bitwarden gefunden. Bitte manuell:"
-      gh auth login
+      gh auth login < /dev/tty
+      gh auth setup-git
     fi
   fi
 
@@ -178,6 +184,11 @@ if [ -n "$GH_USER" ]; then
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
   else
     echo "==> Repo nach iCloud klonen..."
+    if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
+      echo "ERROR: iCloud Drive nicht verfügbar."
+      echo "       Bitte iCloud Drive in Systemeinstellungen aktivieren und erneut ausführen."
+      exit 1
+    fi
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
     if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
