@@ -70,6 +70,17 @@ else
   echo "==> GitHub nicht konfiguriert — lokale Config wird verwendet."
 fi
 
+# --- Homebrew ---
+if ! command -v brew &>/dev/null; then
+  echo "ERROR: Homebrew nicht gefunden. Bitte installieren: https://brew.sh"
+  exit 1
+fi
+
+# --- Stale symlinks vorab bereinigen (verhindert brew link-Fehler) ---
+for _PKG in node coreutils; do
+  brew unlink "$_PKG" 2>/dev/null || true
+done
+
 # --- Bitwarden vorab entsperren (nur im GitHub-Modus) ---
 if [ -n "$GH_USER" ]; then
   if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ ! -f "$EMACS_SECRETS" ]; then
@@ -79,12 +90,6 @@ if [ -n "$GH_USER" ]; then
     fi
     bw_ensure_session || exit 1
   fi
-fi
-
-# --- Homebrew ---
-if ! command -v brew &>/dev/null; then
-  echo "ERROR: Homebrew nicht gefunden. Bitte installieren: https://brew.sh"
-  exit 1
 fi
 
 # --- Tools (nur im GitHub-Modus) ---
