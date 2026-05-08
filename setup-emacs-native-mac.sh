@@ -213,18 +213,37 @@ HOOKEOF
     echo "    iCloud-Repo eingerichtet."
   fi
 
-  # --- git-crypt: immer prüfen und ggf. entsperren ---
+  # --- git-crypt: initialisieren (frisches Repo) oder entsperren (verschlüsselt) ---
+  _GC_INITIALIZED=false
+  [ -d "$ICLOUD_REPO_PATH/.git/git-crypt" ] && _GC_INITIALIZED=true
+
   _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/org" -name "*.org" 2>/dev/null | head -1)
-  if [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data"; then
-    echo "==> org/ Dateien verschlüsselt — git-crypt entsperren..."
+  _FILES_ENCRYPTED=false
+  [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
+
+  if [ "$_GC_INITIALIZED" = false ] || [ "$_FILES_ENCRYPTED" = true ]; then
     GC_KEY=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
     if [ -n "$GC_KEY" ]; then
       if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
-        if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
-          git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
-          echo "    git-crypt entsperrt und org/ ausgecheckt."
+        if [ "$_GC_INITIALIZED" = false ]; then
+          echo "==> git-crypt initialisieren (frisches Repo)..."
+          (cd "$ICLOUD_REPO_PATH" && git crypt init) 2>/dev/null
+          cp /tmp/gckey "$ICLOUD_REPO_PATH/.git/git-crypt/keys/default"
+          if [ ! -f "$ICLOUD_REPO_PATH/.gitattributes" ]; then
+            echo "org/** filter=git-crypt diff=git-crypt" > "$ICLOUD_REPO_PATH/.gitattributes"
+            git -C "$ICLOUD_REPO_PATH" add .gitattributes
+            git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
+              commit -m "Add git-crypt for org/ directory" 2>/dev/null || true
+            git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
+          fi
+          echo "    git-crypt initialisiert."
         else
-          echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
+          if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
+            git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
+            echo "    git-crypt entsperrt und org/ ausgecheckt."
+          else
+            echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
+          fi
         fi
       else
         echo "WARN: Bitwarden-Wert ist kein gültiges Base64."
