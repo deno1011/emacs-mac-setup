@@ -160,7 +160,13 @@ fi
 if [ "$CONF_PULLED" = true ]; then
   echo "  Personal config pulled and ready."
 fi
-bash "$DEST/fill-config.sh"
+
+_cfg_name=$(grep "^GIT_NAME=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+_cfg_email=$(grep "^GIT_EMAIL=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+if [ -z "$_cfg_name" ] || [ -z "$_cfg_email" ]; then
+  bash "$DEST/fill-config.sh"
+fi
+unset _cfg_name _cfg_email
 
 # --- Bitwarden setup ---
 source "$CONFIG_FILE"
