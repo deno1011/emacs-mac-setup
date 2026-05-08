@@ -26,31 +26,31 @@ CONF_REPO=""
 # Name des GitHub-Repos das deine Emacs-Config enthält
 # Nur der Repo-Name, kein Username — GH_USER wird automatisch vorangestellt
 # Beispiel: GH_REPO="emacs-config"  →  github.com/janedoe/emacs-config
-GH_REPO="emacs-config"
+GH_REPO=""
 
 # Name des Bitwarden-Eintrags der den git-crypt Schlüssel enthält
 # Beispiel: BW_ITEM="emacs-git-crypt-key"
-BW_ITEM="emacs-git-crypt-key"
+BW_ITEM=""
 
 # Name des Custom Fields in Bitwarden wo alle Schlüssel gespeichert sind
 # Gilt für git-crypt Key, GitHub Token und Anthropic API Key
 # Beispiel: BW_FIELD="Key"
-BW_FIELD="Key"
+BW_FIELD=""
 
 # Name des Eintrags im Mac Keychain der das Bitwarden-Masterpasswort speichert
 # Beispiel: BW_KEYCHAIN_SERVICE="bitwarden-master"
-BW_KEYCHAIN_SERVICE="bitwarden-master"
+BW_KEYCHAIN_SERVICE=""
 
 # Account-Name im Mac Keychain (automatisch = Mac-Benutzername)
 BW_KEYCHAIN_ACCOUNT="$USER"
 
 # Name des Bitwarden-Eintrags mit dem GitHub CLI Token (für gh auth)
 # Beispiel: BW_GH_ITEM="github-cli-token"
-BW_GH_ITEM="github-cli-token"
+BW_GH_ITEM=""
 
 # Name des Bitwarden-Eintrags mit dem Anthropic API Key (für gptel)
 # Beispiel: BW_ANTHROPIC_ITEM="anthropic-api-key"
-BW_ANTHROPIC_ITEM="anthropic-api-key"
+BW_ANTHROPIC_ITEM=""
 
 # Name des lokalen Docker-Images (nur für Docker-Setup relevant)
 # Beispiel: DOCKER_IMAGE="emacs-dev"
