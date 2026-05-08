@@ -16,12 +16,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 _get_value() {
-  local _raw
-  _raw=$(grep "^${1}=" "$CONFIG_FILE" 2>/dev/null | head -1)
-  _raw="${_raw#*=}"   # strip KEY= prefix
-  _raw="${_raw%\"}"   # strip trailing "
-  _raw="${_raw#\"}"   # strip leading "
-  printf '%s' "$_raw"
+  grep "^${1}=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'
 }
 
 # Ask only if not set. Saves immediately on input.
