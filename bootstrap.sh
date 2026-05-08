@@ -206,6 +206,80 @@ else
   echo "  Run $DEST/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
 fi
 
+# --- GitHub auth (mit Token aus Bitwarden) ---
+if [ -n "$GH_USER" ]; then
+  if ! command -v gh &>/dev/null; then
+    echo "==> Installing GitHub CLI..."
+    brew install gh &>/dev/null
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+  fi
+  if gh auth status &>/dev/null 2>&1; then
+    echo "==> GitHub auth: bereits authentifiziert."
+  else
+    echo "==> GitHub authentifizieren..."
+    source "$DEST/bw-unlock.sh" 2>/dev/null || true
+    _BS_GH_TOKEN=""
+    if bw_ensure_session 2>/dev/null; then
+      _BS_GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD" 2>/dev/null) || true
+    fi
+    if [ -n "$_BS_GH_TOKEN" ]; then
+      echo "$_BS_GH_TOKEN" | gh auth login --with-token
+      gh auth setup-git
+      echo "    GitHub authentifiziert."
+    else
+      echo "    Token nicht in Bitwarden gefunden — manueller Login:"
+      gh auth login < /dev/tty
+      gh auth setup-git
+    fi
+    unset _BS_GH_TOKEN
+  fi
+fi
+
+# --- GitHub Repos prüfen und anlegen ---
+if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
+  echo ""
+  echo "==> GitHub Repos prüfen..."
+  source "$CONFIG_FILE"
+
+  _create_repo_if_missing() {
+    local REPO_NAME="$1" DESC="$2"
+    if gh repo view "$GH_USER/$REPO_NAME" &>/dev/null 2>&1; then
+      echo "    $GH_USER/$REPO_NAME — bereits vorhanden."
+      return 1  # already existed
+    fi
+    echo "==> Repo $GH_USER/$REPO_NAME nicht gefunden — anlegen..."
+    gh repo create "$GH_USER/$REPO_NAME" --private --description "$DESC"
+    echo "    $GH_USER/$REPO_NAME erstellt."
+    return 0  # was created
+  }
+
+  _create_repo_if_missing "${GH_REPO:-emacs-config}" \
+    "Emacs configuration and org files" || true
+
+  if [ -n "${CONF_REPO:-}" ]; then
+    if _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config"; then
+      # Frisch angelegt — Config hineinpushen
+      echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO pushen..."
+      _CTMP=$(mktemp -d)
+      git -C "$_CTMP" init
+      git -C "$_CTMP" branch -M main 2>/dev/null || true
+      cp "$CONFIG_FILE" "$_CTMP/setup-emacs-mac.conf"
+      git -C "$_CTMP" config user.email "${GIT_EMAIL:-bootstrap@setup}"
+      git -C "$_CTMP" config user.name "${GIT_NAME:-Bootstrap}"
+      git -C "$_CTMP" add setup-emacs-mac.conf
+      git -C "$_CTMP" commit -m "Initial config"
+      git -C "$_CTMP" remote add origin "https://github.com/$GH_USER/$CONF_REPO.git"
+      git -C "$_CTMP" push -u origin main
+      rm -rf "$_CTMP"
+      echo "    Config gepusht."
+    fi
+  fi
+fi
+
+echo ""
+echo "======================================================================"
+echo "Bootstrap complete!"
+echo "======================================================================"
 echo ""
 echo "  Run a setup script when ready:"
 echo "    bash $DEST/setup-emacs-native-plus-mac.sh      # recommended (LSP, native comp)"
