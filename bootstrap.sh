@@ -213,15 +213,15 @@ if [ -n "$GH_USER" ]; then
     echo "==> GitHub authentifizieren..."
     source "$DEST/bw-unlock.sh" 2>/dev/null || true
     _BS_GH_TOKEN=""
-    if bw_ensure_session 2>/dev/null; then
-      _BS_GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD" 2>/dev/null) || true
+    if bw_ensure_session; then
+      _BS_GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
     fi
     if [ -n "$_BS_GH_TOKEN" ]; then
       echo "$_BS_GH_TOKEN" | gh auth login --with-token
       gh auth setup-git
       echo "    GitHub authentifiziert."
     else
-      echo "    Token nicht in Bitwarden gefunden — manueller Login:"
+      echo "    WARN: GitHub-Token nicht in Bitwarden gefunden — manueller Login:"
       gh auth login < /dev/tty
       gh auth setup-git
     fi
