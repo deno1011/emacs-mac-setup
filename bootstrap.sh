@@ -122,8 +122,10 @@ else:
           _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
   fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-    if gh repo clone "$CONF_REPO" "$CONF_TMP/conf" &>/dev/null 2>&1; then
-      CONF_PULLED=true
+    if gh api "repos/$CONF_REPO/tarball" --output "$CONF_TMP/conf.tgz" &>/dev/null 2>&1; then
+      mkdir -p "$CONF_TMP/conf"
+      tar -xz -C "$CONF_TMP/conf" --strip-components=1 -f "$CONF_TMP/conf.tgz" &>/dev/null 2>&1 \
+        && CONF_PULLED=true
     fi
   fi
   # Fallback: try unauthenticated (works if repo is public, fails silently if private)
@@ -220,7 +222,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
 
   _create_repo_if_missing() {
     local REPO_NAME="$1" DESC="$2"
-    if gh repo view "$GH_USER/$REPO_NAME" &>/dev/null 2>&1; then
+    if gh api "repos/$GH_USER/$REPO_NAME" &>/dev/null 2>&1; then
       echo "    $GH_USER/$REPO_NAME — bereits vorhanden."
       return 1  # already existed
     fi
