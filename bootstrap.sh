@@ -149,29 +149,10 @@ if [ "$CONF_PULLED" = false ]; then
   echo "==> setup-emacs-mac.conf created from template."
 fi
 
-_config_is_filled() {
-  local _name _user
-  _name=$(grep '^GIT_NAME=' "$CONFIG_FILE" | sed 's/^[^=]*=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
-  _user=$(grep '^GH_USER='  "$CONFIG_FILE" | sed 's/^[^=]*=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
-  [ -n "$_name" ] && [ -n "$_user" ]
-}
-
 if [ "$CONF_PULLED" = true ]; then
   echo "  Personal config pulled and ready."
-  if ! _config_is_filled; then
-    echo ""
-    bash "$DEST/fill-config.sh"
-  fi
-else
-  if _config_is_filled; then
-    echo "  Config already filled in — skipping."
-    echo "  To update values run:  bash $DEST/fill-config.sh"
-  else
-    echo "  Config created from template — fill in your details."
-    echo ""
-    bash "$DEST/fill-config.sh"
-  fi
 fi
+bash "$DEST/fill-config.sh"
 
 # --- Bitwarden setup ---
 source "$CONFIG_FILE"
