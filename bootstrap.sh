@@ -143,8 +143,8 @@ else:
   rm -rf "$CONF_TMP"
 fi
 
-# --- Always ensure config exists (copy template if not pulled) ---
-if [ "$CONF_PULLED" = false ]; then
+# --- Ensure config exists (copy template only if not yet present) ---
+if [ "$CONF_PULLED" = false ] && [ ! -f "$CONFIG_FILE" ]; then
   cp "$DEST/setup-emacs-mac.conf.template" "$CONFIG_FILE"
   echo "==> setup-emacs-mac.conf created from template."
 fi
