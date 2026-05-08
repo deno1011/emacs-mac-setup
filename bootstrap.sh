@@ -225,7 +225,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
       return 1  # already existed
     fi
     echo "==> Repo $GH_USER/$REPO_NAME nicht gefunden — anlegen..."
-    if gh repo create "$GH_USER/$REPO_NAME" --private --description "$DESC" >/dev/null; then
+    if gh api user/repos -X POST -f name="$REPO_NAME" -f private=true -f description="$DESC" >/dev/null; then
       echo "    $GH_USER/$REPO_NAME erstellt."
       return 0  # was created
     else
