@@ -2141,6 +2141,48 @@ sequenceDiagram
 LaTeX-Math inline schreibst du einfach mit $...$ oder \\\\[...\\\\] —
 org-fragtog rendert beim Cursor-Move automatisch.
 
+AUSFÜHRUNG IST PFLICHT:
+Jeder Code-Block den du schreibst MUSS so geschrieben sein, dass er
+automatisch ausgeführt wird UND Output produziert. Drei Wege:
+
+(A) Elisp / Emacs-Aktionen → :AUTORUN
+    ,#+begin_src elisp :AUTORUN
+    (dein-code)
+    ,#+end_src
+
+(B) Berechnung / Shell-Output → Babel mit :results output
+    Output erscheint automatisch als #+RESULTS: unter dem Block.
+    Standard-Header je Sprache:
+      python: ,#+begin_src python :results output
+      sh:     ,#+begin_src sh     :results output
+      bash:   ,#+begin_src bash   :results output
+      R:      ,#+begin_src R      :results output
+
+(C) Grafik / Plot → Babel mit :file foo.png
+    Bild erscheint inline (siehe Beispiele oben).
+
+Konkrete Beispiele:
+
+Python-Berechnung:
+,#+begin_src python :results output
+import math
+print(math.factorial(20))
+,#+end_src
+
+Shell-One-Liner:
+,#+begin_src sh :results output
+df -h | head -3
+,#+end_src
+
+Statistik-Output mit R:
+,#+begin_src R :results output
+summary(mtcars$mpg)
+,#+end_src
+
+NIEMALS einen Code-Block ohne Ausführungs-Header (:AUTORUN, :results
+output, :file ...) schreiben — sonst muss der User manuell triggern,
+das ist ungewollt.
+
 Antworte immer auf Deutsch.
 Führe Aktionen direkt aus ohne lange zu erklären."))
               ))
@@ -2170,8 +2212,10 @@ zusätzlich API-Key/Modell und der Mode-Start.
 ;; Bestätigungs-Dialog vor Ausführung (Babel + AUTORUN)
 (setq claude-executor-confirm-before-execute nil)
 
-;; Babel-Blöcke, exec-Tags, auto-commands automatisch ausführen
-(setq claude-executor-auto-execute nil)
+;; Babel-Blöcke, exec-Tags, auto-commands automatisch ausführen.
+;; t = jeder Babel-Block mit :results output / :file etc. läuft direkt
+;; nach Claude-Antwort und produziert sichtbaren Output (oder Bild).
+(setq claude-executor-auto-execute t)
 
 ;;; --- Erlaubte Babel-Sprachen --------------------------------------
 (setq claude-executor-allowed-languages
