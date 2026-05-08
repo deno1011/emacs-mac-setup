@@ -161,19 +161,20 @@ if [ "$CONF_PULLED" = true ]; then
     bash "$DEST/fill-config.sh"
   fi
 else
-  echo "  Config created from template — fill in your details."
-  echo "  Tip: press Enter at any prompt to accept the proposed default value."
-  echo "       Repo defaults: emacs-config  /  mac-setup-conf"
-  echo ""
-  printf "  Fill in config now interactively? [Y/n] "
-  read -r FILL < /dev/tty
-  if [ "$FILL" != "n" ] && [ "$FILL" != "N" ]; then
-    bash "$DEST/fill-config.sh"
+  # Check if essential fields are already filled (re-run on same Mac)
+  _GIT_NAME=$(grep '^GIT_NAME=' "$CONFIG_FILE" | sed 's/^GIT_NAME=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
+  _GH_USER=$(grep  '^GH_USER='  "$CONFIG_FILE" | sed 's/^GH_USER=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/'  | tr -d '"')
+  if [ -n "$_GIT_NAME" ] && [ -n "$_GH_USER" ]; then
+    echo "  Config already filled in — skipping interactive setup."
+    echo "  To update values run:  bash $DEST/fill-config.sh"
   else
+    echo "  Config created from template — fill in your details."
+    echo "  Tip: press Enter at any prompt to accept the proposed default value."
+    echo "       Repo defaults: emacs-config  /  mac-setup-conf"
     echo ""
-    echo "  Fill in manually later:  open ~/setup-emacs-mac.conf"
-    echo "  Or run interactively:    bash $DEST/fill-config.sh"
+    bash "$DEST/fill-config.sh"
   fi
+  unset _GIT_NAME _GH_USER
 fi
 
 # --- Bitwarden setup ---
