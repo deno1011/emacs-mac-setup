@@ -252,20 +252,15 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
 
   if [ -n "${CONF_REPO:-}" ]; then
     if _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config"; then
-      # Frisch angelegt — Config hineinpushen
-      echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO pushen..."
-      _CTMP=$(mktemp -d)
-      git -C "$_CTMP" init
-      git -C "$_CTMP" branch -M main 2>/dev/null || true
-      cp "$CONFIG_FILE" "$_CTMP/setup-emacs-mac.conf"
-      git -C "$_CTMP" config user.email "${GIT_EMAIL:-bootstrap@setup}"
-      git -C "$_CTMP" config user.name "${GIT_NAME:-Bootstrap}"
-      git -C "$_CTMP" add setup-emacs-mac.conf
-      git -C "$_CTMP" commit -m "Initial config"
-      git -C "$_CTMP" remote add origin "https://github.com/$GH_USER/$CONF_REPO.git"
-      git -C "$_CTMP" push -u origin main
-      rm -rf "$_CTMP"
-      echo "    Config gepusht."
+      echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO hochladen..."
+      _CONF_B64=$(base64 -i "$CONFIG_FILE" | tr -d '\n')
+      gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
+        -X PUT \
+        -f message="Initial config" \
+        -f content="$_CONF_B64" \
+        &>/dev/null && echo "    setup-emacs-mac.conf hochgeladen." \
+        || echo "WARN: Upload fehlgeschlagen — bitte setup-emacs-mac.conf manuell in $GH_USER/$CONF_REPO ablegen."
+      unset _CONF_B64
     fi
   fi
 fi
