@@ -75,8 +75,9 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 
 | Script | Purpose |
 |---|---|
-| `setup-emacs-native-plus-mac.sh` | Install emacs-plus@30 (native comp, LSP) |
-| `setup-emacs-native-yamamoto-mac.sh` | Install emacs-mac@30exp (Yamamoto patches) |
+| `setup-emacs-native-plus-mac.sh` | Install emacs-plus@30 (native comp, LSP) — thin wrapper |
+| `setup-emacs-native-yamamoto-mac.sh` | Install emacs-mac@30exp (Yamamoto patches) — thin wrapper |
+| `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
 | `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container |
 
 ### Uninstall
@@ -226,7 +227,11 @@ GitHub (source of truth)
      │
 Native Emacs              Docker Emacs
      │                         │
-post-commit hook         startup-sync.sh
+on startup:              startup-sync.sh
+  git pull + revert           │
+  rsync → beorg               │
+     │                         │
+post-commit hook         post-commit hook
      │                         │
 beorg iCloud folder  ◄─────────┘
      │
@@ -234,11 +239,12 @@ iPhone (beorg app)
 ```
 
 **Native (Plus / Yamamoto):**  
-A git post-commit hook fires automatically after every commit:
-1. Syncs `org/` to `~/Library/Mobile Documents/.../beorg/Documents/org/`
-2. Pushes the commit to GitHub (async — does not block Emacs)
+On startup, `my/startup-sync` runs in the background:
+1. `git pull --ff-only origin main`
+2. Reverts all open org buffers so the agenda reflects the latest content
+3. Syncs `org/` to `~/Library/Mobile Documents/.../beorg/Documents/org/`
 
-`git-auto-commit-mode` commits on every save, so beorg sees changes within seconds.
+After every save, `git-auto-commit-mode` commits and a post-commit hook pushes to GitHub and re-syncs beorg.
 
 **Docker:**  
 `startup-sync.sh` runs when the container starts:
@@ -330,7 +336,7 @@ The `org/` files in the GitHub repo are encrypted with git-crypt. The key is sto
 bash ./unlock-git-crypt.sh
 ```
 
-Setup scripts unlock automatically on first clone.
+Setup scripts unlock automatically — on first clone and on every subsequent run if the org files are found encrypted.
 
 ---
 
