@@ -9,7 +9,7 @@ set -e
 # --- Homebrew ---
 if ! command -v brew &>/dev/null; then
   echo "==> Installing Homebrew..."
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  CI=1 NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
   [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 fi
