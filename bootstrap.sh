@@ -19,6 +19,23 @@ if ! command -v brew &>/dev/null; then
   [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 fi
 
+# Persist brew in shell profile so all future shells and scripts find it
+_BREW_SHELLENV_LINE='eval "$(/opt/homebrew/bin/brew shellenv)"'
+if [ -f /usr/local/bin/brew ]; then
+  _BREW_SHELLENV_LINE='eval "$(/usr/local/bin/brew shellenv)"'
+fi
+for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
+  if [ -f "$_PROFILE" ] || [ "$_PROFILE" = "$HOME/.zprofile" ]; then
+    if ! grep -qF 'brew shellenv' "$_PROFILE" 2>/dev/null; then
+      echo "" >> "$_PROFILE"
+      echo "# Homebrew" >> "$_PROFILE"
+      echo "$_BREW_SHELLENV_LINE" >> "$_PROFILE"
+      echo "    Added brew to $( basename "$_PROFILE" )"
+    fi
+  fi
+done
+unset _BREW_SHELLENV_LINE _PROFILE
+
 CONF_REPO="${1:-}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
