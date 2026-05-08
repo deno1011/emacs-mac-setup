@@ -1,21 +1,10 @@
 #+TITLE: Emacs Configuration
-#+PROPERTY: header-args:emacs-lisp :tangle yes
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
 * System Packages
 #+begin_src emacs-lisp
+;;; -*- lexical-binding: t -*-
 (message "Loading config... (first start may take a few minutes while packages install)")
-
-;; Auto-install system packages via brew (Mac) or apt (Linux/Docker)
-(use-package system-packages
-  :ensure t
-  :custom
-  (system-packages-package-manager
-   (if (executable-find "brew") 'brew 'apt))
-  (system-packages-use-sudo
-   (not (executable-find "brew"))))
-
-(use-package use-package-ensure-system-package
-  :ensure t)
 
 ;; Install a brew package in the background and log it for clean uninstall.
 ;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
@@ -38,6 +27,13 @@
            (append-to-file entry nil log-file)))))))
 #+end_src
 
+* PATH
+#+begin_src emacs-lisp
+(use-package exec-path-from-shell
+  :config
+  (exec-path-from-shell-initialize))
+#+end_src
+
 * UI & Appearance
 #+begin_src emacs-lisp
 (add-to-list 'default-frame-alist '(inhibit-double-buffering . t))
@@ -53,6 +49,7 @@
 (delete-selection-mode 1)
 (column-number-mode 1)
 (global-auto-revert-mode t)
+(setq save-abbrevs 'silently)
 #+end_src
 
 * Font
@@ -105,8 +102,38 @@
 (add-hook 'org-mode-hook 'git-auto-commit-mode)
 #+end_src
 
+* Startup Sync
+#+begin_src emacs-lisp
+(defun my/startup-sync ()
+  "Pull emacs-config from origin on startup; sync org/ to beorg on success."
+  (let* ((repo  (file-truename (expand-file-name "~/emacs-config")))
+         (org-d (file-name-as-directory (expand-file-name "org" repo)))
+         (beorg (expand-file-name
+                 "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
+                 (getenv "HOME"))))
+    (when (and (file-directory-p repo)
+               (file-directory-p (expand-file-name ".git" repo)))
+      (let ((proc (let ((default-directory repo))
+                    (start-process "startup-sync" " *startup-sync*"
+                                   "git" "pull" "--ff-only" "origin" "main"))))
+        (set-process-sentinel
+         proc
+         (lambda (p _)
+           (when (= (process-exit-status p) 0)
+             (message "Startup sync: pull complete.")
+             (org-revert-all-org-buffers)
+             (when (and (file-directory-p org-d) (file-directory-p beorg))
+               (start-process "beorg-sync" " *beorg-sync*"
+                              "rsync" "-a" "--delete"
+                              org-d (file-name-as-directory beorg))))))))))
+
+(add-hook 'after-init-hook #'my/startup-sync)
+#+end_src
+
 * Org Mode
 #+begin_src emacs-lisp
+(setq org-modules '(org-id org-info org-habit org-inlinetask org-protocol))
+
 (use-package org
   :ensure nil
   :config
@@ -119,14 +146,7 @@
         org-hide-emphasis-markers t
         org-return-follows-link t
         org-log-done 'time
-        org-log-into-drawer t)
-  (org-babel-do-load-languages
-   'org-babel-load-languages
-   '((emacs-lisp . t)
-     (python     . t)
-     (shell      . t)))
-  (require 'ox-latex)
-  (setq org-latex-compiler "pdflatex"))
+        org-log-into-drawer t))
 #+end_src
 
 * Org Extras
@@ -210,6 +230,23 @@
       (switch-to-buffer "*Org Agenda( )*")
     (switch-to-buffer "*Org Agenda*"))
   (delete-other-windows))
+
+(defun bh/org-todo (arg)
+  (interactive "p")
+  (if (equal arg 4)
+      (save-restriction
+        (bh/narrow-to-org-subtree)
+        (org-show-todo-tree nil))
+    (bh/narrow-to-org-subtree)
+    (org-show-todo-tree nil)))
+
+(defun bh/widen ()
+  (interactive)
+  (if (equal major-mode 'org-agenda-mode)
+      (progn
+        (org-agenda-remove-restriction-lock)
+        (when org-agenda-sticky (org-agenda-redo)))
+    (widen)))
 #+end_src
 
 * TODO States
@@ -288,9 +325,6 @@
 (global-set-key (kbd "C-c c") 'org-capture)
 (global-set-key (kbd "C-c a") 'org-agenda)
 (global-set-key (kbd "C-c l") 'org-store-link)
-(setq org-capture-templates
-      '(("i" "Inbox" entry (file "~/emacs-config/org/inbox.org")
-         "* %?\n%U\n")))
 #+end_src
 
 * Terminal
@@ -793,11 +827,6 @@
 * Habits
 #+begin_src emacs-lisp
 (require 'org-habit)
-(setq org-modules '(org-id
-                    org-info
-                    org-habit
-                    org-inlinetask
-                    org-protocol))
 (setq org-habit-graph-column 50)
 (run-at-time "06:00" 86400 '(lambda () (setq org-habit-show-habits t)))
 #+end_src
@@ -1018,17 +1047,6 @@
 
 (setq org-agenda-cmp-user-defined 'bh/agenda-sort)
 
-(defun bh/agenda-sort (a b)
-  (let (result num-a num-b)
-    (cond ((bh/agenda-sort-test 'bh/is-not-scheduled-or-deadline a b))
-          ((bh/agenda-sort-test 'bh/is-due-deadline a b))
-          ((bh/agenda-sort-test-num 'bh/is-late-deadline '> a b))
-          ((bh/agenda-sort-test 'bh/is-scheduled-today a b))
-          ((bh/agenda-sort-test-num 'bh/is-scheduled-late '> a b))
-          ((bh/agenda-sort-test-num 'bh/is-pending-deadline '< a b))
-          (t (setq result nil)))
-    result))
-
 (defmacro bh/agenda-sort-test (fn a b)
   `(cond ((and (apply ,fn (list ,a)) (apply ,fn (list ,b))) (setq result nil))
          ((apply ,fn (list ,a)) (setq result -1))
@@ -1044,6 +1062,17 @@
             (setq result -1)))
          ((apply ,fn (list ,b)) (setq result 1))
          (t nil)))
+
+(defun bh/agenda-sort (a b)
+  (let (result num-a num-b)
+    (cond ((bh/agenda-sort-test 'bh/is-not-scheduled-or-deadline a b))
+          ((bh/agenda-sort-test 'bh/is-due-deadline a b))
+          ((bh/agenda-sort-test-num 'bh/is-late-deadline '> a b))
+          ((bh/agenda-sort-test 'bh/is-scheduled-today a b))
+          ((bh/agenda-sort-test-num 'bh/is-scheduled-late '> a b))
+          ((bh/agenda-sort-test-num 'bh/is-pending-deadline '< a b))
+          (t (setq result nil)))
+    result))
 
 (defun bh/is-not-scheduled-or-deadline (date-str)
   (and (not (bh/is-deadline date-str)) (not (bh/is-scheduled date-str))))
@@ -1066,6 +1095,7 @@
 
 (setq org-alphabetical-lists t)
 (setq org-latex-listings t)
+(setq org-latex-compiler "pdflatex")
 (setq org-html-inline-images t)
 (setq org-export-with-sub-superscripts nil)
 (setq org-use-sub-superscripts nil)
@@ -1250,3 +1280,659 @@
                         :key (getenv "ANTHROPIC_API_KEY")))
   (setq gptel-default-mode 'org-mode))
 #+end_src
+
+* Claude Executor
+
+Verbindet [[https://github.com/karthink/gptel][gptel]] mit Auto-Ausführungs-Hooks, sodass Claude direkt
+Aktionen in Emacs auslösen kann (Agenda öffnen, TODOs einfügen,
+Fenster verwalten, Dateien öffnen, …) — und beliebige Code-Blöcke
+in Antworten ausführen kann.
+
+** Übersicht
+
+*** Drei Ausführungs-Mechanismen
+
+1. *AUTORUN-Elisp-Blöcke* — Hauptmechanismus für Emacs-Steuerung.
+   Claude antwortet mit ~#+begin_src elisp :AUTORUN ... #+end_src~.
+   Der Hook findet, evaluiert und loggt das Ergebnis.
+2. *Exec-Tags* — ~<!-- exec: KOMMANDO -->~ in Antworten triggert
+   einzelne Shell-Aufrufe (mit Bestätigung).
+3. *Babel-Code-Blöcke* — Klassische ~#+begin_src python/sh/R/...~
+   Blöcke werden in Temp-Files geschrieben und über die jeweilige
+   Sprach-CLI ausgeführt.
+
+Zusätzlich: *Auto-Pattern-Matching* via ~claude-executor-auto-commands~
+(Regex auf Antworttext → Shell-Kommando).
+
+*** Ablauf einer Antwort
+
+#+begin_example
+gptel-Antwort fertig
+        │
+        ▼
+gptel-post-response-functions
+        │
+        ├── claude-executor-response-hook
+        │       wenn auto-execute = t:
+        │       1. alle Babel-Blöcke ausführen (Shell)
+        │       2. exec-Tags ausführen (mit Bestätigung)
+        │       3. auto-commands Pattern matchen
+        │
+        └── claude-executor-autorun-hook
+                immer aktiv solange Mode an:
+                Findet :AUTORUN Elisp-Blöcke
+                → Whitelist-Check (optional)
+                → safe-eval mit Logging in *Claude Actions*
+#+end_example
+
+*** Sicherheit
+
+| Schalter                                  | Default | Wirkung                                           |
+|-------------------------------------------+---------+---------------------------------------------------|
+| ~claude-executor-auto-execute~            | nil     | aus → Babel + exec-Tags + auto-commands inaktiv   |
+| ~claude-executor-confirm-before-execute~  | nil     | wenn t → Bestätigungs-Dialog vor Babel & AUTORUN  |
+| ~claude-executor-auto-execute-elisp~      | nil     | reserviert für künftige Elisp-Auto-Eval-Steuerung |
+| ~claude-executor-allowed-functions~       | nil     | nil = alles erlaubt; sonst Whitelist für AUTORUN  |
+| ~claude-executor-mode~                    | t       | zentraler An/Aus-Schalter für *beide* Hooks       |
+
+** Paket-Abhängigkeiten
+
+Wir benötigen [[https://github.com/karthink/gptel][gptel]] als Frontend für die Claude-API.
+
+#+begin_src elisp
+(use-package gptel
+  :ensure t)
+#+end_src
+
+** Konfiguration (Defgroup & Defcustoms)
+
+Alle Schalter zentral definiert — sichtbar via
+~M-x customize-group RET claude-executor RET~.
+
+#+begin_src elisp :tangle yes
+;;; claude-executor.el — Auto-execution hooks für Claude in Emacs
+
+(require 'org)
+(require 'ob)
+(require 'cl-lib)
+
+(defgroup claude-executor nil
+  "Auto-execution of code blocks in Claude responses."
+  :group 'claude)
+
+;;; --- Allgemeine Schalter -------------------------------------------
+
+(defcustom claude-executor-auto-execute nil
+  "Automatisch Babel-Blöcke, exec-Tags und auto-commands ausführen.
+VORSICHT: Sicherheitsrisiko, default aus.
+Betrifft NICHT die AUTORUN-Elisp-Blöcke — die laufen immer wenn der
+Mode aktiv ist (mit Bestätigung wenn `claude-executor-confirm-before-execute')."
+  :type 'boolean
+  :group 'claude-executor)
+
+(defcustom claude-executor-confirm-before-execute nil
+  "Bestätigung vor jeder Ausführung verlangen.
+Gilt für Babel-Blöcke und AUTORUN-Elisp-Blöcke."
+  :type 'boolean
+  :group 'claude-executor)
+
+;;; --- Babel-Block-Konfiguration -------------------------------------
+
+(defcustom claude-executor-allowed-languages
+  '("python" "sh" "bash" "elisp" "R" "ruby" "js")
+  "Sprachen für die Babel-Auto-Execution erlaubt ist.
+Wird in `claude-executor--execute-babel-block' geprüft."
+  :type '(repeat string)
+  :group 'claude-executor)
+
+;;; --- Pattern-basierte Auto-Kommandos -------------------------------
+
+(defcustom claude-executor-auto-commands nil
+  "Alist von (REGEX . COMMAND) für automatische Shell-Kommandos.
+Wenn REGEX in der Antwort matcht, wird COMMAND ausgeführt.
+Beispiel:
+  '((\"pip install \\\\(.*\\\\)\" . \"pip install \\\\1\"))"
+  :type '(alist :key-type regexp :value-type string)
+  :group 'claude-executor)
+
+;;; --- AUTORUN-Konfiguration -----------------------------------------
+
+(defcustom claude-executor-auto-execute-elisp nil
+  "Reserviertes Flag für künftige Elisp-Auto-Eval-Steuerung.
+Aktuell ist die AUTORUN-Ausführung an `claude-executor-mode' und
+`claude-executor-confirm-before-execute' gekoppelt."
+  :type 'boolean
+  :group 'claude-executor)
+
+(defcustom claude-executor-elisp-tag "AUTORUN"
+  "Tag das automatische Elisp-Ausführung markiert.
+Claude muss in Antworten ~#+begin_src elisp :AUTORUN~ schreiben.
+Über die Custom-Variable umbenennbar (z. B. \"RUN\")."
+  :type 'string
+  :group 'claude-executor)
+
+(defcustom claude-executor-allowed-functions nil
+  "Optionale Whitelist erlaubter Funktionen für AUTORUN-Eval.
+- nil  → keine Einschränkung (jeder Elisp-Aufruf erlaubt).
+- Liste→ AUTORUN-Code der eine nicht-gelistete Funktion aufruft wird
+        abgewiesen und in *Claude Actions* protokolliert."
+  :type '(repeat symbol)
+  :group 'claude-executor)
+#+end_src
+
+** Babel-Block-Ausführung
+
+Findet ~#+begin_src LANG ... #+end_src~ in der Antwort, schreibt den
+Body in eine Temp-Datei, ruft die jeweilige Sprach-CLI auf und loggt
+in den Buffer ~*Claude Execution Results*~.
+
+*** Block finden
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--find-babel-blocks ()
+  "Findet alle Babel Code-Blöcke in der aktuellen (ggf. eingeschränkten) Region.
+Gibt eine Liste von Plists mit :lang, :header, :body, :begin, :end zurück."
+  (let (blocks)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              "^#\\+begin_src\\s-+\\(\\w+\\)\\(.*\\)\n\\(\\(?:.*\n\\)*?\\)#\\+end_src"
+              nil t)
+        (push (list :lang   (match-string-no-properties 1)
+                    :header (match-string-no-properties 2)
+                    :body   (match-string-no-properties 3)
+                    :begin  (match-beginning 0)
+                    :end    (match-end 0))
+              blocks)))
+    (nreverse blocks)))
+#+end_src
+
+*** Sprach-Mapping
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--lang-extension (lang)
+  "Dateiendung für LANG (für Temp-File)."
+  (cdr (assoc lang '(("python" . ".py")
+                     ("sh"     . ".sh")
+                     ("bash"   . ".sh")
+                     ("elisp"  . ".el")
+                     ("R"      . ".R")
+                     ("ruby"   . ".rb")
+                     ("js"     . ".js")))))
+
+(defun claude-executor--lang-command (lang file)
+  "Shell-Aufruf für Sprache LANG mit Datei FILE."
+  (cdr (assoc lang
+              `(("python" . ,(format "python3 %s" file))
+                ("sh"     . ,(format "sh %s" file))
+                ("bash"   . ,(format "bash %s" file))
+                ("elisp"  . ,(format "emacs --batch --load %s" file))
+                ("R"      . ,(format "Rscript %s" file))
+                ("ruby"   . ,(format "ruby %s" file))
+                ("js"     . ,(format "node %s" file))))))
+#+end_src
+
+*** Ausführen & Loggen
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--do-execute (lang body)
+  "Schreibt BODY in Temp-Datei, ruft passende Sprach-CLI auf,
+loggt in *Claude Execution Results* und löscht die Temp-Datei."
+  (let* ((ext        (or (claude-executor--lang-extension lang) ""))
+         (tmp-file   (make-temp-file "claude-exec-" nil ext))
+         (result-buf (get-buffer-create "*Claude Execution Results*")))
+    (with-temp-file tmp-file
+      (insert body))
+    (with-current-buffer result-buf
+      (goto-char (point-max))
+      (insert (format "\n=== %s [%s] ===\n" lang
+                      (format-time-string "%H:%M:%S")))
+      (insert body)
+      (insert "\n--- Output ---\n")
+      (let ((cmd (claude-executor--lang-command lang tmp-file)))
+        (if cmd
+            (insert (shell-command-to-string cmd))
+          (insert (format "Keine Ausführung für Sprache: %s\n" lang))))
+      (insert "\n"))
+    (display-buffer result-buf)
+    (delete-file tmp-file)))
+
+(defun claude-executor--execute-babel-block (block)
+  "Führt einen Babel-Block aus.
+Prüft `claude-executor-allowed-languages' und ggf.
+`claude-executor-confirm-before-execute'."
+  (let ((lang (plist-get block :lang))
+        (body (plist-get block :body)))
+    (when (member lang claude-executor-allowed-languages)
+      (if claude-executor-confirm-before-execute
+          (when (yes-or-no-p
+                 (format "Block ausführen (%s):\n%s\n?" lang body))
+            (claude-executor--do-execute lang body))
+        (claude-executor--do-execute lang body)))))
+#+end_src
+
+** Exec-Tag-Ausführung
+
+Erlaubt einzelne Shell-Kommandos via HTML-Kommentar in der Antwort:
+~<!-- exec: ls -la ~/projects -->~. Wird mit Bestätigung ausgeführt.
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--find-commands ()
+  "Findet Kommandos in Tags der Form '<!-- exec: KOMMANDO -->'."
+  (let (commands)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              "<!--\\s-*exec:\\s-*\\(.*?\\)\\s-*-->" nil t)
+        (push (match-string-no-properties 1) commands)))
+    (nreverse commands)))
+
+(defun claude-executor-run-command (command)
+  "Führt COMMAND in der Shell aus.
+Output landet im Buffer *Claude Commands*.
+Auch interaktiv aufrufbar: M-x oder C-c C-x c."
+  (interactive "sKommando: ")
+  (let ((result-buf (get-buffer-create "*Claude Commands*")))
+    (with-current-buffer result-buf
+      (goto-char (point-max))
+      (insert (format "\n$ %s\n" command))
+      (insert (shell-command-to-string command))
+      (insert "\n"))
+    (display-buffer result-buf)))
+#+end_src
+
+** AUTORUN-Elisp-Blöcke
+
+Hauptmechanismus für die Emacs-Steuerung. Claude markiert ausführbare
+Elisp-Blöcke mit dem Tag aus ~claude-executor-elisp-tag~ (default
+"AUTORUN"). Der Hook findet sie, prüft optional gegen die Whitelist,
+evaluiert sie unter Error-Handling und protokolliert Ergebnis/Fehler
+in ~*Claude Actions*~.
+
+*** Block finden
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--find-autorun-blocks ()
+  "Findet Elisp-Blöcke deren Header das AUTORUN-Tag enthält.
+Suche ist abhängig von `claude-executor-elisp-tag'."
+  (let (blocks)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              (format "^#\\+begin_src elisp.*%s.*\n\\(\\(?:.*\n\\)*?\\)#\\+end_src"
+                      claude-executor-elisp-tag)
+              nil t)
+        (push (match-string-no-properties 1) blocks)))
+    (nreverse blocks)))
+#+end_src
+
+*** Whitelist-Prüfung
+
+Optional: nur Aufrufe von Funktionen aus ~claude-executor-allowed-functions~
+zulassen. Wenn die Liste leer ist, ist alles erlaubt.
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--whitelist-allows-p (code)
+  "Prüft ob CODE (String) nur Funktionen aus
+`claude-executor-allowed-functions' aufruft.
+Wenn keine Whitelist gesetzt ist → t (alles erlaubt)."
+  (if (null claude-executor-allowed-functions)
+      t
+    (let ((sexp    (read code))
+          (allowed claude-executor-allowed-functions)
+          (ok      t))
+      (cl-labels ((walk (form)
+                    (cond
+                     ((and (consp form) (symbolp (car form)))
+                      (unless (memq (car form) allowed)
+                        (setq ok nil))
+                      (mapc #'walk (cdr form)))
+                     ((consp form)
+                      (mapc #'walk form)))))
+        (walk sexp))
+      ok)))
+#+end_src
+
+*** Safe-Eval mit Logging
+
+#+begin_src elisp :tangle yes
+(defun claude-executor--safe-eval (code)
+  "Evaluiert CODE (String) mit Error-Handling und Logging.
+- Whitelist-Verletzung → ⚠ Eintrag, kein Eval.
+- Erfolg               → ✓ Eintrag mit Result.
+- Fehler               → ✗ Eintrag mit Error-Message.
+Logs landen im Buffer *Claude Actions*."
+  (let ((log-buf (get-buffer-create "*Claude Actions*")))
+    (cond
+     ((not (claude-executor--whitelist-allows-p code))
+      (with-current-buffer log-buf
+        (goto-char (point-max))
+        (insert (format "\n⚠ [%s]\n  Code: %s\n  Abgewiesen: nicht in Whitelist.\n"
+                        (format-time-string "%H:%M:%S") code))
+        (display-buffer log-buf)))
+     (t
+      (condition-case err
+          (let ((result (eval (read code))))
+            (with-current-buffer log-buf
+              (goto-char (point-max))
+              (insert (format "\n✓ [%s]\n  Code: %s\n  Result: %s\n"
+                              (format-time-string "%H:%M:%S")
+                              code result))
+              (display-buffer log-buf))
+            result)
+        (error
+         (with-current-buffer log-buf
+           (goto-char (point-max))
+           (insert (format "\n✗ [%s]\n  Code: %s\n  Error: %s\n"
+                           (format-time-string "%H:%M:%S")
+                           code err))
+           (display-buffer log-buf))))))))
+#+end_src
+
+** Response-Hooks
+
+Die Hooks die nach jeder gptel-Antwort laufen. Werden zentral durch
+den Minor-Mode an/abgemeldet (siehe weiter unten).
+
+*** Response-Hook (Babel + exec-Tags + auto-commands)
+
+#+begin_src elisp :tangle yes
+(defun claude-executor-response-hook (beg end)
+  "Hook für Babel-Blöcke, exec-Tags und Auto-Pattern.
+Aktiv nur wenn `claude-executor-auto-execute' = t.
+Wird in `gptel-post-response-functions' registriert."
+  (when claude-executor-auto-execute
+    (save-restriction
+      (narrow-to-region beg end)
+      ;; 1. Babel-Blöcke
+      (dolist (block (claude-executor--find-babel-blocks))
+        (claude-executor--execute-babel-block block))
+      ;; 2. Explizite exec-Tags
+      (dolist (cmd (claude-executor--find-commands))
+        (when (yes-or-no-p (format "Kommando ausführen: %s ?" cmd))
+          (claude-executor-run-command cmd)))
+      ;; 3. User-definierte Pattern aus claude-executor-auto-commands
+      (dolist (pattern-cmd claude-executor-auto-commands)
+        (save-excursion
+          (goto-char (point-min))
+          (when (re-search-forward (car pattern-cmd) nil t)
+            (claude-executor-run-command (cdr pattern-cmd))))))))
+#+end_src
+
+*** AUTORUN-Hook (Elisp-Eval)
+
+#+begin_src elisp :tangle yes
+(defun claude-executor-autorun-hook (beg end)
+  "Hook für AUTORUN-Elisp-Blöcke.
+Immer aktiv solange `claude-executor-mode' an ist.
+Respektiert `claude-executor-confirm-before-execute'."
+  (save-restriction
+    (narrow-to-region beg end)
+    (dolist (code (claude-executor--find-autorun-blocks))
+      (if claude-executor-confirm-before-execute
+          (when (yes-or-no-p
+                 (format "Claude möchte ausführen:\n%s\nErlauben?" code))
+            (claude-executor--safe-eval code))
+        (claude-executor--safe-eval code)))))
+#+end_src
+
+** Interaktive Befehle
+
+Befehle die nicht hook-getrieben sind, sondern explizit per Tastatur
+oder ~M-x~ aufgerufen werden.
+
+#+begin_src elisp :tangle yes
+(defun claude-executor-execute-all-blocks ()
+  "Manuelle Variante: führt alle Babel-Blöcke im aktuellen Buffer aus."
+  (interactive)
+  (let ((blocks (claude-executor--find-babel-blocks)))
+    (if blocks
+        (dolist (block blocks)
+          (claude-executor--execute-babel-block block))
+      (message "Keine Code-Blöcke gefunden."))))
+
+(defun claude-executor-execute-block-at-point ()
+  "Führt den Babel-Block unter dem Cursor aus."
+  (interactive)
+  (let* ((elem (org-element-at-point))
+         (lang (org-element-property :language elem))
+         (body (org-element-property :value elem)))
+    (if (and lang body)
+        (claude-executor--do-execute lang body)
+      (message "Kein Code-Block unter Cursor."))))
+#+end_src
+
+** Minor Mode
+
+Zentraler An/Aus-Schalter. Registriert *beide* Hooks (Response +
+AUTORUN) an ~gptel-post-response-functions~, damit
+~(claude-executor-mode 0)~ wirklich alles abschaltet.
+
+#+begin_src elisp :tangle yes
+(defvar claude-executor-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-x e") #'claude-executor-execute-all-blocks)
+    (define-key map (kbd "C-c C-x b") #'claude-executor-execute-block-at-point)
+    (define-key map (kbd "C-c C-x c") #'claude-executor-run-command)
+    map)
+  "Keymap für `claude-executor-mode'.")
+
+(define-minor-mode claude-executor-mode
+  "Globaler Mode für automatische Ausführung von Claude-Antworten.
+Aktiviert die Response- und AUTORUN-Hooks an
+`gptel-post-response-functions'."
+  :lighter " CE"
+  :keymap claude-executor-mode-map
+  :global t
+  (if claude-executor-mode
+      (progn
+        (add-hook 'gptel-post-response-functions
+                  #'claude-executor-response-hook)
+        (add-hook 'gptel-post-response-functions
+                  #'claude-executor-autorun-hook)
+        (message "Claude Executor aktiviert."))
+    (remove-hook 'gptel-post-response-functions
+                 #'claude-executor-response-hook)
+    (remove-hook 'gptel-post-response-functions
+                 #'claude-executor-autorun-hook)
+    (message "Claude Executor deaktiviert.")))
+
+(provide 'claude-executor)
+#+end_src
+
+** GPtel Directives
+
+System-Prompts die Claude die Konventionen erklären.
+Beide Directives werden in ~gptel-directives~ registriert; aktiv ist
+~emacs-assistant~ (siehe unten).
+
+*** Kurz-Directive: =assistant=
+
+Fokussiert auf TODO-Insertion. Kürzer, älter — bleibt verfügbar als
+alternativer System-Prompt (umschaltbar via ~gptel-system-prompt~).
+
+#+begin_src elisp :tangle yes
+(setq gptel-directives
+      (append gptel-directives
+              '((assistant . "Du bist ein Emacs-Assistent.
+Wenn der User eine Aktion in Emacs ausführen möchte antworte mit einem
+,#+begin_src elisp :AUTORUN
+(dein-elisp-code-hier)
+,#+end_src
+Block. Dieser wird automatisch ausgeführt.
+Für org-mode TODO in inbox.org:
+  (find-file \"~/org/inbox.org\")
+  (goto-char (point-max))
+  (insert \"/ TODO Aufgabe\")
+Für beliebige M-x Befehle nutze call-interactively oder funcall."))))
+#+end_src
+
+*** Voll-Directive: =emacs-assistant= (Default)
+
+Detaillierte Variante mit Beispielen für Fenster-Management, TODO-
+Einfügung, Datei öffnen. Wird als Default-System-Prompt gesetzt.
+
+#+begin_src elisp :tangle yes
+(setq gptel-directives
+      (append gptel-directives
+              '((emacs-assistant . "Du bist ein Emacs-Assistent der direkt in Emacs läuft.
+Du hast die Fähigkeit Elisp-Code automatisch auszuführen indem du antwortest mit:
+
+,#+begin_src elisp :AUTORUN
+(dein-code)
+,#+end_src
+
+WICHTIG - Nutze AUTORUN für:
+- Fenster öffnen/schließen/wechseln
+- Dateien öffnen und bearbeiten
+- Org-mode TODOs einfügen
+- Buffer verwalten
+- Emacs konfigurieren
+
+Beispiele:
+Fenster rechts schließen:
+(let ((win (window-in-direction 'right)))
+  (when win (delete-window win)))
+
+TODO einfügen:
+(with-current-buffer (find-file-noselect \"~/org/inbox.org\")
+  (goto-char (point-max))
+  (insert \"\n* TODO Aufgabe\")
+  (save-buffer))
+
+Datei öffnen:
+(find-file \"~/datei.org\")
+
+Antworte immer auf Deutsch.
+Führe Aktionen direkt aus ohne lange zu erklären."))
+              ))
+#+end_src
+
+*** Default-Directive setzen
+
+#+begin_src elisp :tangle yes
+;; emacs-assistant global als Default
+(setq gptel--system-message
+      (alist-get 'emacs-assistant gptel-directives))
+
+;; Pro neuer gptel-Session ebenfalls auf emacs-assistant setzen
+(add-hook 'gptel-mode-hook
+          (lambda ()
+            (setq-local gptel--system-message
+                        (alist-get 'emacs-assistant gptel-directives))))
+#+end_src
+
+** Persönliche Einstellungen
+
+Werte die du anpassen willst — alle Defcustoms aus dem Konfig-Block,
+zusätzlich API-Key/Modell und der Mode-Start.
+
+#+begin_src elisp :tangle yes
+;;; --- Sicherheit ---------------------------------------------------
+;; Bestätigungs-Dialog vor Ausführung (Babel + AUTORUN)
+(setq claude-executor-confirm-before-execute nil)
+
+;; Babel-Blöcke, exec-Tags, auto-commands automatisch ausführen
+(setq claude-executor-auto-execute nil)
+
+;;; --- Erlaubte Babel-Sprachen --------------------------------------
+(setq claude-executor-allowed-languages
+      '("python" "sh" "bash" "elisp" "R" "ruby" "js"))
+
+;;; --- Pattern-basierte Auto-Kommandos (Beispiel auskommentiert) ----
+;; (setq claude-executor-auto-commands
+;;       '(("pip install \\(.*\\)" . "pip install \\1")))
+
+;;; --- AUTORUN-Whitelist (optional) ---------------------------------
+;; nil = keine Einschränkung. Für mehr Sicherheit Symbole eintragen:
+;; (setq claude-executor-allowed-functions
+;;       '(find-file find-file-noselect with-current-buffer
+;;         goto-char point-max insert save-buffer
+;;         org-todo org-insert-heading org-agenda message))
+
+;;; --- gptel API & Modell -------------------------------------------
+;; TODO: API-Key eintragen ODER per auth-source / Env-Variable laden.
+;; (setq gptel-api-key "DEIN-KEY-HIER")
+(setq gptel-model 'claude-opus-4-7)
+
+;;; --- Mode aktivieren ----------------------------------------------
+(claude-executor-mode 1)
+#+end_src
+
+** Keybindings Übersicht
+
+| Key           | Funktion                                |
+|---------------+-----------------------------------------|
+| ~C-c C-x e~   | Alle Babel-Blöcke im Buffer ausführen   |
+| ~C-c C-x b~   | Babel-Block unter Cursor ausführen      |
+| ~C-c C-x c~   | Eigenes Shell-Kommando eingeben         |
+
+Aktiv solange ~claude-executor-mode~ läuft.
+
+** Beispiele & Workflows
+
+*** AUTORUN: TODO einfügen
+
+Im gptel-Buffer:
+
+#+begin_example
+Füge "Milch kaufen" als TODO in inbox.org ein
+#+end_example
+
+Claude antwortet mit einem AUTORUN-Block:
+
+#+begin_example
+,#+begin_src elisp :AUTORUN
+(with-current-buffer (find-file-noselect "~/org/inbox.org")
+  (goto-char (point-max))
+  (insert "\n* TODO Milch kaufen")
+  (save-buffer))
+,#+end_src
+#+end_example
+
+→ Hook erkennt =AUTORUN= → (ggf. Bestätigung) → Eval → Eintrag in
+~*Claude Actions*~.
+
+*** AUTORUN: Agenda öffnen
+
+Du fragst: „Zeig mir die Agenda für diese Woche".
+
+Claude antwortet:
+
+#+begin_example
+,#+begin_src elisp :AUTORUN
+(org-agenda nil "a")
+,#+end_src
+#+end_example
+
+*** Exec-Tag: Shell-Kommando
+
+Claude antwortet mit:
+
+#+begin_example
+<!-- exec: ls -la ~/projects -->
+#+end_example
+
+→ Wird (mit Bestätigung) ausgeführt, Output in ~*Claude Commands*~.
+Voraussetzung: ~claude-executor-auto-execute~ = t.
+
+*** Babel: Python-Snippet ausführen
+
+Antwort enthält:
+
+#+begin_example
+,#+begin_src python
+print("hello")
+,#+end_src
+#+end_example
+
+→ Bei ~claude-executor-auto-execute~ = t: Temp-File → ~python3~ →
+Output in ~*Claude Execution Results*~.
+
+** Bekannte Inkonsistenzen / TODOs
+
+- ~claude-executor-auto-execute-elisp~ ist als Defcustom angelegt
+  aber noch nirgends verdrahtet — reserviert für künftige Trennung
+  von „Mode an" und „Elisp-Eval an".
+- ~gptel-api-key~ steht hier auskommentiert. Empfehlung: per
+  ~auth-source~ aus ~~/.authinfo.gpg~ laden statt im Klartext.
