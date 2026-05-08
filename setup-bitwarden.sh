@@ -131,20 +131,41 @@ GC_KEY_VAL=""
 ANTHROPIC_VAL=""
 
 printf "  %-54s: " "GitHub Personal Access Token  (repo scope)"
-read -rs GH_TOKEN_VAL
+read -rs GH_TOKEN_VAL < /dev/tty
 echo ""
 if [ "$GH_TOKEN_VAL" = "n" ]; then SKIP_ALL=true; GH_TOKEN_VAL=""; fi
 
-if [ "$SKIP_ALL" = false ]; then
-  printf "  %-54s: " "git-crypt key base64  (Enter to skip — optional)"
-  read -rs GC_KEY_VAL
-  echo ""
-  if [ "$GC_KEY_VAL" = "n" ]; then SKIP_ALL=true; GC_KEY_VAL=""; fi
+# --- git-crypt Schlüssel: prüfen oder automatisch generieren ---
+_GC_EXISTING=$(bw get item "$BW_ITEM" --session "$BW_SESSION" 2>/dev/null \
+  | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+f=[x['value'] for x in d.get('fields',[]) if x['name']=='$BW_FIELD']
+v=(f[0] if f else '').strip()
+print('' if not v or 'PLACEHOLDER' in v else v)
+" 2>/dev/null) || true
+
+if [ -n "$_GC_EXISTING" ]; then
+  echo "  git-crypt Schlüssel bereits in Bitwarden — überspringe."
+else
+  echo "==> git-crypt Schlüssel nicht gefunden — generiere automatisch..."
+  if ! command -v git-crypt &>/dev/null; then
+    echo "    Installing git-crypt..."
+    brew install git-crypt
+  fi
+  _GC_TMP=$(mktemp -d)
+  git -C "$_GC_TMP" init -q
+  (cd "$_GC_TMP" && git crypt init) 2>/dev/null
+  (cd "$_GC_TMP" && git crypt export-key /tmp/gckey_bs)
+  GC_KEY_VAL=$(base64 -i /tmp/gckey_bs | tr -d '\n')
+  rm -f /tmp/gckey_bs
+  rm -rf "$_GC_TMP"
+  echo "    git-crypt Schlüssel generiert."
 fi
 
 if [ "$SKIP_ALL" = false ]; then
   printf "  %-54s: " "Anthropic API Key  (Enter to skip — optional)"
-  read -rs ANTHROPIC_VAL
+  read -rs ANTHROPIC_VAL < /dev/tty
   echo ""
   if [ "$ANTHROPIC_VAL" = "n" ]; then SKIP_ALL=true; ANTHROPIC_VAL=""; fi
 fi
@@ -154,10 +175,9 @@ if [ "$SKIP_ALL" = true ]; then
   echo ""
   echo "==> Some entries were skipped."
   printf "    Create all missing Bitwarden entries with placeholder values now? [y/N] "
-  read -r ans
+  read -r ans < /dev/tty
   if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
     [ -z "$GH_TOKEN_VAL" ]   && GH_TOKEN_VAL="PLACEHOLDER_GITHUB_TOKEN"
-    [ -z "$GC_KEY_VAL" ]     && GC_KEY_VAL="PLACEHOLDER_GIT_CRYPT_KEY"
     [ -z "$ANTHROPIC_VAL" ]  && ANTHROPIC_VAL="PLACEHOLDER_ANTHROPIC_KEY"
   fi
 fi
