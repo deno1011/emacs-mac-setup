@@ -1178,8 +1178,18 @@ der inline-image-Hook automatisch.
 ;; Plots auf max 800px Breite begrenzen, sonst überfüllen sie den Buffer
 (setq org-image-actual-size '(800))
 
-;; Nach jeder Babel-Ausführung Bilder neu zeichnen
-(setq org-redisplay-inline-images t)
+;; Nach jeder gptel-Antwort Inline-Bilder im Buffer refreshen.
+;; Greift auch wenn Claude direkt ein [[file:...]]-Link einfügt ohne
+;; einen Babel-Block auszuführen (der Babel-Pfad wird bereits durch
+;; bh/display-inline-images im Abschnitt "Export & Babel" abgedeckt).
+(defun my/gptel-refresh-inline-images (_beg _end)
+  "Refresht Inline-Images im aktuellen Buffer (nur in org-mode)."
+  (when (derived-mode-p 'org-mode)
+    (condition-case nil
+        (org-display-inline-images t t)
+      (error nil))))
+(add-hook 'gptel-post-response-functions
+          #'my/gptel-refresh-inline-images)
 #+end_src
 
 ** External-Tools Auto-Install (brew)
