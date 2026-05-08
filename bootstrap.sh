@@ -122,11 +122,13 @@ else:
           _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
   fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-    if gh api "repos/$CONF_REPO/tarball" --output "$CONF_TMP/conf.tgz" &>/dev/null 2>&1; then
-      mkdir -p "$CONF_TMP/conf"
-      tar -xz -C "$CONF_TMP/conf" --strip-components=1 -f "$CONF_TMP/conf.tgz" &>/dev/null 2>&1 \
-        && CONF_PULLED=true
+    mkdir -p "$CONF_TMP/conf"
+    _CONF_CONTENT=$(gh api "repos/$CONF_REPO/contents/setup-emacs-mac.conf" --jq '.content' 2>/dev/null) || true
+    if [ -n "$_CONF_CONTENT" ]; then
+      echo "$_CONF_CONTENT" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" \
+        > "$CONF_TMP/conf/setup-emacs-mac.conf" 2>/dev/null && CONF_PULLED=true
     fi
+    unset _CONF_CONTENT
   fi
   # Fallback: try unauthenticated (works if repo is public, fails silently if private)
   if [ "$CONF_PULLED" = false ]; then
