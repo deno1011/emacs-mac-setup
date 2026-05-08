@@ -149,45 +149,45 @@ if [ "$CONF_PULLED" = false ]; then
   echo "==> setup-emacs-mac.conf created from template."
 fi
 
+_config_is_filled() {
+  local _name _user
+  _name=$(grep '^GIT_NAME=' "$CONFIG_FILE" | sed 's/^[^=]*=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
+  _user=$(grep '^GH_USER='  "$CONFIG_FILE" | sed 's/^[^=]*=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
+  [ -n "$_name" ] && [ -n "$_user" ]
+}
+
 if [ "$CONF_PULLED" = true ]; then
   echo "  Personal config pulled and ready."
-  echo ""
-  printf "  Fill in config now to verify or update values? [y/N] "
-  read -r FILL < /dev/tty
-  if [ "$FILL" = "y" ] || [ "$FILL" = "Y" ]; then
-    echo "  Tip: press Enter at any prompt to keep the value shown in [brackets]."
-    echo "       Repo defaults: emacs-config  /  mac-setup-conf"
+  if ! _config_is_filled; then
     echo ""
     bash "$DEST/fill-config.sh"
   fi
 else
-  # Check if essential fields are already filled (re-run on same Mac)
-  _GIT_NAME=$(grep '^GIT_NAME=' "$CONFIG_FILE" | sed 's/^GIT_NAME=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/' | tr -d '"')
-  _GH_USER=$(grep  '^GH_USER='  "$CONFIG_FILE" | sed 's/^GH_USER=["'"'"']\{0,1\}\(.*\)["'"'"']\{0,1\}$/\1/'  | tr -d '"')
-  if [ -n "$_GIT_NAME" ] && [ -n "$_GH_USER" ]; then
-    echo "  Config already filled in — skipping interactive setup."
+  if _config_is_filled; then
+    echo "  Config already filled in — skipping."
     echo "  To update values run:  bash $DEST/fill-config.sh"
   else
     echo "  Config created from template — fill in your details."
-    echo "  Tip: press Enter at any prompt to accept the proposed default value."
-    echo "       Repo defaults: emacs-config  /  mac-setup-conf"
     echo ""
     bash "$DEST/fill-config.sh"
   fi
-  unset _GIT_NAME _GH_USER
 fi
 
 # --- Bitwarden setup ---
 source "$CONFIG_FILE"
 echo ""
 if [ -n "$GH_USER" ]; then
-  printf "  Set up Bitwarden entries now? [Y/n] "
-  read -r BW_ANS < /dev/tty
-  if [ "$BW_ANS" != "n" ] && [ "$BW_ANS" != "N" ]; then
-    bash "$DEST/setup-bitwarden.sh"
+  _BW_KC_ACC="${BW_KEYCHAIN_ACCOUNT:-$USER}"
+  _BW_KC_SVC="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  _BW_CONFIGURED=$(security find-generic-password -a "$_BW_KC_ACC" -s "$_BW_KC_SVC" -w 2>/dev/null) || true
+  unset _BW_KC_ACC _BW_KC_SVC
+  if [ -n "$_BW_CONFIGURED" ]; then
+    echo "  Bitwarden already configured — skipping setup."
+    echo "  To update vault entries run:  bash $DEST/setup-bitwarden.sh"
   else
-    echo "  Run $DEST/setup-bitwarden.sh any time to create the required vault entries."
+    bash "$DEST/setup-bitwarden.sh"
   fi
+  unset _BW_CONFIGURED
 else
   echo "  GH_USER not set — local mode, Bitwarden not required."
   echo "  Run $DEST/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
