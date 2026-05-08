@@ -171,17 +171,7 @@ bash "$DEST/fill-config.sh"
 source "$CONFIG_FILE"
 echo ""
 if [ -n "$GH_USER" ]; then
-  _BW_KC_ACC="${BW_KEYCHAIN_ACCOUNT:-$USER}"
-  _BW_KC_SVC="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
-  _BW_CONFIGURED=$(security find-generic-password -a "$_BW_KC_ACC" -s "$_BW_KC_SVC" -w 2>/dev/null) || true
-  unset _BW_KC_ACC _BW_KC_SVC
-  if [ -n "$_BW_CONFIGURED" ]; then
-    echo "  Bitwarden already configured — skipping setup."
-    echo "  To update vault entries run:  bash $DEST/setup-bitwarden.sh"
-  else
-    bash "$DEST/setup-bitwarden.sh"
-  fi
-  unset _BW_CONFIGURED
+  bash "$DEST/setup-bitwarden.sh"
 else
   echo "  GH_USER not set — local mode, Bitwarden not required."
   echo "  Run $DEST/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
