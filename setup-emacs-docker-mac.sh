@@ -74,6 +74,14 @@ else
   brew install docker
 fi
 
+# --- Colima (Docker runtime) ---
+if command -v colima &>/dev/null; then
+  skip "Colima (already installed)"
+else
+  echo "==> Installing Colima..."
+  brew install colima
+fi
+
 # --- Bitwarden CLI ---
 if command -v bw &>/dev/null; then
   skip "Bitwarden CLI (already installed)"
