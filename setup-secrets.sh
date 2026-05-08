@@ -34,5 +34,6 @@ fi
 
 mkdir -p "$HOME/.emacs.d"
 printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$EMACS_SECRETS"
-echo "==> secrets.el written to $EMACS_SECRETS"
+chmod 600 "$EMACS_SECRETS"
+echo "==> secrets.el written to $EMACS_SECRETS (mode 600, owner-only)"
 echo "    Restart Emacs for the change to take effect."
