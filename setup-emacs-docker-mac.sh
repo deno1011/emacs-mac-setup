@@ -68,7 +68,8 @@ fi
 
 # --- Docker CLI ---
 if command -v docker &>/dev/null; then
-  skip "Docker CLI (already installed)"
+  echo "==> Upgrading Docker CLI..."
+  brew upgrade docker 2>/dev/null || true
 else
   echo "==> Installing Docker CLI..."
   brew install docker
