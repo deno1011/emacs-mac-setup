@@ -295,3 +295,12 @@ if [ -n "${GH_USER:-}" ] && [ -n "${CONF_REPO:-}" ]; then
 fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
 echo ""
+echo "----------------------------------------------------------------------"
+echo "  Activate brew in this terminal (no restart needed):"
+if [ -f /opt/homebrew/bin/brew ]; then
+  echo '    eval "$(/opt/homebrew/bin/brew shellenv)"'
+else
+  echo '    eval "$(/usr/local/bin/brew shellenv)"'
+fi
+echo "----------------------------------------------------------------------"
+echo ""
