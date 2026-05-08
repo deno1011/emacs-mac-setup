@@ -157,12 +157,6 @@ if [ "$CONF_PULLED" = false ]; then
   echo "==> setup-emacs-mac.conf created from template."
 fi
 
-echo ""
-echo "======================================================================"
-echo "Bootstrap complete!"
-echo "======================================================================"
-echo ""
-
 if [ "$CONF_PULLED" = true ]; then
   echo "  Personal config pulled and ready."
   echo ""
