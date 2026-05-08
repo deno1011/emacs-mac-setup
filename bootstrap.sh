@@ -8,19 +8,10 @@ set -e
 
 # --- Homebrew ---
 if ! command -v brew &>/dev/null; then
-  echo "==> Homebrew not found."
-  printf "    Install Homebrew now? [Y/n] "
-  read -r _BREW_ANS < /dev/tty
-  if [ "$_BREW_ANS" != "n" ] && [ "$_BREW_ANS" != "N" ]; then
-    echo "==> Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add Homebrew to PATH for the rest of this script (Apple Silicon path)
-    [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-    [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
-  else
-    echo "ERROR: Homebrew is required. Install it from https://brew.sh and re-run."
-    exit 1
-  fi
+  echo "==> Installing Homebrew..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+  [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 fi
 
 CONF_REPO="${1:-}"
