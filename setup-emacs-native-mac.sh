@@ -123,17 +123,17 @@ else
 fi
 brew link --overwrite "$_EMACS_PKG" 2>/dev/null || true
 
-_EMACS_PREFIX=$(brew --prefix "$_EMACS_PKG" 2>/dev/null)
-EMACS_APP=$(find "$_EMACS_PREFIX" -name "Emacs.app" -maxdepth 4 2>/dev/null | head -1)
+_EMACS_CELLAR_DIR="$(brew --prefix)/Cellar/$_EMACS_PKG"
+EMACS_APP=$(find "$_EMACS_CELLAR_DIR" -name "Emacs.app" -maxdepth 4 2>/dev/null | head -1)
 if [ -n "$EMACS_APP" ]; then
   rm -rf "/Applications/$_EMACS_APP_NAME"
   cp -r "$EMACS_APP" "/Applications/$_EMACS_APP_NAME"
   echo "==> $_EMACS_APP_NAME → /Applications"
 else
-  echo "WARN: Emacs.app nicht gefunden unter $_EMACS_PREFIX"
+  echo "WARN: Emacs.app nicht gefunden unter $_EMACS_CELLAR_DIR"
 fi
 
-EMACS_BIN=$(find "$_EMACS_PREFIX" -name "emacs" -path "*/bin/emacs" -maxdepth 4 2>/dev/null | head -1)
+EMACS_BIN=$(find "$_EMACS_CELLAR_DIR" -name "emacs" -path "*/bin/emacs" -maxdepth 4 2>/dev/null | head -1)
 [ -z "$EMACS_BIN" ] && EMACS_BIN=$(command -v emacs 2>/dev/null) || true
 if [ -z "$EMACS_BIN" ]; then
   echo "ERROR: Emacs binary nicht gefunden nach Installation."
