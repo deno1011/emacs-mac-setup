@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+[ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+
 skip() { echo "  Already exists: $1 — skipping."; }
 
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
