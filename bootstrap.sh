@@ -134,8 +134,16 @@ else:
   fi
 
   if [ "$CONF_PULLED" = true ] && [ -f "$CONF_TMP/conf/setup-emacs-mac.conf" ]; then
-    cp "$CONF_TMP/conf/setup-emacs-mac.conf" "$CONFIG_FILE"
-    echo "    setup-emacs-mac.conf pulled — config ready."
+    _PULLED_NAME=$(grep '^GIT_NAME=' "$CONF_TMP/conf/setup-emacs-mac.conf" | head -1)
+    _PULLED_NAME="${_PULLED_NAME#*=}"; _PULLED_NAME="${_PULLED_NAME%\"}"; _PULLED_NAME="${_PULLED_NAME#\"}"
+    if [ -n "$_PULLED_NAME" ]; then
+      cp "$CONF_TMP/conf/setup-emacs-mac.conf" "$CONFIG_FILE"
+      echo "    setup-emacs-mac.conf pulled — config ready."
+    else
+      echo "    Pulled config is empty — keeping local config."
+      CONF_PULLED=false
+    fi
+    unset _PULLED_NAME
   else
     echo "    Private repo not accessible — falling back to template."
     CONF_PULLED=false
