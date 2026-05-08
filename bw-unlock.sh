@@ -27,20 +27,18 @@ bw_ensure_session() {
     security add-generic-password -a "$_KC_ACC" -s "$_KC_SVC" -w "$_BW_MASTER" -A
   fi
 
-  local _BW_STATUS
-  _BW_STATUS=$(bw status 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" \
-    2>/dev/null || echo "unauthenticated")
   export __BW_PW="$_BW_MASTER"
 
-  if [ "$_BW_STATUS" = "unauthenticated" ]; then
+  # Try unlock first (works if already logged in but locked)
+  BW_SESSION=$(bw unlock --passwordenv __BW_PW --raw 2>/dev/null) || true
+
+  if [ -z "$BW_SESSION" ]; then
+    # Unlock failed — vault not yet authenticated, need full login
     printf "==> Bitwarden email: " >&2
     read -r _BW_EMAIL < /dev/tty
-    # /dev/tty allows interactive 2FA input; stderr shows prompts
     BW_SESSION=$(bw login "$_BW_EMAIL" --passwordenv __BW_PW --raw < /dev/tty) || true
-  fi
-  if [ -z "$BW_SESSION" ]; then
-    BW_SESSION=$(bw unlock --passwordenv __BW_PW --raw 2>/dev/null) || true
+    # After login, unlock to get session if login didn't return one
+    [ -z "$BW_SESSION" ] && BW_SESSION=$(bw unlock --passwordenv __BW_PW --raw 2>/dev/null) || true
   fi
   unset __BW_PW
 
