@@ -1584,6 +1584,196 @@ sequenceDiagram
   (setq gptel-default-mode 'org-mode))
 #+end_src
 
+* Web & Image Helpers für Claude
+
+Kleine elisp-Bibliothek, die Claude per AUTORUN/Babel-elisp aufrufen
+kann, um Webseiten zu laden, Suchergebnisse zu filtern und Bilder
+inline im aktuellen Buffer anzuzeigen.
+
+** Übersicht
+
+| Funktion                              | Zweck                                      |
+|---------------------------------------+--------------------------------------------|
+| ~(my/web-fetch URL)~                  | Roher HTML/Body als String                 |
+| ~(my/web-text URL &optional MAX)~     | Webseite als lesbarer Plain-Text (via shr) |
+| ~(my/web-html URL)~                   | Geparsed DOM-Tree (libxml2)                |
+| ~(my/web-search-ddg QUERY &opt N)~    | DuckDuckGo-Suche, Liste (titel . url)      |
+| ~(my/web-fetch-image URL &opt DIR)~   | Bild downloaden, Pfad zurückgeben          |
+| ~(my/web-extract-images URL &opt N)~  | Liste Bild-URLs auf der Seite              |
+| ~(my/insert-image-inline FILE/URL)~   | Bild ans Buffer-Ende einfügen + rendern    |
+
+Voraussetzungen: Emacs mit libxml2 (in ~emacs-mac@30exp~ und
+~emacs-plus@30~ eingebaut). Keine externen Tools.
+
+** Web-Fetch & Text-Extraktion
+
+#+begin_src emacs-lisp
+(require 'url)
+(require 'shr)
+(require 'dom)
+
+(defcustom my/web-fetch-timeout 30
+  "Timeout in Sekunden für `my/web-fetch'."
+  :type 'integer
+  :group 'claude-executor)
+
+(defcustom my/web-user-agent "Emacs/Claude-Helper"
+  "User-Agent String für Web-Requests."
+  :type 'string
+  :group 'claude-executor)
+
+(defun my/web-fetch (url)
+  "Fetch URL synchron, liefert Body als String.
+Wirft Fehler bei HTTP >= 400 oder Timeout."
+  (let ((url-user-agent my/web-user-agent))
+    (with-current-buffer
+        (url-retrieve-synchronously url t t my/web-fetch-timeout)
+      (goto-char (point-min))
+      (unless (re-search-forward "\r?\n\r?\n" nil t)
+        (kill-buffer)
+        (error "Kein HTTP-Body in Antwort von %s" url))
+      (let ((body (buffer-substring-no-properties (point) (point-max))))
+        (kill-buffer)
+        body))))
+
+(defun my/web-html (url)
+  "Fetch URL und liefere geparsten DOM-Tree zurück."
+  (with-temp-buffer
+    (insert (my/web-fetch url))
+    (libxml-parse-html-region (point-min) (point-max))))
+
+(defun my/web-text (url &optional max-chars)
+  "Fetch URL, render als lesbaren Plain-Text via shr.
+Wenn MAX-CHARS gesetzt: schneide auf MAX-CHARS Zeichen ab."
+  (let ((dom              (my/web-html url))
+        (shr-width        80)
+        (shr-use-fonts    nil)
+        (shr-inhibit-images t))
+    (with-temp-buffer
+      (shr-insert-document dom)
+      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+        (if (and max-chars (> (length text) max-chars))
+            (concat (substring text 0 max-chars) "\n…[truncated]")
+          text)))))
+#+end_src
+
+** Suche (DuckDuckGo HTML-Endpoint)
+
+DDG bietet einen Login-freien HTML-Endpoint unter ~html.duckduckgo.com~.
+Die hrefs sind Redirects der Form ~/l/?uddg=<encoded-url>~ — wir packen
+sie aus.
+
+#+begin_src emacs-lisp
+(defun my/web-search-ddg (query &optional limit)
+  "DuckDuckGo HTML-Suche. Liefert Liste von (TITEL . URL).
+LIMIT default 5."
+  (let* ((url    (format "https://html.duckduckgo.com/html/?q=%s"
+                         (url-hexify-string query)))
+         (dom    (my/web-html url))
+         (limit  (or limit 5))
+         (anchors (dom-by-tag dom 'a))
+         (results '()))
+    (dolist (a anchors)
+      (let ((class (or (dom-attr a 'class) ""))
+            (href  (dom-attr a 'href))
+            (title (string-trim (dom-text a))))
+        (when (and href
+                   (string-match-p "result__a\\|result__url" class)
+                   (not (string-empty-p title)))
+          (let ((real-url
+                 (cond
+                  ((string-match "uddg=\\([^&]+\\)" href)
+                   (url-unhex-string (match-string 1 href)))
+                  ((string-prefix-p "http" href) href)
+                  (t (concat "https:" href)))))
+            (cl-pushnew (cons title real-url) results
+                        :test (lambda (a b) (equal (cdr a) (cdr b))))))))
+    (seq-take (nreverse results) limit)))
+#+end_src
+
+** Bilder downloaden & extrahieren
+
+#+begin_src emacs-lisp
+(defun my/web-fetch-image (url &optional dir)
+  "Download Bild von URL nach DIR (default temporary-file-directory).
+Liefert lokalen Pfad zurück."
+  (let* ((ext  (or (file-name-extension (url-filename
+                                          (url-generic-parse-url url)))
+                   "png"))
+         (base (format "claude-img-%s" (format-time-string "%s%N")))
+         (path (expand-file-name (concat base "." ext)
+                                 (or dir temporary-file-directory))))
+    (url-copy-file url path t)
+    path))
+
+(defun my/web-extract-images (url &optional limit)
+  "Liefert absolute Bild-URLs einer Seite, max LIMIT (default 10)."
+  (let* ((dom   (my/web-html url))
+         (imgs  (dom-by-tag dom 'img))
+         (limit (or limit 10))
+         (urls  '()))
+    (dolist (img imgs)
+      (let ((src (dom-attr img 'src)))
+        (when (and src (not (string-prefix-p "data:" src)))
+          (push (url-expand-file-name src url) urls))))
+    (seq-take (nreverse urls) limit)))
+#+end_src
+
+** Inline-Insert ins aktuelle Buffer
+
+Hängt das Bild **am Ende der aktuellen Narrowing-Region** an (also bei
+AUTORUN: am Ende der Claude-Antwort), unabhängig von der Cursor-Position.
+
+#+begin_src emacs-lisp
+(defun my/insert-image-inline (file-or-url)
+  "Hängt FILE-OR-URL als Org-Image-Link ans aktuelle Buffer-Ende.
+Wenn FILE-OR-URL eine URL ist, wird sie nach Temp gedownloaded.
+In org-mode wird `org-display-inline-images' getriggert."
+  (let ((file (if (string-match-p "^https?://" file-or-url)
+                  (my/web-fetch-image file-or-url)
+                file-or-url)))
+    (save-excursion
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (insert (format "[[file:%s]]\n" file)))
+    (when (derived-mode-p 'org-mode)
+      (org-display-inline-images t t))
+    file))
+#+end_src
+
+** Beispiele
+
+Webseite zusammenfassen:
+#+begin_example
+,#+begin_src elisp :results output
+(princ (my/web-text "https://orgmode.org" 2000))
+,#+end_src
+#+end_example
+
+Suche nach Begriff (org-Links als Output):
+#+begin_example
+,#+begin_src elisp :results output
+(dolist (r (my/web-search-ddg "emacs lsp tutorial" 5))
+  (princ (format "- [[%s][%s]]\n" (cdr r) (car r))))
+,#+end_src
+#+end_example
+
+Bild aus dem Web inline einfügen:
+#+begin_example
+,#+begin_src elisp :AUTORUN
+(my/insert-image-inline
+ "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/EmacsIcon.svg/240px-EmacsIcon.svg.png")
+,#+end_src
+#+end_example
+
+Erstes Bild einer Seite extrahieren und einfügen:
+#+begin_example
+,#+begin_src elisp :AUTORUN
+(let ((imgs (my/web-extract-images "https://example.org" 1)))
+  (when imgs (my/insert-image-inline (car imgs))))
+,#+end_src
+#+end_example
+
 * Claude Executor
 
 Verbindet [[https://github.com/karthink/gptel][gptel]] mit Auto-Ausführungs-Hooks, sodass Claude direkt
@@ -2146,6 +2336,46 @@ sequenceDiagram
 
 LaTeX-Math inline schreibst du einfach mit $...$ oder \\\\[...\\\\] —
 org-fragtog rendert beim Cursor-Move automatisch.
+
+WEB & BILDER:
+Wenn der User Inhalte aus dem Web braucht oder ein Bild eingefügt haben
+will, nutze diese Helper-Funktionen. Sie sind in der Config definiert
+und im laufenden Emacs verfügbar:
+
+  (my/web-fetch URL)                  → roher HTML/Body
+  (my/web-text URL [MAX-CHARS])       → lesbarer Plain-Text via shr
+  (my/web-search-ddg \"query\" [N])     → DuckDuckGo, Liste (titel . url)
+  (my/web-fetch-image URL)            → Bild nach Temp downloaden, Pfad
+  (my/web-extract-images URL [N])     → Bild-URLs auf der Seite
+  (my/insert-image-inline FILE/URL)   → Bild ans Buffer-Ende + rendern
+
+Regel: Text holen / Suche / Listen → :results output (sichtbar inline).
+       Bild einfügen ist Side-Effect → :AUTORUN.
+
+Beispiele:
+
+Webseite zusammenfassen:
+,#+begin_src elisp :results output
+(princ (my/web-text \"https://orgmode.org\" 2000))
+,#+end_src
+
+Suchen und Top-5-Treffer als Org-Links:
+,#+begin_src elisp :results output
+(dolist (r (my/web-search-ddg \"emacs orgmode tutorial\" 5))
+  (princ (format \"- [[%s][%s]]\\n\" (cdr r) (car r))))
+,#+end_src
+
+Bild von URL einfügen:
+,#+begin_src elisp :AUTORUN
+(my/insert-image-inline
+ \"https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/EmacsIcon.svg/240px-EmacsIcon.svg.png\")
+,#+end_src
+
+Erstes Bild einer Seite extrahieren und anzeigen:
+,#+begin_src elisp :AUTORUN
+(let ((imgs (my/web-extract-images \"https://example.org\" 1)))
+  (when imgs (my/insert-image-inline (car imgs))))
+,#+end_src
 
 AUSFÜHRUNG IST PFLICHT:
 Jeder Code-Block den du schreibst MUSS so geschrieben sein, dass er
