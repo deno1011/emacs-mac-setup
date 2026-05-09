@@ -1632,17 +1632,20 @@ anzuhängen und inline rendern zu lassen.
   :type 'directory
   :group 'claude-executor)
 
-(defcustom my/gptel-image-max-dim 2000
+(defcustom my/gptel-image-max-dim 1600
   "Maximale Kantenlänge in Pixel.
-Größere Bilder werden via sips verkleinert, damit der API-Request
-nicht Anthropics 5 MB/Image-Limit reißt. iPhone-Fotos (4032×3024)
-sind als PNG ~15 MB → Verkleinerung auf 2000 px Kante: typisch <500 KB."
+Größere Bilder werden via sips verkleinert. iPhone-Fotos (4032×3024)
+als PNG sind ~15 MB → Verkleinerung auf 1600 px Kante + ggf. JPEG: <500 KB.
+Anthropic-Limit ist 5 MB raw, aber Base64-Encoding (+33%) reißt das ab
+~3,75 MB. Daher konservativ deutlich darunter zielen."
   :type 'integer
   :group 'claude-executor)
 
-(defcustom my/gptel-image-max-bytes (* 4 1024 1024)
-  "Soft-Limit Bildgröße in Bytes (4 MB).
-Wenn nach Resize immer noch überschritten → Konversion zu JPEG q=85."
+(defcustom my/gptel-image-max-bytes (* 2 1024 1024)
+  "Soft-Limit Bildgröße in Bytes (2 MB).
+Wenn nach Resize überschritten → Konversion zu JPEG q=85.
+Konservativ wegen Base64-Overhead (~33%): 2 MB raw → ~2,7 MB encoded,
+sicher unter Anthropic-5MB-Limit."
   :type 'integer
   :group 'claude-executor)
 
