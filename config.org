@@ -1632,6 +1632,20 @@ anzuhängen und inline rendern zu lassen.
   :type 'directory
   :group 'claude-executor)
 
+(defcustom my/gptel-image-max-dim 2000
+  "Maximale Kantenlänge in Pixel.
+Größere Bilder werden via sips verkleinert, damit der API-Request
+nicht Anthropics 5 MB/Image-Limit reißt. iPhone-Fotos (4032×3024)
+sind als PNG ~15 MB → Verkleinerung auf 2000 px Kante: typisch <500 KB."
+  :type 'integer
+  :group 'claude-executor)
+
+(defcustom my/gptel-image-max-bytes (* 4 1024 1024)
+  "Soft-Limit Bildgröße in Bytes (4 MB).
+Wenn nach Resize immer noch überschritten → Konversion zu JPEG q=85."
+  :type 'integer
+  :group 'claude-executor)
+
 ;; org-download nutzt pngpaste als Screenshot-Backend (auch für Clipboard)
 (with-eval-after-load 'org-download
   (when (executable-find "pngpaste")
@@ -1641,13 +1655,48 @@ anzuhängen und inline rendern zu lassen.
         org-download-heading-lvl nil))
 #+end_src
 
+** Bilder verkleinern (Anthropic 5 MB-Limit umgehen)
+
+iPhone-Fotos sind als PNG häufig 10–20 MB. Anthropic API limitiert auf
+5 MB pro Bild (raw, vor Base64). Wir nutzen das macOS-eingebaute ~sips~
+zum Resize ohne externe Abhängigkeit.
+
+#+begin_src emacs-lisp
+(defun my/--shrink-image (path)
+  "Verkleinert PATH wenn nötig.
+1. Begrenzt Kantenlänge auf `my/gptel-image-max-dim' (in-place).
+2. Wenn Datei dann noch über `my/gptel-image-max-bytes': Konversion
+   zu JPEG q=85, originale Datei wird ersetzt.
+Liefert finalen Pfad (kann sich bei JPEG-Konversion auf .jpg ändern)."
+  (when (and (executable-find "sips") (file-exists-p path))
+    ;; 1. Kantenlänge auf max begrenzen
+    (call-process "sips" nil nil nil
+                  "-Z" (number-to-string my/gptel-image-max-dim)
+                  path "--out" path)
+    ;; 2. Bei Bedarf zu JPEG konvertieren
+    (when (and (file-exists-p path)
+               (> (nth 7 (file-attributes path)) my/gptel-image-max-bytes))
+      (let* ((dir  (file-name-directory path))
+             (base (file-name-sans-extension (file-name-nondirectory path)))
+             (jpeg (expand-file-name (concat base ".jpg") dir)))
+        (call-process "sips" nil nil nil
+                      "-s" "format" "jpeg"
+                      "-s" "formatOptions" "85"
+                      path "--out" jpeg)
+        (when (and (file-exists-p jpeg)
+                   (> (nth 7 (file-attributes jpeg)) 0))
+          (delete-file path)
+          (setq path jpeg)))))
+  path)
+#+end_src
+
 ** Clipboard-Bild einfügen + an gptel anhängen
 
 #+begin_src emacs-lisp
 (defun my/insert-clipboard-image (&optional name)
-  "Speichert Bild aus dem System-Clipboard via pngpaste,
-fügt es als Org-Link am Cursor ein und hängt es an die nächste
-gptel-Anfrage (über `gptel-add-file').
+  "Speichert Bild aus dem System-Clipboard via pngpaste, verkleinert
+es bei Bedarf, fügt es als Org-Link am Cursor ein und hängt es an die
+nächste gptel-Anfrage (über `gptel-add-file').
 
 Wenn NAME nil oder leer → Zeitstempel als Dateiname.
 Bei Aufruf interaktiv wird nach NAME gefragt."
@@ -1659,23 +1708,28 @@ Bei Aufruf interaktiv wird nach NAME gefragt."
   (let* ((basename (if (or (null name) (string-empty-p name))
                        (format "img-%s" (format-time-string "%Y%m%d-%H%M%S"))
                      name))
-         (path     (expand-file-name (concat basename ".png")
+         (raw-path (expand-file-name (concat basename ".png")
                                      my/gptel-image-dir))
-         (rc       (call-process "pngpaste" nil nil nil path))
-         (size     (and (file-exists-p path)
-                        (nth 7 (file-attributes path)))))
+         (rc       (call-process "pngpaste" nil nil nil raw-path))
+         (size     (and (file-exists-p raw-path)
+                        (nth 7 (file-attributes raw-path)))))
     (cond
      ((and (= rc 0) size (> size 0))
-      (insert (format "[[file:%s]]\n" path))
-      (when (derived-mode-p 'org-mode)
-        (org-display-inline-images t t))
-      (if (fboundp 'gptel-add-file)
-          (progn
-            (gptel-add-file path)
-            (message "Bild eingefügt + an gptel angehängt: %s" path))
-        (message "Bild eingefügt: %s (gptel-add-file nicht verfügbar)" path)))
+      (let* ((final-path (my/--shrink-image raw-path))
+             (final-size (nth 7 (file-attributes final-path))))
+        (insert (format "[[file:%s]]\n" final-path))
+        (when (derived-mode-p 'org-mode)
+          (org-display-inline-images t t))
+        (if (fboundp 'gptel-add-file)
+            (progn
+              (gptel-add-file final-path)
+              (message "Bild eingefügt + an gptel angehängt: %s (%s)"
+                       (file-name-nondirectory final-path)
+                       (file-size-human-readable final-size)))
+          (message "Bild eingefügt: %s (gptel-add-file nicht verfügbar)"
+                   final-path))))
      (t
-      (when (file-exists-p path) (delete-file path))
+      (when (file-exists-p raw-path) (delete-file raw-path))
       (user-error "Kein Bild im Clipboard (oder pngpaste-Fehler %d)" rc)))))
 #+end_src
 
