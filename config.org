@@ -1720,13 +1720,16 @@ Bei Aufruf interaktiv wird nach NAME gefragt."
         (insert (format "[[file:%s]]\n" final-path))
         (when (derived-mode-p 'org-mode)
           (org-display-inline-images t t))
-        (if (fboundp 'gptel-add-file)
+        ;; gptel-context.el explizit laden (sonst greift kein Alias).
+        ;; gptel-context-add-file ist autoloaded und der "richtige" Name —
+        ;; gptel-add-file ist nur ein defalias darauf.
+        (if (require 'gptel-context nil 'noerror)
             (progn
-              (gptel-add-file final-path)
+              (gptel-context-add-file final-path)
               (message "Bild eingefügt + an gptel angehängt: %s (%s)"
                        (file-name-nondirectory final-path)
                        (file-size-human-readable final-size)))
-          (message "Bild eingefügt: %s (gptel-add-file nicht verfügbar)"
+          (message "Bild eingefügt: %s (gptel-context nicht verfügbar)"
                    final-path))))
      (t
       (when (file-exists-p raw-path) (delete-file raw-path))
@@ -1741,17 +1744,21 @@ oder ~org-download~), kannst du es nachträglich anhängen.
 #+begin_src emacs-lisp
 (defun my/gptel-attach-image-at-point ()
   "Findet den Org file:-Link an/um Cursor und hängt PATH an die
-nächste gptel-Anfrage."
+nächste gptel-Anfrage. Verkleinert vorher bei Bedarf."
   (interactive)
+  (require 'gptel-context)
   (let ((ctx (org-element-context)))
     (if (and (eq (org-element-type ctx) 'link)
              (string= (org-element-property :type ctx) "file"))
         (let ((path (expand-file-name
                      (org-element-property :path ctx))))
           (if (file-exists-p path)
-              (progn
-                (gptel-add-file path)
-                (message "An gptel angehängt: %s" path))
+              (let ((final-path (my/--shrink-image path)))
+                (gptel-context-add-file final-path)
+                (message "An gptel angehängt: %s (%s)"
+                         (file-name-nondirectory final-path)
+                         (file-size-human-readable
+                          (nth 7 (file-attributes final-path)))))
             (user-error "Datei nicht gefunden: %s" path)))
       (user-error "Kein file:-Link am Cursor"))))
 #+end_src
