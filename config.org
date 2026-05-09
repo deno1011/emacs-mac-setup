@@ -1584,6 +1584,146 @@ sequenceDiagram
   (setq gptel-default-mode 'org-mode))
 #+end_src
 
+* Image Capture & Multimodal
+
+Pipeline um Bilder vom iPhone (über Universal Clipboard) in den
+gptel-Buffer zu bringen, automatisch an Claudes nächste Anfrage
+anzuhängen und inline rendern zu lassen.
+
+** Übersicht
+
+*** Workflow
+
+| Schritt | Aktion                                                  |
+|---------+---------------------------------------------------------|
+|       1 | Foto am iPhone aufnehmen                                |
+|       2 | Foto antippen → Sharesheet → "Kopieren"                 |
+|       3 | iCloud Universal Clipboard syncs zum Mac (5–30 s)       |
+|       4 | In gptel-Buffer: ~C-c i~ → ~my/insert-clipboard-image~  |
+|       5 | Bild wird gespeichert, Org-Link eingefügt, gerendert    |
+|       6 | gleichzeitig wird das Bild an gptels Multimodal-Context |
+|         | angehängt (~gptel-add-file~)                            |
+|       7 | Du tippst die Frage ("Löse Aufgaben") + Senden          |
+|       8 | Claude (Vision) sieht Bild + Text, antwortet            |
+
+*** Voraussetzungen
+
+- ~pngpaste~ (brew) — extrahiert PNG aus dem System-Clipboard
+- iCloud Universal Clipboard aktiv auf iPhone und Mac (Settings
+  → Allgemein → AirPlay & Handoff → Universal Clipboard)
+- gptel ≥ 0.9 mit Multimodal-Support (in deinem Setup vorhanden)
+- Vision-fähiges Modell (Opus/Sonnet/Haiku 4.x — bei dir ~claude-opus-4-7~)
+
+** External-Tool Auto-Install (pngpaste)
+
+#+begin_src emacs-lisp
+(unless (executable-find "pngpaste")
+  (when (executable-find "brew")
+    (my/brew-install-and-log "formula" "pngpaste" "install" "pngpaste")
+    (message "pngpaste nicht gefunden — installiere brew pngpaste im Hintergrund. Emacs neu starten.")))
+#+end_src
+
+** Bild-Verzeichnis & Org-Download Konfiguration
+
+#+begin_src emacs-lisp
+(defcustom my/gptel-image-dir
+  (expand-file-name "gptel-images" user-emacs-directory)
+  "Verzeichnis für Bilder die per `my/insert-clipboard-image' eingefügt werden."
+  :type 'directory
+  :group 'claude-executor)
+
+;; org-download nutzt pngpaste als Screenshot-Backend (auch für Clipboard)
+(with-eval-after-load 'org-download
+  (when (executable-find "pngpaste")
+    (setq org-download-screenshot-method "pngpaste %s"))
+  (setq org-download-image-dir my/gptel-image-dir
+        org-download-method    'directory
+        org-download-heading-lvl nil))
+#+end_src
+
+** Clipboard-Bild einfügen + an gptel anhängen
+
+#+begin_src emacs-lisp
+(defun my/insert-clipboard-image (&optional name)
+  "Speichert Bild aus dem System-Clipboard via pngpaste,
+fügt es als Org-Link am Cursor ein und hängt es an die nächste
+gptel-Anfrage (über `gptel-add-file').
+
+Wenn NAME nil oder leer → Zeitstempel als Dateiname.
+Bei Aufruf interaktiv wird nach NAME gefragt."
+  (interactive
+   (list (read-string "Dateiname (ohne Endung, Enter = Zeitstempel): " "")))
+  (unless (executable-find "pngpaste")
+    (user-error "pngpaste fehlt — bitte 'brew install pngpaste'"))
+  (make-directory my/gptel-image-dir t)
+  (let* ((basename (if (or (null name) (string-empty-p name))
+                       (format "img-%s" (format-time-string "%Y%m%d-%H%M%S"))
+                     name))
+         (path     (expand-file-name (concat basename ".png")
+                                     my/gptel-image-dir))
+         (rc       (call-process "pngpaste" nil nil nil path))
+         (size     (and (file-exists-p path)
+                        (nth 7 (file-attributes path)))))
+    (cond
+     ((and (= rc 0) size (> size 0))
+      (insert (format "[[file:%s]]\n" path))
+      (when (derived-mode-p 'org-mode)
+        (org-display-inline-images t t))
+      (if (fboundp 'gptel-add-file)
+          (progn
+            (gptel-add-file path)
+            (message "Bild eingefügt + an gptel angehängt: %s" path))
+        (message "Bild eingefügt: %s (gptel-add-file nicht verfügbar)" path)))
+     (t
+      (when (file-exists-p path) (delete-file path))
+      (user-error "Kein Bild im Clipboard (oder pngpaste-Fehler %d)" rc)))))
+#+end_src
+
+** Bild am Cursor an gptel anhängen
+
+Falls das Bild bereits als Org-Link im Buffer steht (z.B. via Drag-and-Drop
+oder ~org-download~), kannst du es nachträglich anhängen.
+
+#+begin_src emacs-lisp
+(defun my/gptel-attach-image-at-point ()
+  "Findet den Org file:-Link an/um Cursor und hängt PATH an die
+nächste gptel-Anfrage."
+  (interactive)
+  (let ((ctx (org-element-context)))
+    (if (and (eq (org-element-type ctx) 'link)
+             (string= (org-element-property :type ctx) "file"))
+        (let ((path (expand-file-name
+                     (org-element-property :path ctx))))
+          (if (file-exists-p path)
+              (progn
+                (gptel-add-file path)
+                (message "An gptel angehängt: %s" path))
+            (user-error "Datei nicht gefunden: %s" path)))
+      (user-error "Kein file:-Link am Cursor"))))
+#+end_src
+
+** Keybindings
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'gptel
+  (define-key gptel-mode-map (kbd "C-c i") #'my/insert-clipboard-image)
+  (define-key gptel-mode-map (kbd "C-c I") #'my/gptel-attach-image-at-point))
+
+;; Auch global verfügbar — falls du außerhalb gptel-mode capturest
+(global-set-key (kbd "C-c i") #'my/insert-clipboard-image)
+(global-set-key (kbd "C-c I") #'my/gptel-attach-image-at-point)
+#+end_src
+
+** Beispiel-Session
+
+In einem ~M-x gptel~ Buffer:
+
+1. Foto vom Aufgabenblatt aufnehmen am iPhone, kopieren
+2. Cursor in den gptel-Buffer setzen, ~C-c i~, Enter bei Name-Prompt
+3. Bild erscheint inline, Status-Zeile: „Bild eingefügt + an gptel angehängt"
+4. Tippen: „Bitte löse alle Aufgaben aus dem Bild Schritt für Schritt."
+5. ~C-c RET~ (gptel-send) → Claude antwortet mit Lösungen + LaTeX + ggf. Plots
+
 * Web & Image Helpers für Claude
 
 Kleine elisp-Bibliothek, die Claude per AUTORUN/Babel-elisp aufrufen
@@ -2336,6 +2476,40 @@ sequenceDiagram
 
 LaTeX-Math inline schreibst du einfach mit $...$ oder \\\\[...\\\\] —
 org-fragtog rendert beim Cursor-Move automatisch.
+
+BILDER MIT AUFGABEN ANALYSIEREN:
+Wenn der User ein Bild beigefügt hat (Aufgabenblatt, Skizze, Foto eines
+Whiteboards, handgeschriebene Notiz) und nach Lösung/Analyse fragt:
+
+1. Erkenne den Inhalt: Mathe-Aufgaben, Text, Diagramme, Tabellen.
+2. Liste die identifizierten Aufgaben kurz nummeriert auf.
+3. Löse jede Aufgabe Schritt für Schritt:
+   - Inline-Mathe: $...$  (z.B. $\\\\frac{a}{b}$)
+   - Display-Mathe: \\\\[ ... \\\\]  oder $$...$$
+   - LaTeX wird durch org-fragtog beim Cursor-Move automatisch gerendert.
+4. Wenn eine Visualisierung sinnvoll ist (Funktionsgraph, Geometrie,
+   Diagramm), füge einen Plot-Block hinzu (gnuplot/matplotlib/dot
+   nach Bedarf, mit :file foo.png — siehe Grafik-Beispiele oben).
+5. Bei mehreren Aufgaben: pro Aufgabe ein eigener Abschnitt mit
+   Org-Heading (** Aufgabe N).
+
+Beispiel-Antwortstruktur wenn das Bild eine quadratische Gleichung zeigt:
+
+** Aufgabe 1: Lösen Sie $x^2 + 4x - 5 = 0$
+
+Faktorisierung: $x^2 + 4x - 5 = (x+5)(x-1) = 0$
+
+Also $x_1 = -5$ und $x_2 = 1$.
+
+Visualisierung:
+,#+begin_src gnuplot :file parabola.png
+set terminal png size 800,500
+set xlabel \"x\"
+set ylabel \"y\"
+set grid
+set zeroaxis
+plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x - 5\"
+,#+end_src
 
 WEB & BILDER:
 Wenn der User Inhalte aus dem Web braucht oder ein Bild eingefügt haben
