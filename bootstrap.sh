@@ -46,13 +46,18 @@ curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/main.
   | tar -xz -C "$_DL_TMP" --strip-components=1
 for _F in "$_DL_TMP"/*; do
   _NAME="$(basename "$_F")"
-  [ "$_NAME" = "bootstrap.sh" ] && continue
   cp "$_F" "$DEST/$_NAME"
   echo "    $_NAME"
 done
 rm -rf "$_DL_TMP"
 
 chmod +x "$DEST"/*.sh
+
+# Self-update: re-exec with the freshly downloaded bootstrap.sh (once only)
+if [ -z "${_BOOTSTRAP_UPDATED:-}" ] && [ -f "$DEST/bootstrap.sh" ]; then
+  export _BOOTSTRAP_UPDATED=1
+  exec bash "$DEST/bootstrap.sh" "$@"
+fi
 
 # --- Pull personal config from private repo ---
 CONF_PULLED=false
