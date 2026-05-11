@@ -121,7 +121,12 @@
          (lambda (p _)
            (when (= (process-exit-status p) 0)
              (message "Startup sync: pull complete.")
-             (org-revert-all-org-buffers)
+             (dolist (buf (buffer-list))
+               (with-current-buffer buf
+                 (when (and (derived-mode-p 'org-mode)
+                            buffer-file-name
+                            (file-exists-p buffer-file-name))
+                   (revert-buffer t t t))))
              (when (and (file-directory-p org-d) (file-directory-p beorg))
                (start-process "beorg-sync" " *beorg-sync*"
                               "rsync" "-a" "--delete"
