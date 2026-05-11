@@ -117,9 +117,9 @@ else
     if ! brew install "railwaycat/emacsmacport/emacs-mac@30exp"; then
       echo ""
       echo "ERROR: emacs-mac@30exp build failed."
-      echo "       Alternativen:"
-      echo "         1. Stabiles emacs-plus verwenden: ~/setup-emacs-native-plus-mac.sh"
-      echo "         2. Issues melden: https://github.com/railwaycat/homebrew-emacsmacport/issues"
+      echo "       Alternatives:"
+      echo "         1. Use stable emacs-plus: ~/setup-emacs-native-plus-mac.sh"
+      echo "         2. Report issues: https://github.com/railwaycat/homebrew-emacsmacport/issues"
       exit 1
     fi
   else
@@ -127,6 +127,11 @@ else
   fi
 fi
 brew link --overwrite "$_EMACS_PKG" 2>/dev/null || true
+
+# Wipe stale .elc files — byte-compiled files from a different Emacs version
+# cause silent package load failures when switching between plus and yamamoto
+echo "==> Clearing stale byte-compiled packages..."
+find "$HOME/.emacs.d/elpa" -name "*.elc" -delete 2>/dev/null && echo "    Done." || true
 
 _EMACS_CELLAR_DIR="$(brew --prefix)/Cellar/$_EMACS_PKG"
 EMACS_APP=$(find "$_EMACS_CELLAR_DIR" -name "Emacs.app" -maxdepth 4 2>/dev/null | head -1)

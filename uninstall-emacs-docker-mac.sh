@@ -1,6 +1,25 @@
 #!/bin/bash
 
-# --- Konfiguration laden ---
+# Usage: bash uninstall-emacs-docker-mac.sh [--ask]
+# --ask  Prompt before removing each brew package installed by the setup
+
+_ASK=false
+[ "${1:-}" = "--ask" ] && _ASK=true
+
+_pkg_remove() {
+  local TYPE="$1" PKG="$2"
+  if [ "$_ASK" = true ]; then
+    printf "  Remove %s '%s'? [y/N] " "$TYPE" "$PKG"
+    read -r _REPLY < /dev/tty
+    case "$_REPLY" in y|Y) ;; *) echo "    Skipped."; return ;; esac
+  fi
+  case "$TYPE" in
+    formula) brew uninstall --ignore-dependencies "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+    cask)    brew uninstall --cask "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+  esac
+}
+
+# --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
@@ -30,7 +49,8 @@ echo "==> Stopping Colima..."
 colima stop 2>/dev/null && echo "    Colima stopped." || echo "    Colima was not running."
 
 echo "==> Uninstalling Docker CLI..."
-brew uninstall docker 2>/dev/null || true
+_pkg_remove formula docker
+_pkg_remove formula colima
 
 if [ -d "/Applications/Utilities/XQuartz.app" ]; then
   echo "==> Uninstalling XQuartz..."
@@ -60,9 +80,9 @@ rm -f "$HOME/.emacs-icloud-repo" || true
 echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 
 echo "==> Removing brew packages installed by setup..."
-brew uninstall --ignore-dependencies bitwarden-cli 2>/dev/null && echo "    bitwarden-cli removed." || echo "    bitwarden-cli not found."
-brew uninstall --ignore-dependencies gh 2>/dev/null && echo "    gh removed." || echo "    gh not found."
-brew uninstall --ignore-dependencies git-crypt 2>/dev/null && echo "    git-crypt removed." || echo "    git-crypt not found."
+_pkg_remove formula bitwarden-cli
+_pkg_remove formula gh
+_pkg_remove formula git-crypt
 
 echo "==> Logging out GitHub CLI..."
 gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."

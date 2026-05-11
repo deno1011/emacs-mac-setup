@@ -1,7 +1,26 @@
 #!/bin/bash
 
+# Usage: bash uninstall-emacs-native-yamamoto-mac.sh [--ask]
+# --ask  Prompt before removing each brew package (setup packages + config.org packages)
+
+_ASK=false
+[ "${1:-}" = "--ask" ] && _ASK=true
+
+_pkg_remove() {
+  local TYPE="$1" PKG="$2"
+  if [ "$_ASK" = true ]; then
+    printf "  Remove %s '%s'? [y/N] " "$TYPE" "$PKG"
+    read -r _REPLY < /dev/tty
+    case "$_REPLY" in y|Y) ;; *) echo "    Skipped."; return ;; esac
+  fi
+  case "$TYPE" in
+    formula) brew uninstall --ignore-dependencies "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+    cask)    brew uninstall --cask "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+  esac
+}
+
 # --- Check Emacs version ---
-echo "==> Emacs-Check..."
+echo "==> Emacs check..."
 PLUS_INSTALLED=false
 if brew list | grep -q "emacs-plus@30"; then
   PLUS_INSTALLED=true
@@ -11,7 +30,7 @@ if ! brew list emacs-mac@30exp &>/dev/null 2>&1; then
   echo "  emacs-mac@30exp is not installed — nothing to do."
 fi
 
-# --- Konfiguration laden ---
+# --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
@@ -43,9 +62,9 @@ if [ "$PLUS_INSTALLED" = false ]; then
   gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh auth not set."
 
   echo "==> Removing brew packages installed by setup..."
-  brew uninstall --ignore-dependencies bitwarden-cli 2>/dev/null && echo "    bitwarden-cli removed." || echo "    bitwarden-cli not found."
-  brew uninstall --ignore-dependencies gh 2>/dev/null && echo "    gh removed." || echo "    gh not found."
-  brew uninstall --ignore-dependencies git-crypt 2>/dev/null && echo "    git-crypt removed." || echo "    git-crypt not found."
+  _pkg_remove formula bitwarden-cli
+  _pkg_remove formula gh
+  _pkg_remove formula git-crypt
 
   # Remove packages that config.org installed (tracked in system-packages.log)
   _LOG="$HOME/.emacs.d/system-packages.log"
@@ -53,10 +72,7 @@ if [ "$PLUS_INSTALLED" = false ]; then
     echo "==> Removing packages installed by Emacs/config.org..."
     while IFS=: read -r _TYPE _PKG; do
       [ -z "$_TYPE" ] || [ -z "$_PKG" ] && continue
-      case "$_TYPE" in
-        formula) brew uninstall --ignore-dependencies "$_PKG" 2>/dev/null && echo "    $_PKG removed." || echo "    $_PKG not found." ;;
-        cask)    brew uninstall --cask "$_PKG" 2>/dev/null && echo "    $_PKG removed." || echo "    $_PKG not found." ;;
-      esac
+      _pkg_remove "$_TYPE" "$_PKG"
     done < "$_LOG"
     rm -f "$_LOG"
   fi

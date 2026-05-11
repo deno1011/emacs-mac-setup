@@ -314,6 +314,33 @@ Local mode — no Bitwarden, no GitHub, no iCloud. `config.org` is copied locall
 
 ---
 
+## Installed Packages
+
+The setup scripts install the following brew packages automatically:
+
+**All native variants (emacs-plus and Yamamoto):**
+
+| Package | Purpose |
+|---|---|
+| `emacs-plus@30` / `emacs-mac@30exp` | Emacs itself |
+| `bitwarden-cli` | Secret retrieval (git-crypt key, GitHub token, API keys) |
+| `gh` | GitHub CLI (repo clone, auth, API) |
+| `git-crypt` | Encrypt/decrypt org files in the repo |
+
+**Docker variant (additionally):**
+
+| Package | Purpose |
+|---|---|
+| `colima` | Docker runtime for macOS |
+| `docker` | Docker CLI |
+| XQuartz | X11 display server for GUI Emacs |
+
+**config.org-installed packages:**
+
+Packages requested by your Emacs configuration (e.g. `ripgrep`, `fd`, language servers) are installed at first Emacs launch and tracked in `~/.emacs.d/system-packages.log`. The uninstall script reads this log and removes them. Use `--ask` (see below) if you want to keep any of them.
+
+---
+
 ## Uninstall
 
 ```bash
@@ -325,6 +352,18 @@ bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master passwo
 ```
 
 > The Bitwarden Keychain entry is **not** deleted by the uninstall scripts (it is shared). Remove it explicitly with the script above after all variants have been uninstalled.
+
+### `--ask` flag
+
+Pass `--ask` to be prompted before each brew package is removed. Useful when a package (e.g. `ripgrep`) is also used outside Emacs and you want to keep it:
+
+```bash
+bash ./uninstall-emacs-native-plus-mac.sh --ask
+bash ./uninstall-emacs-native-yamamoto-mac.sh --ask
+bash ./uninstall-emacs-docker-mac.sh --ask
+```
+
+Without `--ask`, all packages installed by the setup are removed automatically.
 
 ---
 
