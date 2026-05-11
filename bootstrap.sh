@@ -198,7 +198,7 @@ else
   echo "  Run $DEST/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
 fi
 
-# --- GitHub auth (mit Token aus Bitwarden) ---
+# --- GitHub auth (with token from Bitwarden) ---
 if [ -n "$GH_USER" ]; then
   if ! command -v gh &>/dev/null; then
     echo "==> Installing GitHub CLI..."
@@ -219,7 +219,7 @@ if [ -n "$GH_USER" ]; then
       gh auth setup-git
       echo "    GitHub authentifiziert."
     else
-      echo "    WARN: GitHub-Token nicht in Bitwarden gefunden — manueller Login:"
+      echo "    WARN: GitHub token not found in Bitwarden — manual login:"
       gh auth login < /dev/tty
       gh auth setup-git
     fi
@@ -227,24 +227,24 @@ if [ -n "$GH_USER" ]; then
   fi
 fi
 
-# --- GitHub Repos prüfen und anlegen ---
+# --- Check and create GitHub repos ---
 if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
   echo ""
-  echo "==> GitHub Repos prüfen..."
+  echo "==> Checking GitHub repos..."
   source "$CONFIG_FILE"
 
   _create_repo_if_missing() {
     local REPO_NAME="$1" DESC="$2"
     if gh api "repos/$GH_USER/$REPO_NAME" &>/dev/null 2>&1; then
-      echo "    $GH_USER/$REPO_NAME — bereits vorhanden."
+      echo "    $GH_USER/$REPO_NAME — already exists."
       return 1  # already existed
     fi
-    echo "==> Repo $GH_USER/$REPO_NAME nicht gefunden — anlegen..."
+    echo "==> Repo $GH_USER/$REPO_NAME not found — creating..."
     if gh api user/repos -X POST -f name="$REPO_NAME" -f private=true -f description="$DESC" >/dev/null; then
-      echo "    $GH_USER/$REPO_NAME erstellt."
+      echo "    $GH_USER/$REPO_NAME created."
       return 0  # was created
     else
-      echo "    WARN: Repo $GH_USER/$REPO_NAME konnte nicht angelegt werden."
+      echo "    WARN: Could not create repo $GH_USER/$REPO_NAME."
       return 1
     fi
   }
@@ -263,7 +263,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
           >/dev/null; then
         echo "    setup-emacs-mac.conf aktualisiert."
       else
-        echo "WARN: Upload fehlgeschlagen — bitte setup-emacs-mac.conf manuell in $GH_USER/$CONF_REPO ablegen."
+        echo "WARN: Upload failed — please add setup-emacs-mac.conf to $GH_USER/$CONF_REPO manually."
       fi
     else
       if gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
@@ -271,7 +271,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
           >/dev/null; then
         echo "    setup-emacs-mac.conf hochgeladen."
       else
-        echo "WARN: Upload fehlgeschlagen — bitte setup-emacs-mac.conf manuell in $GH_USER/$CONF_REPO ablegen."
+        echo "WARN: Upload failed — please add setup-emacs-mac.conf to $GH_USER/$CONF_REPO manually."
       fi
     fi
     unset _CONF_B64 _CONF_SHA

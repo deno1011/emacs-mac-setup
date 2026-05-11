@@ -122,7 +122,7 @@ print(json.dumps({
   echo "  Created: $NAME  (field: $BW_FIELD)"
 }
 
-# --- Prüfen welche Einträge noch fehlen, dann nur nach fehlenden fragen ---
+# --- Check which entries are still missing, then only prompt for missing ones ---
 _bw_check_item() {
   bw get item "$1" --session "$BW_SESSION" 2>/dev/null \
     | python3 -c "
@@ -140,18 +140,18 @@ ANTHROPIC_VAL=""
 
 # --- GitHub Token ---
 if [ -n "$(_bw_check_item "$BW_GH_ITEM")" ]; then
-  echo "  GitHub Token bereits in Bitwarden — überspringe."
+  echo "  GitHub Token already in Bitwarden — skipping."
 else
   printf "  %-54s: " "GitHub Personal Access Token  (repo scope)"
   read -rs GH_TOKEN_VAL < /dev/tty
   echo ""
 fi
 
-# --- git-crypt Schlüssel: prüfen oder automatisch generieren ---
+# --- git-crypt key: check or generate automatically ---
 if [ -n "$(_bw_check_item "$BW_ITEM")" ]; then
-  echo "  git-crypt Schlüssel bereits in Bitwarden — überspringe."
+  echo "  git-crypt key already in Bitwarden — skipping."
 else
-  echo "==> git-crypt Schlüssel nicht gefunden — generiere automatisch..."
+  echo "==> git-crypt key not found — generating automatically..."
   if ! command -v git-crypt &>/dev/null; then
     echo "    Installing git-crypt..."
     brew install git-crypt
@@ -163,12 +163,12 @@ else
   GC_KEY_VAL=$(base64 -i /tmp/gckey_bs | tr -d '\n')
   rm -f /tmp/gckey_bs
   rm -rf "$_GC_TMP"
-  echo "    git-crypt Schlüssel generiert."
+  echo "    git-crypt key generated."
 fi
 
 # --- Anthropic Key (optional) ---
 if [ -n "$(_bw_check_item "$BW_ANTHROPIC_ITEM")" ]; then
-  echo "  Anthropic Key bereits in Bitwarden — überspringe."
+  echo "  Anthropic Key already in Bitwarden — skipping."
 else
   printf "  %-54s: " "Anthropic API Key  (Enter to skip — optional)"
   read -rs ANTHROPIC_VAL < /dev/tty

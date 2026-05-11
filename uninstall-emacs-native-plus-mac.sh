@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# --- Emacs-Version prüfen ---
+# --- Check Emacs version ---
 echo "==> Emacs-Check..."
 YAMAMOTO_INSTALLED=false
 if brew list emacs-mac@30exp &>/dev/null 2>&1; then
   YAMAMOTO_INSTALLED=true
-  echo "  HINWEIS: emacs-mac@30exp (Yamamoto) ist ebenfalls installiert — bleibt erhalten."
+  echo "  NOTE: emacs-mac@30exp (Yamamoto) is also installed — keeping it."
 fi
 if ! brew list | grep -q "emacs-plus@30"; then
-  echo "  emacs-plus@30 ist nicht installiert — nichts zu tun."
+  echo "  emacs-plus@30 is not installed — nothing to do."
 fi
 
 # --- Konfiguration laden ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: Konfigurationsdatei nicht gefunden: $CONFIG_FILE"
+  echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1
 fi
 source "$CONFIG_FILE"
@@ -36,7 +36,7 @@ if [ "$YAMAMOTO_INSTALLED" = false ]; then
   echo "==> Removing iCloud repo..."
   rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iCloud repo not found."
 
-  echo "    Bitwarden keychain entry bleibt erhalten — zum Löschen: ~/remove-bitwarden-keychain.sh"
+  echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 
   echo "==> Logging out GitHub CLI..."
   gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh auth not set."
@@ -64,8 +64,8 @@ if [ "$YAMAMOTO_INSTALLED" = false ]; then
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
 else
-  echo "  Shared resources (~/emacs.d, iCloud repo, packages) bleiben erhalten (Yamamoto noch installiert)."
-  echo "  emacs-mac@30exp wird als aktive Version verlinkt..."
+  echo "  Shared resources (~/emacs.d, iCloud repo, packages) preserved (Yamamoto still installed)."
+  echo "  Linking emacs-mac@30exp as the active version..."
   brew link --overwrite emacs-mac@30exp 2>/dev/null || true
 fi
 

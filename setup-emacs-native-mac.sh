@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
-# --- Flavor-Parameter (gesetzt von Wrapper-Skripten oder direkt via EMACS_FLAVOR=...) ---
+# --- Flavor parameter (set by wrapper scripts or directly via EMACS_FLAVOR=...) ---
 case "${EMACS_FLAVOR:-plus}" in
   yamamoto)
     _EMACS_PKG="emacs-mac@30exp"
@@ -27,42 +27,42 @@ case "${EMACS_FLAVOR:-plus}" in
     ;;
 esac
 
-# --- Emacs-Check ---
-echo "==> Emacs-Check..."
+# --- Emacs check ---
+echo "==> Emacs check..."
 if brew list 2>/dev/null | grep -q "^${_EMACS_OTHER_PKG}"; then
-  echo "  HINWEIS: $_EMACS_OTHER_PKG ist ebenfalls installiert."
-  echo "           $_EMACS_PKG wird als aktive Version verlinkt."
+  echo "  NOTE: $_EMACS_OTHER_PKG is also installed."
+  echo "        $_EMACS_PKG will be linked as the active version."
 fi
 if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
-  EMACS_VER=$(emacs --version 2>/dev/null | head -1 || echo "unbekannt")
+  EMACS_VER=$(emacs --version 2>/dev/null | head -1 || echo "unknown")
   echo "  $_EMACS_PKG bereits installiert: $EMACS_VER"
   echo "  Zum Deinstallieren: ~/$_EMACS_UNINSTALL"
 fi
 
-# --- Konfiguration laden ---
+# --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: Konfigurationsdatei nicht gefunden: $CONFIG_FILE"
-  echo "Vorlage: ~/setup-emacs-mac.conf.template"
+  echo "ERROR: Config file not found: $CONFIG_FILE"
+  echo "Template: ~/setup-emacs-mac.conf.template"
   exit 1
 fi
 source "$CONFIG_FILE"
 source "$HOME/bw-unlock.sh"
 
-# --- Pflichtfelder prüfen (nur wenn GitHub konfiguriert) ---
+# --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
   MISSING=()
   [ -z "$GIT_NAME" ]  && MISSING+=("GIT_NAME")
   [ -z "$GIT_EMAIL" ] && MISSING+=("GIT_EMAIL")
   [ -z "$GH_REPO" ]   && MISSING+=("GH_REPO")
   if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "ERROR: GH_USER ist gesetzt, aber folgende Felder fehlen in $CONFIG_FILE:"
+    echo "ERROR: GH_USER is set but the following fields are missing in $CONFIG_FILE:"
     for F in "${MISSING[@]}"; do echo "  $F"; done
     exit 1
   fi
 fi
 
-# --- Pfade setzen ---
+# --- Set paths ---
 EMACS_INIT="$HOME/.emacs.d/init.el"
 EMACS_SECRETS="$HOME/.emacs.d/secrets.el"
 if [ -n "$GH_USER" ]; then
@@ -70,21 +70,21 @@ if [ -n "$GH_USER" ]; then
   EMACS_CONFIG_DIR="$HOME/$GH_REPO"
 else
   EMACS_CONFIG_DIR="$HOME/emacs-config"
-  echo "==> GitHub nicht konfiguriert — lokale Config wird verwendet."
+  echo "==> GitHub not configured — using local config."
 fi
 
 # --- Homebrew ---
 if ! command -v brew &>/dev/null; then
-  echo "ERROR: Homebrew nicht gefunden. Bitte installieren: https://brew.sh"
+  echo "ERROR: Homebrew not found. Please install: https://brew.sh"
   exit 1
 fi
 
-# --- Stale symlinks vorab bereinigen (verhindert brew link-Fehler) ---
+# --- Clean up stale symlinks upfront (prevents brew link errors) ---
 for _PKG in node coreutils; do
   brew unlink "$_PKG" 2>/dev/null || true
 done
 
-# --- Bitwarden vorab entsperren (nur im GitHub-Modus) ---
+# --- Unlock Bitwarden upfront (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
   if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ ! -f "$EMACS_SECRETS" ]; then
     if ! command -v bw &>/dev/null; then
@@ -95,14 +95,14 @@ if [ -n "$GH_USER" ]; then
   fi
 fi
 
-# --- Tools (nur im GitHub-Modus) ---
+# --- Tools (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
   command -v bw &>/dev/null       && skip "Bitwarden CLI"  || { echo "==> Installing Bitwarden CLI..."; brew install bitwarden-cli; }
   command -v gh &>/dev/null       && skip "GitHub CLI"     || { echo "==> Installing GitHub CLI...";    brew install gh; }
   command -v git-crypt &>/dev/null && skip "git-crypt"     || { echo "==> Installing git-crypt...";     brew install git-crypt; }
 fi
 
-# --- Emacs installieren ---
+# --- Install Emacs ---
 brew unlink "$_EMACS_OTHER_PKG" 2>/dev/null || true
 brew unlink coreutils 2>/dev/null || true
 if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
@@ -114,7 +114,7 @@ else
   if [ "${EMACS_FLAVOR:-plus}" = "yamamoto" ]; then
     if ! brew install "railwaycat/emacsmacport/emacs-mac@30exp"; then
       echo ""
-      echo "ERROR: emacs-mac@30exp Build fehlgeschlagen."
+      echo "ERROR: emacs-mac@30exp build failed."
       echo "       Alternativen:"
       echo "         1. Stabiles emacs-plus verwenden: ~/setup-emacs-native-plus-mac.sh"
       echo "         2. Issues melden: https://github.com/railwaycat/homebrew-emacsmacport/issues"
@@ -133,13 +133,13 @@ if [ -n "$EMACS_APP" ]; then
   cp -r "$EMACS_APP" "/Applications/$_EMACS_APP_NAME"
   echo "==> $_EMACS_APP_NAME → /Applications"
 else
-  echo "WARN: Emacs.app nicht gefunden unter $_EMACS_CELLAR_DIR"
+  echo "WARN: Emacs.app not found under $_EMACS_CELLAR_DIR"
 fi
 
 EMACS_BIN=$(find "$_EMACS_CELLAR_DIR" -name "emacs" -path "*/bin/emacs" -maxdepth 4 2>/dev/null | head -1)
 [ -z "$EMACS_BIN" ] && EMACS_BIN=$(command -v emacs 2>/dev/null) || true
 if [ -z "$EMACS_BIN" ]; then
-  echo "ERROR: Emacs binary nicht gefunden nach Installation."
+  echo "ERROR: Emacs binary not found after installation."
   exit 1
 fi
 echo "==> Using Emacs: $EMACS_BIN"
@@ -149,24 +149,24 @@ if [ -n "$GH_USER" ]; then
   if gh auth status &>/dev/null 2>&1; then
     skip "GitHub CLI auth"
   else
-    echo "==> GitHub CLI mit Token aus Bitwarden authentifizieren..."
+    echo "==> Authenticating GitHub CLI with token from Bitwarden..."
     GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
     if [ -n "$GH_TOKEN" ]; then
       if echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null; then
         gh auth setup-git
       else
-        echo "WARN: GitHub Token abgelaufen oder ungültig — bitte manuell einloggen:"
+        echo "WARN: GitHub Token expired or invalid — please log in manually:"
         gh auth login < /dev/tty
         gh auth setup-git
       fi
     else
-      echo "WARN: GitHub Token nicht in Bitwarden gefunden. Bitte manuell:"
+      echo "WARN: GitHub token not found in Bitwarden. Please log in manually:"
       gh auth login < /dev/tty
       gh auth setup-git
     fi
   fi
 
-  # --- Conf aus privatem Repo pullen (falls konfiguriert) ---
+  # --- Pull conf from private repo (if configured) ---
   if [ -n "$CONF_REPO" ]; then
     CONF_URL="https://github.com/${GH_USER}/${CONF_REPO}.git"
     CONF_TMP=$(mktemp -d)
@@ -174,10 +174,10 @@ if [ -n "$GH_USER" ]; then
       if [ -f "$CONF_TMP/setup-emacs-mac.conf" ]; then
         cp "$CONF_TMP/setup-emacs-mac.conf" "$CONFIG_FILE"
         source "$CONFIG_FILE"
-        echo "==> setup-emacs-mac.conf aus privatem Repo aktualisiert."
+        echo "==> setup-emacs-mac.conf updated from private repo."
       fi
     else
-      echo "WARN: Privates Conf-Repo nicht erreichbar ($CONF_REPO) — lokale Config wird verwendet."
+      echo "WARN: Private conf repo not reachable ($CONF_REPO) — using local config."
     fi
     rm -rf "$CONF_TMP"
     ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
@@ -189,17 +189,17 @@ if [ -n "$GH_USER" ]; then
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
   else
-    echo "==> Repo nach iCloud klonen..."
+    echo "==> Cloning repo to iCloud..."
     if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
-      echo "ERROR: iCloud Drive nicht verfügbar."
-      echo "       Bitte iCloud Drive in Systemeinstellungen aktivieren und erneut ausführen."
+      echo "ERROR: iCloud Drive not available."
+      echo "       Please enable iCloud Drive in System Settings and run again."
       exit 1
     fi
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
     if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
       cp "$SCRIPT_DIR/config.org" "$ICLOUD_REPO_PATH/config.org"
-      echo "    config.org aus lokalem Fallback kopiert."
+      echo "    config.org copied from local fallback."
     fi
 
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
@@ -213,10 +213,10 @@ BEORG="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/o
 git push origin main &
 HOOKEOF
     chmod +x "$ICLOUD_REPO_PATH/.git/hooks/post-commit"
-    echo "    iCloud-Repo eingerichtet."
+    echo "    iCloud repo set up."
   fi
 
-  # --- git-crypt: initialisieren (frisches Repo) oder entsperren (verschlüsselt) ---
+  # --- git-crypt: initialise (fresh repo) or unlock (already encrypted) ---
   _GC_INITIALIZED=false
   [ -d "$ICLOUD_REPO_PATH/.git/git-crypt" ] && _GC_INITIALIZED=true
 
@@ -229,7 +229,7 @@ HOOKEOF
     if [ -n "$GC_KEY" ]; then
       if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
         if [ "$_GC_INITIALIZED" = false ]; then
-          echo "==> git-crypt initialisieren (frisches Repo)..."
+          echo "==> Initialising git-crypt (fresh repo)..."
           (cd "$ICLOUD_REPO_PATH" && git crypt init) 2>/dev/null
           cp /tmp/gckey "$ICLOUD_REPO_PATH/.git/git-crypt/keys/default"
           if [ ! -f "$ICLOUD_REPO_PATH/.gitattributes" ]; then
@@ -239,24 +239,24 @@ HOOKEOF
               commit -m "Add git-crypt for org/ directory" 2>/dev/null || true
             git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
           fi
-          echo "    git-crypt initialisiert."
+          echo "    git-crypt initialised."
         else
           if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
             git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
-            echo "    git-crypt entsperrt und org/ ausgecheckt."
+            echo "    git-crypt unlocked and org/ checked out."
           else
-            echo "WARN: git-crypt unlock fehlgeschlagen — org/ Dateien noch verschlüsselt."
+            echo "WARN: git-crypt unlock failed — org/ files still encrypted."
           fi
         fi
       else
-        echo "WARN: Bitwarden-Wert ist kein gültiges Base64."
+        echo "WARN: Bitwarden value is not valid Base64."
       fi
       rm -f /tmp/gckey
     else
-      echo "WARN: git-crypt Key nicht in Bitwarden gefunden."
+      echo "WARN: git-crypt key not found in Bitwarden."
     fi
   else
-    skip "git-crypt (org/ bereits entschlüsselt)"
+    skip "git-crypt (org/ already decrypted)"
   fi
 
   if [ -L "$EMACS_CONFIG_DIR" ] && [ "$(readlink "$EMACS_CONFIG_DIR")" = "$ICLOUD_REPO_PATH" ]; then
@@ -266,19 +266,19 @@ HOOKEOF
     ln -sfn "$ICLOUD_REPO_PATH" "$EMACS_CONFIG_DIR"
   fi
 
-# --- Lokaler Modus: config.org aus Scripts-Ordner ---
+# --- Local mode: config.org from scripts folder ---
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
     mkdir -p "$EMACS_CONFIG_DIR"
-    echo "==> ~/emacs-config/ erstellt."
+    echo "==> ~/emacs-config/ created."
   fi
   if [ ! -f "$EMACS_CONFIG_DIR/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
     cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config.org"
-    echo "==> config.org nach ~/emacs-config/ kopiert."
+    echo "==> config.org copied to ~/emacs-config/."
   elif [ -f "$EMACS_CONFIG_DIR/config.org" ]; then
     skip "config.org (already present)"
   else
-    echo "WARN: Keine config.org gefunden — Emacs startet mit Basissetup."
+    echo "WARN: No config.org found — Emacs will start with basic setup."
   fi
 fi
 
@@ -291,7 +291,7 @@ else
     cp "$SCRIPT_DIR/init.el" "$EMACS_INIT"
     echo "==> init.el installiert."
   else
-    echo "ERROR: init.el nicht gefunden — bootstrap.sh erneut ausführen."
+    echo "ERROR: init.el not found — re-run bootstrap.sh."
     exit 1
   fi
 fi
@@ -302,27 +302,27 @@ if [ -f "$EMACS_SECRETS" ]; then
 else
   mkdir -p "$HOME/.emacs.d"
   if [ -n "$GH_USER" ] && [ -n "$BW_SESSION" ]; then
-    echo "==> Anthropic API Key aus Bitwarden holen..."
+    echo "==> Fetching Anthropic API key from Bitwarden..."
     ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
     if [ -n "$ANTHROPIC_API_KEY" ]; then
       printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$EMACS_SECRETS"
-      echo "    secrets.el mit API Key geschrieben."
+      echo "    secrets.el written with API key."
     else
-      echo "WARN: Anthropic API Key nicht gefunden — leere secrets.el erstellt."
+      echo "WARN: Anthropic API key not found — empty secrets.el created."
       echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
     fi
   else
     echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
-    echo "==> secrets.el erstellt (leer — kein GitHub/Bitwarden konfiguriert)."
+    echo "==> secrets.el created (empty — no GitHub/Bitwarden configured)."
   fi
 fi
 
-# --- Git-Identität global setzen (nur im GitHub-Modus) ---
+# --- Set global git identity (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
   if git config --global user.email 2>/dev/null | grep -q "@"; then
-    skip "Git-Identität"
+    skip "Git identity"
   else
-    echo "==> Git-Identität setzen..."
+    echo "==> Setting git identity..."
     git config --global user.email "$GIT_EMAIL"
     git config --global user.name "$GIT_NAME"
   fi

@@ -7,40 +7,40 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
-# --- Konfiguration laden ---
+# --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: Konfigurationsdatei nicht gefunden: $CONFIG_FILE"
-  echo "Bitte erstellen (Vorlage: setup-emacs-mac.conf)"
+  echo "ERROR: Config file not found: $CONFIG_FILE"
+  echo "Please create it (template: setup-emacs-mac.conf)"
   exit 1
 fi
 source "$CONFIG_FILE"
 source "$HOME/bw-unlock.sh"
 
-# --- Pflichtfelder prüfen ---
+# --- Check required fields ---
 MISSING=()
 [ -z "$GIT_NAME" ]  && MISSING+=("GIT_NAME")
 [ -z "$GIT_EMAIL" ] && MISSING+=("GIT_EMAIL")
 [ -z "$GH_USER" ]   && MISSING+=("GH_USER")
 [ -z "$GH_REPO" ]   && MISSING+=("GH_REPO")
 if [ ${#MISSING[@]} -gt 0 ]; then
-  echo "ERROR: Folgende Pflichtfelder fehlen oder sind leer in $CONFIG_FILE:"
+  echo "ERROR: The following required fields are missing or empty in $CONFIG_FILE:"
   for F in "${MISSING[@]}"; do echo "  $F"; done
-  echo "Vorlage: ~/setup-emacs-mac.conf.template"
+  echo "Template: ~/setup-emacs-mac.conf.template"
   exit 1
 fi
 
-# --- Passwörter vorab abfragen ---
+# --- Prompt for passwords upfront ---
 ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 
-# Admin-Passwort nur einlesen wenn XQuartz noch nicht installiert ist
+# Only prompt for admin password if XQuartz is not yet installed
 if [ ! -d "/Applications/Utilities/XQuartz.app" ]; then
-  echo "==> Admin-Passwort eingeben (einmalig, für XQuartz):"
+  echo "==> Enter admin password (once, for XQuartz):"
   read -rs ADMIN_PASS < /dev/tty
   echo ""
 fi
 
-# Bitwarden wird benötigt wenn: iCloud-Repo fehlt ODER gh nicht authentifiziert ODER API Key fehlt im Container
+# Bitwarden needed if: iCloud repo missing OR gh not authenticated OR API key missing in container
 ANTHROPIC_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exec "$DOCKER_CONTAINER" grep -q "ANTHROPIC_API_KEY" /home/emacs/.bashrc 2>/dev/null && echo "yes") || true
 if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "$ANTHROPIC_KEY_SET" != "yes" ]; then
   if ! command -v bw &>/dev/null; then
@@ -54,7 +54,7 @@ fi
 echo "==> Cleaning incomplete Homebrew downloads..."
 rm -f ~/Library/Caches/Homebrew/downloads/*.incomplete
 
-# --- XQuartz (direkt installieren, nicht über brew cask, damit sudo-Cache funktioniert) ---
+# --- XQuartz (install directly, not via brew cask, so the sudo cache stays active) ---
 if [ -d "/Applications/Utilities/XQuartz.app" ]; then
   skip "XQuartz (already installed)"
 else
@@ -103,12 +103,12 @@ fi
 if gh auth status &>/dev/null 2>&1; then
   skip "GitHub CLI auth (already authenticated)"
 else
-  echo "==> GitHub CLI mit Token aus Bitwarden authentifizieren..."
+  echo "==> Authenticating GitHub CLI with token from Bitwarden..."
   GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
   if [ -n "$GH_TOKEN" ]; then
     echo "$GH_TOKEN" | gh auth login --with-token
   else
-    echo "WARN: GitHub Token nicht in Bitwarden gefunden. Bitte manuell anmelden:"
+    echo "WARN: GitHub token not found in Bitwarden. Please log in manually:"
     gh auth login
   fi
 fi
@@ -134,13 +134,13 @@ if colima status 2>/dev/null | grep -q "Running"; then
   skip "Colima (already running)"
 else
   echo "==> Starting Colima (Docker runtime)..."
-  colima start || { echo "ERROR: Colima start fehlgeschlagen."; exit 1; }
+  colima start || { echo "ERROR: Colima failed to start."; exit 1; }
 fi
 
 # --- Docker context ---
 # Resolve Colima socket path — wait up to 30s for socket to appear
 COLIMA_SOCK=""
-echo "==> Warte auf Colima socket..."
+echo "==> Waiting for Colima socket..."
 for _I in $(seq 1 30); do
   for CANDIDATE in \
       "$HOME/.colima/docker.sock" \
@@ -151,12 +151,12 @@ for _I in $(seq 1 30); do
   sleep 1
 done
 if [ -z "$COLIMA_SOCK" ]; then
-  echo "ERROR: Colima socket nicht gefunden nach 30s."
-  echo "       Verfügbare Colima-Dateien:"
-  ls "$HOME/.colima/" 2>/dev/null || echo "       ~/.colima/ existiert nicht"
+  echo "ERROR: Colima socket not found after 30s."
+  echo "       Available Colima files:"
+  ls "$HOME/.colima/" 2>/dev/null || echo "       ~/.colima/ does not exist"
   exit 1
 fi
-echo "    Socket gefunden: $COLIMA_SOCK"
+echo "    Socket found: $COLIMA_SOCK"
 # Create context if missing or broken
 if ! docker context inspect colima &>/dev/null 2>&1; then
   echo "==> Creating Docker context for Colima..."
@@ -242,36 +242,36 @@ else
   docker volume create "$DOCKER_VOLUME"
 fi
 
-# --- Mac-seitige iCloud repo setup ---
+# --- Mac-side iCloud repo setup ---
 ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 ICLOUD_REPO_SYMLINK="$HOME/.emacs-icloud-repo"
 
 if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
   skip "iCloud repo (already cloned to Mac)"
-  echo "==> GitHub Credential-Helper einrichten und pull..."
+  echo "==> Setting up GitHub credential helper and pulling..."
   gh auth setup-git
   git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
   git -C "$ICLOUD_REPO_PATH" pull origin main || true
 else
-  echo "==> Schlüssel aus Bitwarden abrufen..."
+  echo "==> Fetching key from Bitwarden..."
   KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD")
 
-  echo "==> GitHub Credential-Helper einrichten..."
+  echo "==> Setting up GitHub credential helper..."
   gh auth setup-git
 
-  echo "==> Repo nach iCloud klonen..."
+  echo "==> Cloning repo to iCloud..."
   git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
-  echo "==> git-crypt auf Mac entsperren..."
+  echo "==> Unlocking git-crypt on Mac..."
   echo "$KEY_B64" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey
   git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey
   rm /tmp/gckey
 
-  echo "==> Git-Identität setzen..."
+  echo "==> Setting git identity..."
   git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
   git -C "$ICLOUD_REPO_PATH" config user.name "$GIT_NAME"
 
-  echo "==> Post-commit hook setzen (auto-push + beorg sync)..."
+  echo "==> Setting post-commit hook (auto-push + beorg sync)..."
   cat > "$ICLOUD_REPO_PATH/.git/hooks/post-commit" << 'HOOKEOF'
 #!/bin/sh
 REPO_ORG="$(git rev-parse --show-toplevel)/org"
@@ -281,7 +281,7 @@ git push origin main &
 HOOKEOF
   chmod +x "$ICLOUD_REPO_PATH/.git/hooks/post-commit"
 
-  echo "==> Bestehende beorg-Dateien migrieren..."
+  echo "==> Migrating existing beorg files..."
   if [ -d "$BEORG_ORG_PATH" ]; then
     rsync -av --ignore-existing "$BEORG_ORG_PATH/" "$ICLOUD_REPO_PATH/org/"
     git -C "$ICLOUD_REPO_PATH" add org/
@@ -289,11 +289,11 @@ HOOKEOF
       git -C "$ICLOUD_REPO_PATH" commit -m "Migrate existing beorg files from iCloud"
       git -C "$ICLOUD_REPO_PATH" push
     else
-      echo "    Keine neuen Dateien zu migrieren."
+      echo "    No new files to migrate."
     fi
   fi
 
-  echo "    iCloud-Repo eingerichtet."
+  echo "    iCloud repo set up."
 fi
 
 # --- Mac-seitige secrets.el symlink ---
@@ -306,10 +306,10 @@ if [ -f "$_SECRETS_REPO" ] && grep -q "setenv" "$_SECRETS_REPO" 2>/dev/null; the
   else
     [ -e "$_SECRETS_LOCAL" ] && rm "$_SECRETS_LOCAL"
     ln -sf "$_SECRETS_REPO" "$_SECRETS_LOCAL"
-    echo "==> secrets.el symlink gesetzt: $_SECRETS_LOCAL → $_SECRETS_REPO"
+    echo "==> secrets.el symlink set: $_SECRETS_LOCAL → $_SECRETS_REPO"
   fi
 else
-  echo "WARN: $_SECRETS_REPO fehlt oder noch verschlüsselt — Symlink nicht gesetzt."
+  echo "WARN: $_SECRETS_REPO missing or still encrypted — symlink not set."
 fi
 
 # --- Start container ---
@@ -320,14 +320,14 @@ fi
 
 if docker ps -q -f name="$DOCKER_CONTAINER" 2>/dev/null | grep -q .; then
   if [ "$HAS_BEORG_MOUNT" = false ]; then
-    echo "==> Container neu erstellen (beorg-Mount fehlt)..."
+    echo "==> Recreating container (beorg mount missing)..."
     docker rm -f "$DOCKER_CONTAINER"
   else
     skip "Container ($DOCKER_CONTAINER already running)"
   fi
 elif docker ps -aq -f name="$DOCKER_CONTAINER" 2>/dev/null | grep -q .; then
   if [ "$HAS_BEORG_MOUNT" = false ]; then
-    echo "==> Container neu erstellen (beorg-Mount fehlt)..."
+    echo "==> Recreating container (beorg mount missing)..."
     docker rm -f "$DOCKER_CONTAINER"
   else
     echo "==> Starting existing container..."
@@ -471,18 +471,18 @@ else
   fi
 fi
 
-# --- secrets.el (Repo → Symlink, sonst Bitwarden) ---
+# --- secrets.el (Repo → Symlink, else Bitwarden) ---
 _C_SECRETS="/home/emacs/.emacs.d/secrets.el"
 _C_REPO_SECRETS="/home/emacs/${GH_REPO}/emacs.d/secrets.el"
 if docker exec "$DOCKER_CONTAINER" test -L "$_C_SECRETS" 2>/dev/null; then
-  skip "secrets.el (symlink bereits gesetzt im Container)"
+  skip "secrets.el (symlink already set in container)"
 elif docker exec "$DOCKER_CONTAINER" bash -c "[ -f '$_C_REPO_SECRETS' ] && grep -q setenv '$_C_REPO_SECRETS'" 2>/dev/null; then
-  echo "==> secrets.el aus Repo symlinken (Container)..."
+  echo "==> Symlinking secrets.el from repo (container)..."
   docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/.emacs.d && ln -sf '$_C_REPO_SECRETS' '$_C_SECRETS'"
   docker exec --user root "$DOCKER_CONTAINER" chown -h emacs:emacs "$_C_SECRETS"
-  echo "    Symlink gesetzt."
+  echo "    Symlink set."
 else
-  echo "==> secrets.el aus Bitwarden (Repo-Datei fehlt oder verschlüsselt)..."
+  echo "==> secrets.el from Bitwarden (repo file missing or still encrypted)..."
   ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
   if [ -n "$ANTHROPIC_API_KEY" ]; then
     _SECRET_TMP=$(mktemp)
@@ -491,9 +491,9 @@ else
     docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:$_C_SECRETS"
     docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "$_C_SECRETS"
     rm -f "$_SECRET_TMP"
-    echo "    API key aus Bitwarden gesetzt."
+    echo "    API key set from Bitwarden."
   else
-    echo "WARN: Anthropic API key nicht in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
+    echo "WARN: Anthropic API key not found in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
   fi
 fi
 

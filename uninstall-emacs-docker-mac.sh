@@ -3,13 +3,13 @@
 # --- Konfiguration laden ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: Konfigurationsdatei nicht gefunden: $CONFIG_FILE"
+  echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1
 fi
 source "$CONFIG_FILE"
 
 if [ -d "/Applications/Utilities/XQuartz.app" ]; then
-  echo "==> Admin-Passwort eingeben (einmalig, für XQuartz-Deinstallation):"
+  echo "==> Enter admin password (once, for XQuartz uninstall):"
   read -rs ADMIN_PASS
   echo ""
 fi
@@ -57,7 +57,7 @@ rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iClou
 echo "==> Removing iCloud symlink..."
 rm -f "$HOME/.emacs-icloud-repo" || true
 
-echo "    Bitwarden keychain entry bleibt erhalten — zum Löschen: ~/remove-bitwarden-keychain.sh"
+echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 
 echo "==> Removing brew packages installed by setup..."
 brew uninstall --ignore-dependencies bitwarden-cli 2>/dev/null && echo "    bitwarden-cli removed." || echo "    bitwarden-cli not found."
