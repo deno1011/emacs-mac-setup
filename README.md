@@ -9,16 +9,19 @@ Automated Emacs setup for macOS. Three installation variants share a common conf
 **Have these ready before you begin:**
 
 - [ ] GitHub account + personal access token — Settings › Developer settings › Personal access tokens › Classic › scope: `repo`
-- [ ] Bitwarden account with vault entries (`setup-bitwarden.sh` creates these interactively):
+- [ ] Bitwarden account *(vault entries are created interactively by `setup-bitwarden.sh` — no manual setup needed)*
+- [ ] iCloud Drive enabled *(native variants only)*
 
-  | Item name | Field | Value |
-  |---|---|---|
-  | `github-cli-token` | custom field `Key` | GitHub token |
-  | `emacs-git-crypt-key` | custom field `Key` | base64 git-crypt key *(required if org/ is encrypted)* |
-  | `anthropic-api-key` | custom field `Key` | Anthropic API key *(optional, for gptel)* |
+**Everything else is automated:**
 
-- [ ] GitHub repo named `emacs-config` (can be empty)
-- [ ] iCloud Drive enabled (native variants only)
+| What | How |
+|---|---|
+| Homebrew | Installed by `bootstrap.sh` if missing |
+| GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
+| `emacs-config` repo | Created by `bootstrap.sh` if it does not exist |
+| `mac-setup-conf` repo | Created by `bootstrap.sh` if `CONF_REPO` is set |
+| Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
+| XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
 **Run in Terminal:**
 
@@ -101,8 +104,6 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 **System:**
 - macOS 13 Ventura or newer
 - iCloud Drive enabled (native variants store the repo in iCloud)
-- Homebrew — installed automatically by `bootstrap.sh` if not present
-- XQuartz — Docker GUI only, installed automatically
 
 **Accounts:**
 - GitHub account with a personal access token (Classic, `repo` scope)
@@ -110,6 +111,8 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 
 **Required config fields** (setup aborts if empty when `GH_USER` is set):
 `GIT_NAME` `GIT_EMAIL` `GH_REPO`
+
+Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and all GitHub repos — is installed or created automatically by the setup scripts.
 
 ---
 
