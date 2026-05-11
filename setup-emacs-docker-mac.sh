@@ -296,6 +296,22 @@ HOOKEOF
   echo "    iCloud-Repo eingerichtet."
 fi
 
+# --- Mac-seitige secrets.el symlink ---
+_SECRETS_REPO="$ICLOUD_REPO_PATH/emacs.d/secrets.el"
+_SECRETS_LOCAL="$HOME/.emacs.d/secrets.el"
+if [ -f "$_SECRETS_REPO" ] && grep -q "setenv" "$_SECRETS_REPO" 2>/dev/null; then
+  mkdir -p "$HOME/.emacs.d"
+  if [ -L "$_SECRETS_LOCAL" ] && [ "$(readlink "$_SECRETS_LOCAL")" = "$_SECRETS_REPO" ]; then
+    skip "secrets.el symlink (Mac)"
+  else
+    [ -e "$_SECRETS_LOCAL" ] && rm "$_SECRETS_LOCAL"
+    ln -sf "$_SECRETS_REPO" "$_SECRETS_LOCAL"
+    echo "==> secrets.el symlink gesetzt: $_SECRETS_LOCAL → $_SECRETS_REPO"
+  fi
+else
+  echo "WARN: $_SECRETS_REPO fehlt oder noch verschlüsselt — Symlink nicht gesetzt."
+fi
+
 # --- Start container ---
 HAS_BEORG_MOUNT=false
 if docker inspect "$DOCKER_CONTAINER" --format '{{range .HostConfig.Binds}}{{.}} {{end}}' 2>/dev/null | grep -q "/beorg"; then
@@ -455,22 +471,29 @@ else
   fi
 fi
 
-# --- Anthropic API Key ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/secrets.el 2>/dev/null; then
-  skip "ANTHROPIC_API_KEY (already in secrets.el)"
+# --- secrets.el (Repo → Symlink, sonst Bitwarden) ---
+_C_SECRETS="/home/emacs/.emacs.d/secrets.el"
+_C_REPO_SECRETS="/home/emacs/${GH_REPO}/emacs.d/secrets.el"
+if docker exec "$DOCKER_CONTAINER" test -L "$_C_SECRETS" 2>/dev/null; then
+  skip "secrets.el (symlink bereits gesetzt im Container)"
+elif docker exec "$DOCKER_CONTAINER" bash -c "[ -f '$_C_REPO_SECRETS' ] && grep -q setenv '$_C_REPO_SECRETS'" 2>/dev/null; then
+  echo "==> secrets.el aus Repo symlinken (Container)..."
+  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/.emacs.d && ln -sf '$_C_REPO_SECRETS' '$_C_SECRETS'"
+  docker exec --user root "$DOCKER_CONTAINER" chown -h emacs:emacs "$_C_SECRETS"
+  echo "    Symlink gesetzt."
 else
-  echo "==> Fetching Anthropic API key from Bitwarden..."
+  echo "==> secrets.el aus Bitwarden (Repo-Datei fehlt oder verschlüsselt)..."
   ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
   if [ -n "$ANTHROPIC_API_KEY" ]; then
     _SECRET_TMP=$(mktemp)
     printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SECRET_TMP"
     docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
-    docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/secrets.el"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/secrets.el
+    docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:$_C_SECRETS"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "$_C_SECRETS"
     rm -f "$_SECRET_TMP"
-    echo "    API key set in secrets.el."
+    echo "    API key aus Bitwarden gesetzt."
   else
-    echo "WARN: Anthropic API key not found in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
+    echo "WARN: Anthropic API key nicht in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
   fi
 fi
 
