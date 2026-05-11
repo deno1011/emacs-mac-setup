@@ -49,7 +49,7 @@ open "/Applications/Emacs (Yamamoto).app"
 |---|---|---|
 | `emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org`, `setup-emacs-mac.conf.template` |
 | `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
-| `emacs-config` | private | Emacs config: `config.org`, `org/` files (encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
+| `emacs-config` | private | Emacs config: `config.org`, `org/` files, `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
 
 ---
 
@@ -68,7 +68,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `config.org` | Default Emacs config — used when `emacs-config` repo is empty |
 | `fill-config.sh` | Interactive guided config fill |
 | `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
-| `setup-secrets.sh` | Re-fetch Anthropic API key from Bitwarden and rewrite `~/.emacs.d/secrets.el` |
+| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
 
 ### Install
 
@@ -327,7 +327,9 @@ bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master passwo
 
 ## git-crypt
 
-The `org/` files in the GitHub repo are encrypted with git-crypt. The key is stored in Bitwarden (`emacs-git-crypt-key`, field: `Key`).
+The `org/` files and `emacs.d/secrets.el` in the GitHub repo are encrypted with git-crypt. The key is stored in Bitwarden (`emacs-git-crypt-key`, field: `Key`).
+
+After `git-crypt unlock`, setup scripts automatically symlink `~/.emacs.d/secrets.el` to the decrypted repo file. Bitwarden is only used as a fallback if the repo file is missing or still encrypted.
 
 **Manual unlock:**
 
