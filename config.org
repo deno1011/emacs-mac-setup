@@ -1119,6 +1119,7 @@
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)
+   (org        . t)
    (python     . t)
    (shell      . t)
    (latex      . t)))
@@ -1220,6 +1221,7 @@ Extends the list from =* Export & Babel= with the plot/diagram languages.
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)
+   (org        . t)
    (python     . t)
    (shell      . t)
    (latex      . t)
