@@ -1,69 +1,69 @@
 # ============================================================
-# Persönliche Konfiguration für alle Emacs-Setup-Skripte
+# Personal configuration for all Emacs setup scripts
 # ============================================================
-# Kopieren nach ~/setup-emacs-mac.conf und Werte eintragen.
-# Diese Datei NICHT mit persönlichen Daten ins GitHub-Repo einchecken.
+# Copy to ~/setup-emacs-mac.conf and fill in your values.
+# Do NOT check this file with personal data into a public GitHub repo.
 
-# Dein vollständiger Name wie er in git commits erscheint
-# Beispiel: GIT_NAME="Jane Smith"
+# Your full name as it appears in git commits
+# Example: GIT_NAME="Jane Smith"
 GIT_NAME=""
 
-# Deine E-Mail wie sie in git commits erscheint
-# Beispiel: GIT_EMAIL="jane@example.com"
+# Your email as it appears in git commits
+# Example: GIT_EMAIL="jane@example.com"
 GIT_EMAIL=""
 
-# Dein GitHub-Benutzername — bestimmt woher das Repo geklont wird
-# Leer lassen für lokalen Modus ohne GitHub-Sync (config.org aus Scripts-Ordner)
-# Beispiel: GH_USER="janedoe"
+# Your GitHub username — determines where the repo is cloned from
+# Leave empty for local mode without GitHub sync (config.org from scripts folder)
+# Example: GH_USER="janedoe"
 GH_USER=""
 
-# Privates GitHub-Repo das setup-emacs-mac.conf enthält (optional)
-# Nur der Repo-Name — GH_USER wird automatisch vorangestellt (wie bei GH_REPO)
-# Leer lassen wenn kein privates Conf-Repo vorhanden
-# Beispiel: CONF_REPO="mac-setup-conf"  →  github.com/janedoe/mac-setup-conf
+# Private GitHub repo containing setup-emacs-mac.conf (optional)
+# Repo name only — GH_USER is prepended automatically (same as GH_REPO)
+# Leave empty if you have no private conf repo
+# Example: CONF_REPO="mac-setup-conf"  →  github.com/janedoe/mac-setup-conf
 CONF_REPO=""
 
-# Name des GitHub-Repos das deine Emacs-Config enthält
-# Nur der Repo-Name, kein Username — GH_USER wird automatisch vorangestellt
-# Beispiel: GH_REPO="emacs-config"  →  github.com/janedoe/emacs-config
+# Name of the GitHub repo containing your Emacs config
+# Repo name only, no username — GH_USER is prepended automatically
+# Example: GH_REPO="emacs-config"  →  github.com/janedoe/emacs-config
 GH_REPO=""
 
-# Name des Bitwarden-Eintrags der den git-crypt Schlüssel enthält
-# Beispiel: BW_ITEM="emacs-git-crypt-key"
+# Name of the Bitwarden item containing the git-crypt key
+# Example: BW_ITEM="emacs-git-crypt-key"
 BW_ITEM=""
 
-# Name des Custom Fields in Bitwarden wo alle Schlüssel gespeichert sind
-# Gilt für git-crypt Key, GitHub Token und Anthropic API Key
-# Beispiel: BW_FIELD="Key"
+# Name of the custom field in Bitwarden where all keys are stored
+# Applies to the git-crypt key, GitHub token and Anthropic API key
+# Example: BW_FIELD="Key"
 BW_FIELD=""
 
-# Name des Eintrags im Mac Keychain der das Bitwarden-Masterpasswort speichert
-# Beispiel: BW_KEYCHAIN_SERVICE="bitwarden-master"
+# Name of the Mac Keychain entry that stores the Bitwarden master password
+# Example: BW_KEYCHAIN_SERVICE="bitwarden-master"
 BW_KEYCHAIN_SERVICE=""
 
-# Account-Name im Mac Keychain (automatisch = Mac-Benutzername)
+# Account name in Mac Keychain (defaults to Mac username)
 BW_KEYCHAIN_ACCOUNT="$USER"
 
-# Name des Bitwarden-Eintrags mit dem GitHub CLI Token (für gh auth)
-# Beispiel: BW_GH_ITEM="github-cli-token"
+# Name of the Bitwarden item containing the GitHub CLI token (for gh auth)
+# Example: BW_GH_ITEM="github-cli-token"
 BW_GH_ITEM=""
 
-# Name des Bitwarden-Eintrags mit dem Anthropic API Key (für gptel)
-# Beispiel: BW_ANTHROPIC_ITEM="anthropic-api-key"
+# Name of the Bitwarden item containing the Anthropic API key (for gptel)
+# Example: BW_ANTHROPIC_ITEM="anthropic-api-key"
 BW_ANTHROPIC_ITEM=""
 
-# Name des lokalen Docker-Images (nur für Docker-Setup relevant)
-# Beispiel: DOCKER_IMAGE="emacs-dev"
+# Name of the local Docker image (only relevant for the Docker setup)
+# Example: DOCKER_IMAGE="emacs-dev"
 DOCKER_IMAGE="emacs-dev"
 
-# Name des laufenden Docker-Containers (nur für Docker-Setup relevant)
-# Beispiel: DOCKER_CONTAINER="emacs-dev"
+# Name of the running Docker container (only relevant for the Docker setup)
+# Example: DOCKER_CONTAINER="emacs-dev"
 DOCKER_CONTAINER="emacs-dev"
 
-# Name des Docker-Volumes für persistente Paketdaten (nur für Docker-Setup relevant)
-# Beispiel: DOCKER_VOLUME="emacs-home"
+# Name of the Docker volume for persistent package data (only relevant for the Docker setup)
+# Example: DOCKER_VOLUME="emacs-home"
 DOCKER_VOLUME="emacs-home"
 
-# Pfad zum beorg iCloud-Ordner — org-Dateien werden hierhin synchronisiert
-# Standardpfad wenn beorg auf dem iPhone installiert ist (nicht ändern)
+# Path to the beorg iCloud folder — org files are synced here
+# Default path when beorg is installed on iPhone (do not change)
 BEORG_ORG_PATH="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
