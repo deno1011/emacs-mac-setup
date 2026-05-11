@@ -190,6 +190,8 @@ bash "$DEST/fill-config.sh"
 
 # --- Bitwarden setup ---
 source "$CONFIG_FILE"
+# Normalise CONF_REPO: strip any leading "user/" prefix in case the config contains the full form
+CONF_REPO="${CONF_REPO##*/}"
 echo ""
 if [ -n "$GH_USER" ]; then
   bash "$DEST/setup-bitwarden.sh"
@@ -254,7 +256,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
 
   if [ -n "${CONF_REPO:-}" ]; then
     _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config" || true
-    echo "==> setup-emacs-mac.conf → $GH_USER/$CONF_REPO hochladen..."
+    echo "==> Uploading setup-emacs-mac.conf → $GH_USER/$CONF_REPO..."
     _CONF_B64=$(base64 -i "$CONFIG_FILE" | tr -d '\n')
     _CONF_SHA=$(gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" --jq '.sha' 2>/dev/null || true)
     if [ -n "$_CONF_SHA" ]; then

@@ -47,6 +47,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
+# Normalise CONF_REPO: strip any leading "user/" prefix in case the config contains the full form
+CONF_REPO="${CONF_REPO##*/}"
 source "$HOME/bw-unlock.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
