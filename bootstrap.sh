@@ -208,9 +208,9 @@ if [ -n "$GH_USER" ]; then
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
   fi
   if gh auth status &>/dev/null 2>&1; then
-    echo "==> GitHub auth: bereits authentifiziert."
+    echo "==> GitHub auth: already authenticated."
   else
-    echo "==> GitHub authentifizieren..."
+    echo "==> Authenticating GitHub..."
     source "$DEST/bw-unlock.sh" 2>/dev/null || true
     _BS_GH_TOKEN=""
     if bw_ensure_session; then
@@ -219,7 +219,7 @@ if [ -n "$GH_USER" ]; then
     if [ -n "$_BS_GH_TOKEN" ]; then
       echo "$_BS_GH_TOKEN" | gh auth login --with-token
       gh auth setup-git
-      echo "    GitHub authentifiziert."
+      echo "    GitHub authenticated."
     else
       echo "    WARN: GitHub token not found in Bitwarden — manual login:"
       gh auth login < /dev/tty
@@ -234,6 +234,7 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
   echo ""
   echo "==> Checking GitHub repos..."
   source "$CONFIG_FILE"
+  CONF_REPO="${CONF_REPO##*/}"
 
   _create_repo_if_missing() {
     local REPO_NAME="$1" DESC="$2"
