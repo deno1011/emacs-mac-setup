@@ -11,6 +11,7 @@ _pkg_remove() {
   case "$TYPE" in
     formula) brew list --formula "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
     cask)    brew list --cask "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+    pip)     pip3 show "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
   esac
   if [ "$_ASK" = true ]; then
     printf "  Remove %s '%s'? [y/N] " "$TYPE" "$PKG"
@@ -20,6 +21,7 @@ _pkg_remove() {
   case "$TYPE" in
     formula) brew uninstall --ignore-dependencies "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
     cask)    brew uninstall --cask "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+    pip)     pip3 uninstall -y "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
   esac
 }
 

@@ -335,9 +335,30 @@ The setup scripts install the following brew packages automatically:
 | `docker` | Docker CLI |
 | XQuartz | X11 display server for GUI Emacs |
 
-**config.org-installed packages:**
+**config.org-installed packages (brew):**
 
-Packages requested by your Emacs configuration (e.g. `ripgrep`, `fd`, language servers) are installed at first Emacs launch and tracked in `~/.emacs.d/system-packages.log`. The uninstall script reads this log and removes them. Use `--ask` (see below) if you want to keep any of them.
+Installed at first Emacs launch, tracked in `~/.emacs.d/system-packages.log`:
+
+| Package | Purpose |
+|---|---|
+| `gnuplot` | Plot generation via org-babel |
+| `r` | R language support via org-babel |
+| `graphviz` | Dot/graph diagrams via org-babel |
+| `plantuml` | UML diagrams via org-babel |
+| `mermaid-cli` | Mermaid diagrams via org-babel |
+| `texlive` | LaTeX rendering and math preview |
+| `pngpaste` | Paste images into org buffers |
+| `aspell` | Spell checking |
+| `font-jetbrains-mono` | Editor font (cask) |
+
+**config.org-installed packages (pip):**
+
+| Package | Purpose |
+|---|---|
+| `matplotlib` | Python plots and math function graphs |
+| `numpy` | Numerical computing for Python babel blocks |
+
+The uninstall scripts read `system-packages.log` and remove all tracked packages (brew and pip). Use `--ask` to be prompted before each removal.
 
 ---
 
