@@ -8,6 +8,10 @@ _ASK=false
 
 _pkg_remove() {
   local TYPE="$1" PKG="$2"
+  case "$TYPE" in
+    formula) brew list --formula "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+    cask)    brew list --cask "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+  esac
   if [ "$_ASK" = true ]; then
     printf "  Remove %s '%s'? [y/N] " "$TYPE" "$PKG"
     read -r _REPLY < /dev/tty
