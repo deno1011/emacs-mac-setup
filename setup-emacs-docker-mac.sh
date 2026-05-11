@@ -746,4 +746,5 @@ echo "Emacs app available at: ~/Applications/Emacs (Docker).app"
 echo "To enter the container:  docker exec -it ${DOCKER_CONTAINER} bash"
 echo ""
 echo "==> Starting Emacs..."
-docker exec -it "$DOCKER_CONTAINER" emacs
+/opt/X11/bin/xhost +localhost 2>/dev/null || true
+docker exec -it -e DISPLAY=host.docker.internal:0 "$DOCKER_CONTAINER" emacs
