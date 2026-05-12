@@ -2,8 +2,13 @@
 # uninstall-orbstack-emacs.sh
 # Removes the OrbStack Emacs machine and its launchers.
 # Does NOT uninstall OrbStack itself (other machines may exist).
+# Usage: bash uninstall-orbstack-emacs.sh [--ask]
+# --ask  Prompt before each optional step (delete machine, remove OrbStack)
 
 set -euo pipefail
+
+_ASK=false
+[[ "${1:-}" == "--ask" ]] && _ASK=true
 
 MACHINE="emacs-orb"
 APPS_DIR="$HOME/Applications"
@@ -12,14 +17,14 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 step() { print -P "\n${GREEN}==> $1${NC}"; }
 warn() { print -P "${YELLOW}WARNING: $1${NC}"; }
 
-# ── confirm ───────────────────────────────────────────────────────────────────
-echo "This will DELETE the OrbStack machine '$MACHINE' and all its data."
-echo "Your emacs-config git repo data is safe (it's in GitHub)."
-echo ""
-read "CONFIRM?Type YES to continue: "
-[[ "$CONFIRM" == "YES" ]] || { echo "Aborted."; exit 0; }
-
 # ── stop & delete machine ─────────────────────────────────────────────────────
+if [[ "$_ASK" == true ]]; then
+    echo "This will DELETE the OrbStack machine '$MACHINE' and all its data."
+    echo "Your emacs-config git repo data is safe (it's in GitHub)."
+    read "_REPLY?Proceed? (yes/no): " < /dev/tty
+    [[ "$_REPLY" == "yes" ]] || { echo "Aborted."; exit 0; }
+fi
+
 step "Stopping machine '$MACHINE'..."
 orb stop "$MACHINE" 2>/dev/null || warn "Machine was not running."
 
@@ -50,13 +55,14 @@ if grep -q "emacs-orb" ~/.zshrc 2>/dev/null; then
 fi
 
 # ── optionally uninstall OrbStack ─────────────────────────────────────────────
-echo ""
-read "REMOVE_ORB?Remove OrbStack itself too? (yes/no): "
-if [[ "$REMOVE_ORB" == "yes" ]]; then
-    step "Uninstalling OrbStack..."
-    brew uninstall --cask orbstack || warn "Could not uninstall via brew — remove manually from Applications."
-else
-    echo "OrbStack kept. You can manage it from its menu bar icon."
+if [[ "$_ASK" == true ]]; then
+    read "_REPLY?Remove OrbStack itself too? (yes/no): " < /dev/tty
+    if [[ "$_REPLY" == "yes" ]]; then
+        step "Uninstalling OrbStack..."
+        brew uninstall --cask orbstack || warn "Could not uninstall via brew — remove manually from Applications."
+    else
+        echo "OrbStack kept."
+    fi
 fi
 
 print -P "\n${GREEN}✓ OrbStack Emacs uninstalled.${NC}"
