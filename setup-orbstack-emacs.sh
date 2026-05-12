@@ -244,18 +244,18 @@ install_icon() {
         iconutil -c icns /tmp/emacs.iconset -o "$bundle/Contents/Resources/Emacs.icns" 2>/dev/null
 }
 
-# GUI Emacs — opens directly, no Terminal window needed (OrbStack handles display)
+# GUI Emacs — opens directly, no Terminal window (OrbStack handles display)
 GUI_APP="$APPS_DIR/Emacs OrbStack GUI.app"
-if [[ ! -d "$GUI_APP" ]]; then
-    echo "==> Creating Emacs OrbStack GUI app..."
-    mkdir -p "$GUI_APP/Contents/MacOS" "$GUI_APP/Contents/Resources"
-    cat > "$GUI_APP/Contents/MacOS/Emacs" << APPSCRIPT
+rm -rf "$GUI_APP"   # always recreate to pick up script updates
+echo "==> Creating Emacs OrbStack GUI app..."
+mkdir -p "$GUI_APP/Contents/MacOS" "$GUI_APP/Contents/Resources"
+cat > "$GUI_APP/Contents/MacOS/Emacs" << APPSCRIPT
 #!/bin/bash
-export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"
-exec orb -m ${MACHINE} -u ${EUSER} emacs
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
+orb -m ${MACHINE} -u ${EUSER} emacs
 APPSCRIPT
-    chmod +x "$GUI_APP/Contents/MacOS/Emacs"
-    cat > "$GUI_APP/Contents/Info.plist" << 'PLIST'
+chmod +x "$GUI_APP/Contents/MacOS/Emacs"
+cat > "$GUI_APP/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -269,8 +269,8 @@ APPSCRIPT
 </dict>
 </plist>
 PLIST
-    install_icon "$GUI_APP"
-fi
+install_icon "$GUI_APP"
+xattr -dr com.apple.quarantine "$GUI_APP" 2>/dev/null || true
 
 # Console Emacs — opens in Terminal
 CONSOLE_APP="$APPS_DIR/Emacs OrbStack Console.app"
@@ -279,8 +279,9 @@ if [[ ! -d "$CONSOLE_APP" ]]; then
     mkdir -p "$CONSOLE_APP/Contents/MacOS" "$CONSOLE_APP/Contents/Resources"
     cat > "$CONSOLE_APP/Contents/MacOS/EmacsConsole" << CONSOLESCRIPT
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
 osascript -e 'tell application "Terminal" to activate' \
-          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; orb -m ${MACHINE} -u ${EUSER} emacs -nw"'
+          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH; orb -m ${MACHINE} -u ${EUSER} emacs -nw"'
 CONSOLESCRIPT
     chmod +x "$CONSOLE_APP/Contents/MacOS/EmacsConsole"
     cat > "$CONSOLE_APP/Contents/Info.plist" << 'PLIST'
@@ -298,6 +299,7 @@ CONSOLESCRIPT
 </plist>
 PLIST
     install_icon "$CONSOLE_APP"
+    xattr -dr com.apple.quarantine "$CONSOLE_APP" 2>/dev/null || true
 fi
 
 # Shell (emacs user)
@@ -307,8 +309,9 @@ if [[ ! -d "$SHELL_APP" ]]; then
     mkdir -p "$SHELL_APP/Contents/MacOS" "$SHELL_APP/Contents/Resources"
     cat > "$SHELL_APP/Contents/MacOS/OrbShell" << SHELLSCRIPT
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
 osascript -e 'tell application "Terminal" to activate' \
-          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; orb -m ${MACHINE} -u ${EUSER} bash"'
+          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH; orb -m ${MACHINE} -u ${EUSER} bash"'
 SHELLSCRIPT
     chmod +x "$SHELL_APP/Contents/MacOS/OrbShell"
     cat > "$SHELL_APP/Contents/Info.plist" << 'PLIST'
@@ -326,6 +329,7 @@ SHELLSCRIPT
 </plist>
 PLIST
     install_icon "$SHELL_APP"
+    xattr -dr com.apple.quarantine "$SHELL_APP" 2>/dev/null || true
 fi
 
 # Root shell
@@ -335,8 +339,9 @@ if [[ ! -d "$ROOT_APP" ]]; then
     mkdir -p "$ROOT_APP/Contents/MacOS" "$ROOT_APP/Contents/Resources"
     cat > "$ROOT_APP/Contents/MacOS/OrbRootShell" << ROOTSCRIPT
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
 osascript -e 'tell application "Terminal" to activate' \
-          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; orb -m ${MACHINE} -u root bash"'
+          -e 'tell application "Terminal" to do script "export PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH; orb -m ${MACHINE} -u root bash"'
 ROOTSCRIPT
     chmod +x "$ROOT_APP/Contents/MacOS/OrbRootShell"
     cat > "$ROOT_APP/Contents/Info.plist" << 'PLIST'
@@ -354,6 +359,7 @@ ROOTSCRIPT
 </plist>
 PLIST
     install_icon "$ROOT_APP"
+    xattr -dr com.apple.quarantine "$ROOT_APP" 2>/dev/null || true
 fi
 
 # ── 13. zsh alias ─────────────────────────────────────────────────────────────
