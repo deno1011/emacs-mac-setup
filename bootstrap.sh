@@ -295,6 +295,7 @@ echo "  Run a setup script when ready:"
 echo "    bash $DEST/setup-emacs-native-plus-mac.sh      # recommended (LSP, native comp)"
 echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad"
 echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
+echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
 echo ""
 if [ -n "${GH_USER:-}" ] && [ -n "${CONF_REPO:-}" ]; then
   echo "  On a new Mac, skip config questions by passing your config repo:"
