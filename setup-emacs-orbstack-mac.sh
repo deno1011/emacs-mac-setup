@@ -438,18 +438,18 @@ mkdir -p "$GUI_APP/Contents/MacOS" "$GUI_APP/Contents/Resources"
 cat > "$GUI_APP/Contents/MacOS/Emacs" << APPSCRIPT
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
-# macOS app bundles have no DISPLAY — read it from launchd and start XQuartz if needed
-DISPLAY=\$(launchctl getenv DISPLAY 2>/dev/null || true)
-if [[ -z "\$DISPLAY" ]]; then
+# OrbStack machines connect to XQuartz via TCP on the OrbStack bridge interface.
+# The Unix socket path that launchd stores is not reachable from inside the VM.
+if ! pgrep -x Xquartz &>/dev/null; then
     open -a XQuartz 2>/dev/null || true
-    for i in 1 2 3 4 5; do
-        sleep 2
-        DISPLAY=\$(launchctl getenv DISPLAY 2>/dev/null || true)
-        [[ -n "\$DISPLAY" ]] && break
-    done
+    sleep 3
 fi
-export DISPLAY
-orb -m ${MACHINE} -u ${EUSER} bash -c "~/bin/startup-sync.sh 2>/dev/null; emacs"
+MAC_ORB_IP=\$(ipconfig getifaddr bridge100 2>/dev/null \
+    || ifconfig | awk '/inet 192\.168\.139\./ {print \$2}' | head -1)
+[[ -z "\$MAC_ORB_IP" ]] && exit 1
+/opt/X11/bin/xhost + &>/dev/null || true
+CMD="export DISPLAY='\${MAC_ORB_IP}:0'; ~/bin/startup-sync.sh 2>/dev/null; emacs"
+orb -m ${MACHINE} -u ${EUSER} bash -c "\$CMD"
 APPSCRIPT
 chmod +x "$GUI_APP/Contents/MacOS/Emacs"
 cat > "$GUI_APP/Contents/Info.plist" << 'PLIST'
