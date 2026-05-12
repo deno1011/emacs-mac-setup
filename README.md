@@ -1,6 +1,6 @@
 # Emacs Mac Setup
 
-Automated Emacs setup for macOS. Three installation variants share a common configuration stored on GitHub. Org files are kept in sync with the beorg app on iPhone via iCloud.
+Automated Emacs setup for macOS. Four installation variants share a common configuration stored on GitHub. Org files are kept in sync with the beorg app on iPhone via iCloud.
 
 ---
 
@@ -37,7 +37,8 @@ open ~/setup-emacs-mac.conf  # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
 # 3. Install — pick one variant
 bash ./setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
 bash ./setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
-bash ./setup-emacs-docker-mac.sh            # isolated in Docker
+bash ./setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
+bash ./setup-orbstack-emacs.sh              # isolated in OrbStack, no XQuartz needed
 
 # 4. Start Emacs
 open "/Applications/Emacs (emacs-plus).app"
@@ -80,7 +81,8 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `setup-emacs-native-plus-mac.sh` | Install emacs-plus@30 (native comp, LSP) — thin wrapper |
 | `setup-emacs-native-yamamoto-mac.sh` | Install emacs-mac@30exp (Yamamoto patches) — thin wrapper |
 | `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
-| `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container |
+| `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container (XQuartz) |
+| `setup-orbstack-emacs.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
 
 ### Uninstall
 
@@ -89,6 +91,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `uninstall-emacs-native-plus-mac.sh` | Remove emacs-plus |
 | `uninstall-emacs-native-yamamoto-mac.sh` | Remove emacs-mac@30exp |
 | `uninstall-emacs-docker-mac.sh` | Remove Docker variant |
+| `uninstall-orbstack-emacs.sh` | Remove OrbStack variant |
 
 ### Utilities
 
@@ -158,9 +161,10 @@ bash ./setup-emacs-native-yamamoto-mac.sh
 
 Starts as: `/Applications/Emacs (Yamamoto).app`
 
-### 3. Docker *(isolated)*
+### 3. Docker *(isolated, XQuartz)*
 
 - Emacs runs in a Docker container, config pulled from GitHub on start
+- Display via XQuartz — clipboard image paste not supported
 - Only the beorg iCloud folder is mounted — no Mac filesystem exposure
 
 ```bash
@@ -172,6 +176,23 @@ App icons in `~/Applications/`:
 - `Emacs Docker Console.app` — Emacs in terminal (`-nw`)
 - `Emacs Docker Shell.app` — shell inside the container
 - `Emacs Docker Root Shell.app` — root shell inside the container
+
+### 4. OrbStack *(isolated, no XQuartz)*
+
+- Emacs runs in an OrbStack Linux machine (Ubuntu 24.04)
+- No XQuartz needed — OrbStack handles display natively on macOS 14+
+- Mac home directory accessible in the machine → clipboard image paste works
+- Requires OrbStack (`brew install --cask orbstack`)
+
+```bash
+bash ./setup-orbstack-emacs.sh
+```
+
+App launchers in `~/Applications/`:
+- `Emacs OrbStack GUI.command` — graphical Emacs
+- `Emacs OrbStack Console.command` — Emacs in terminal (`-nw`)
+- `Emacs OrbStack Shell.command` — shell inside the machine
+- `Emacs OrbStack Root Shell.command` — root shell inside the machine
 
 ---
 
@@ -187,6 +208,8 @@ emacs -nw   # TUI mode
 ```
 
 **Docker:** Double-click one of the app icons in `~/Applications/`, or use Spotlight.
+
+**OrbStack:** Double-click one of the `.command` launchers in `~/Applications/`, or run `emacs-orb` in the terminal (after reloading shell).
 
 ---
 
@@ -368,6 +391,7 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 bash ./uninstall-emacs-native-plus-mac.sh       # remove emacs-plus
 bash ./uninstall-emacs-native-yamamoto-mac.sh   # remove emacs-mac@30exp
 bash ./uninstall-emacs-docker-mac.sh            # remove Docker variant
+bash ./uninstall-orbstack-emacs.sh              # remove OrbStack variant
 
 bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master password from Keychain
 ```
