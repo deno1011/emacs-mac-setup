@@ -6,12 +6,29 @@
 set -euo pipefail
 
 MACHINE="emacs-orb"
-GH_USER="deno1011"
-GH_REPO="emacs-config"
-GIT_NAME="Denis Butic"
-GIT_EMAIL="d.e.n.o@gmx.net"
 EUSER="emacs"
 APPS_DIR="$HOME/Applications"
+
+# ── Load personal config ───────────────────────────────────────────────────────
+CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+if [[ -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+else
+    print -P "\033[1;33mWARNING: ~/setup-emacs-mac.conf not found — set GH_USER, GH_REPO, GIT_NAME, GIT_EMAIL manually.\033[0m"
+fi
+GH_USER="${GH_USER:-}"
+GH_REPO="${GH_REPO:-emacs-config}"
+GIT_NAME="${GIT_NAME:-}"
+GIT_EMAIL="${GIT_EMAIL:-}"
+
+# ── GitHub token (from gh CLI on Mac, already authenticated) ──────────────────
+GH_TOKEN=""
+if [[ -n "$GH_USER" ]]; then
+    if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+        GH_TOKEN=$(gh auth token 2>/dev/null || true)
+    fi
+    [[ -z "$GH_TOKEN" ]] && print -P "\033[1;33mWARNING: GitHub not authenticated — private repo clone may prompt for credentials. Run: gh auth login\033[0m"
+fi
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -96,12 +113,20 @@ orbu git config --global pull.rebase false
 
 # ── 8. Clone config repo ──────────────────────────────────────────────────────
 step "Cloning emacs-config repo..."
+if [[ -n "$GH_TOKEN" ]]; then
+    CLONE_URL="https://${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
+else
+    CLONE_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
+fi
+CLEAN_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
+
 orbu bash -c "
     if [ -d ~/emacs-config/.git ]; then
         echo 'Repo already cloned — pulling.'
         git -C ~/emacs-config pull
     else
-        git clone https://github.com/$GH_USER/$GH_REPO.git ~/emacs-config
+        git clone '${CLONE_URL}' ~/emacs-config
+        git -C ~/emacs-config remote set-url origin '${CLEAN_URL}'
     fi
 "
 
