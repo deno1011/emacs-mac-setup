@@ -23,6 +23,14 @@ _pkg_remove() {
   esac
 }
 
+# Returns 0 (true) if any other Emacs variant is still installed after this removal
+_other_emacs_installed() {
+  brew list emacs-plus@30 &>/dev/null 2>&1            && return 0
+  brew list emacs-mac@30exp &>/dev/null 2>&1          && return 0
+  [ -d "$HOME/Applications/GUI OrbStack Emacs.app" ] && return 0
+  return 1
+}
+
 # --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -70,30 +78,37 @@ rm -rf ~/Applications/"GUI Docker Emacs.app" && echo "    GUI Docker Emacs remov
 rm -rf ~/Applications/"Console Docker Emacs.app" && echo "    Console Docker Emacs removed." || echo "    Console Docker Emacs not found."
 rm -rf ~/Applications/"Shell Docker Emacs.app" && echo "    Shell Docker Emacs removed." || echo "    Shell Docker Emacs not found."
 rm -rf ~/Applications/"Root Shell Docker Emacs.app" && echo "    Root Shell Docker Emacs removed." || echo "    Root Shell Docker Emacs not found."
+# clean up old bundle names from previous installs
+rm -rf ~/Applications/"Emacs Docker GUI.app" ~/Applications/"Emacs Docker Console.app" \
+       ~/Applications/"Emacs Docker Shell.app" ~/Applications/"Emacs Docker Root Shell.app" 2>/dev/null || true
 
 echo "==> Removing emacs alias from ~/.zshrc..."
 sed -i '' '/# Emacs in Docker/,/^}/d' ~/.zshrc && echo "    Alias removed." || echo "    Alias not found."
 
-echo "==> Removing iCloud repo..."
-ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
-rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iCloud repo not found."
-
 echo "==> Removing iCloud symlink..."
 rm -f "$HOME/.emacs-icloud-repo" || true
 
-echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
+if ! _other_emacs_installed; then
+  echo "==> Removing iCloud repo..."
+  ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
+  rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iCloud repo not found."
 
-echo "==> Removing brew packages installed by setup..."
-_pkg_remove formula bitwarden-cli
-_pkg_remove formula gh
-_pkg_remove formula git-crypt
+  echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 
-echo "==> Logging out GitHub CLI..."
-gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."
+  echo "==> Removing brew packages installed by setup..."
+  _pkg_remove formula bitwarden-cli
+  _pkg_remove formula gh
+  _pkg_remove formula git-crypt
 
-echo "==> Clearing global git identity..."
-git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
-git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
+  echo "==> Logging out GitHub CLI..."
+  gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."
+
+  echo "==> Clearing global git identity..."
+  git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
+  git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
+else
+  echo "  Another Emacs variant still installed — keeping shared resources (gh, iCloud repo)."
+fi
 
 echo "==> Cleaning Homebrew cache..."
 rm -f ~/Library/Caches/Homebrew/downloads/*.incomplete

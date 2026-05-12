@@ -17,6 +17,33 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 step() { print -P "\n${GREEN}==> $1${NC}"; }
 warn() { print -P "${YELLOW}WARNING: $1${NC}"; }
 
+_pkg_remove() {
+  local TYPE="$1" PKG="$2"
+  case "$TYPE" in
+    formula) brew list --formula "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+    cask)    brew list --cask "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+    pip)     pip3 show "$PKG" &>/dev/null || { echo "    $PKG not installed — skipping."; return; } ;;
+  esac
+  if [[ "$_ASK" == true ]]; then
+    printf "  Remove %s '%s'? [y/N] " "$TYPE" "$PKG"
+    read -r _REPLY < /dev/tty
+    case "$_REPLY" in y|Y) ;; *) echo "    Skipped."; return ;; esac
+  fi
+  case "$TYPE" in
+    formula) brew uninstall --ignore-dependencies "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+    cask)    brew uninstall --cask "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+    pip)     pip3 uninstall -y "$PKG" 2>/dev/null && echo "    $PKG removed." || echo "    $PKG not found." ;;
+  esac
+}
+
+# Returns 0 (true) if any other Emacs variant is still installed after this removal
+_other_emacs_installed() {
+  brew list emacs-plus@30 &>/dev/null 2>&1           && return 0
+  brew list emacs-mac@30exp &>/dev/null 2>&1         && return 0
+  [[ -d "$HOME/Applications/GUI Docker Emacs.app" ]] && return 0
+  return 1
+}
+
 # ── stop & delete machine ─────────────────────────────────────────────────────
 if [[ "$_ASK" == true ]]; then
     echo "This will DELETE the OrbStack machine '$MACHINE' and all its data."
@@ -63,6 +90,35 @@ if [[ "$_ASK" == true ]]; then
     else
         echo "OrbStack kept."
     fi
+fi
+
+# ── load config and remove shared resources if last variant ───────────────────
+CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+if ! _other_emacs_installed; then
+  step "Removing iCloud repo..."
+  ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
+  rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iCloud repo not found."
+
+  step "Removing ~/.emacs.d..."
+  rm -rf "$HOME/.emacs.d" && echo "    ~/.emacs.d removed." || echo "    ~/.emacs.d not found."
+
+  echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
+
+  step "Logging out GitHub CLI..."
+  gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh auth not set."
+
+  step "Removing brew packages installed by setup..."
+  _pkg_remove formula bitwarden-cli
+  _pkg_remove formula gh
+  _pkg_remove formula git-crypt
+
+  step "Clearing global git identity..."
+  git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
+  git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
+else
+  echo "  Another Emacs variant still installed — keeping shared resources (gh, emacs.d, iCloud repo)."
 fi
 
 print -P "\n${GREEN}✓ OrbStack Emacs uninstalled.${NC}"

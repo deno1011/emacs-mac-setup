@@ -36,6 +36,14 @@ if ! brew list | grep -q "emacs-plus@30"; then
   echo "  emacs-plus@30 is not installed — nothing to do."
 fi
 
+# Returns 0 (true) if any other Emacs variant is still installed after this removal
+_other_emacs_installed() {
+  brew list emacs-mac@30exp &>/dev/null 2>&1 && return 0
+  [ -d "$HOME/Applications/GUI Docker Emacs.app" ]   && return 0
+  [ -d "$HOME/Applications/GUI OrbStack Emacs.app" ] && return 0
+  return 1
+}
+
 # --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -51,7 +59,7 @@ echo "==> Removing Emacs (emacs-plus)..."
 brew uninstall emacs-plus@30 2>/dev/null && echo "    emacs-plus@30 removed." || echo "    emacs-plus@30 not found."
 rm -rf "/Applications/Emacs (emacs-plus).app" 2>/dev/null && echo "    Emacs (emacs-plus).app removed." || echo "    Emacs (emacs-plus).app not found."
 
-if [ "$YAMAMOTO_INSTALLED" = false ]; then
+if ! _other_emacs_installed; then
   echo "==> Removing ~/.emacs.d (init.el, secrets.el, packages)..."
   rm -rf "$HOME/.emacs.d" && echo "    ~/.emacs.d removed." || echo "    ~/.emacs.d not found."
 
@@ -86,9 +94,11 @@ if [ "$YAMAMOTO_INSTALLED" = false ]; then
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
 else
-  echo "  Shared resources (~/emacs.d, iCloud repo, packages) preserved (Yamamoto still installed)."
-  echo "  Linking emacs-mac@30exp as the active version..."
-  brew link --overwrite emacs-mac@30exp 2>/dev/null || true
+  echo "  Another Emacs variant still installed — keeping shared resources (gh, emacs.d, iCloud repo)."
+  if [ "$YAMAMOTO_INSTALLED" = "true" ]; then
+    echo "  Linking emacs-mac@30exp as the active version..."
+    brew link --overwrite emacs-mac@30exp 2>/dev/null || true
+  fi
 fi
 
 echo ""
