@@ -25,6 +25,23 @@
                         (insert-file-contents log-file)
                         (search-forward entry nil t)))
            (append-to-file entry nil log-file)))))))
+
+;; Install a pip package in the background and log it for clean uninstall.
+(defun my/pip-install-and-log (package)
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "pip:%s\n" package))
+         (proc     (start-process (format "install-%s" package)
+                                  (format "*install-%s*" package)
+                                  "pip3" "install" "--break-system-packages" package)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
 #+end_src
 
 * PATH
@@ -36,7 +53,8 @@
 
 * UI & Appearance
 #+begin_src emacs-lisp
-(add-to-list 'default-frame-alist '(inhibit-double-buffering . t))
+(add-to-list 'default-frame-alist
+             `(inhibit-double-buffering . ,(eq system-type 'gnu/linux)))
 (tool-bar-mode -1)
 (scroll-bar-mode -1)
 (menu-bar-mode -1)
@@ -104,8 +122,37 @@
 
 * Startup Sync
 #+begin_src emacs-lisp
+(defun my/org-encrypted-p (org-dir)
+  "Return t if any .org file in ORG-DIR starts with a git-crypt null byte."
+  (let ((first (car (and (file-directory-p org-dir)
+                         (directory-files org-dir t "\\.org$")))))
+    (when first
+      (with-temp-buffer
+        (insert-file-contents-literally first nil 0 10)
+        (string-match-p "\x00" (buffer-string))))))
+
+(defun my/repo-dirty-p (repo)
+  "Return t if REPO has uncommitted changes."
+  (not (string-empty-p
+        (shell-command-to-string
+         (format "git -C %s status --porcelain" (shell-quote-argument repo))))))
+
+(defun my/revert-org-buffers ()
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (and (derived-mode-p 'org-mode)
+                 buffer-file-name
+                 (file-exists-p buffer-file-name))
+        (revert-buffer t t t)))))
+
+(defun my/beorg-sync (org-d beorg)
+  (when (and (file-directory-p org-d) (file-directory-p beorg))
+    (start-process "beorg-sync" " *beorg-sync*"
+                   "rsync" "-a" "--delete"
+                   org-d (file-name-as-directory beorg))))
+
 (defun my/startup-sync ()
-  "Pull emacs-config from origin on startup; sync org/ to beorg on success."
+  "Pull emacs-config from origin on startup; unlock git-crypt if needed; sync org/ to beorg."
   (let* ((repo  (file-truename (expand-file-name "~/emacs-config")))
          (org-d (file-name-as-directory (expand-file-name "org" repo)))
          (beorg (expand-file-name
@@ -121,16 +168,39 @@
          (lambda (p _)
            (when (= (process-exit-status p) 0)
              (message "Startup sync: pull complete.")
-             (dolist (buf (buffer-list))
-               (with-current-buffer buf
-                 (when (and (derived-mode-p 'org-mode)
-                            buffer-file-name
-                            (file-exists-p buffer-file-name))
-                   (revert-buffer t t t))))
-             (when (and (file-directory-p org-d) (file-directory-p beorg))
-               (start-process "beorg-sync" " *beorg-sync*"
-                              "rsync" "-a" "--delete"
-                              org-d (file-name-as-directory beorg))))))))))
+             (if (not (my/org-encrypted-p org-d))
+                 (progn (my/revert-org-buffers)
+                        (my/beorg-sync org-d beorg))
+               ;; Org files are encrypted — git-crypt refuses to unlock when
+               ;; the working tree is dirty. Surgically reset only the
+               ;; encrypted paths (org/, emacs.d/secrets.el) and the
+               ;; auto-generated config.el. Real edits (config.org) are
+               ;; left untouched; if they still block unlock, warn the user.
+               (when (my/repo-dirty-p repo)
+                 (call-process "git" nil nil nil "-C" repo
+                               "checkout" "--" "org/" "emacs.d/secrets.el" "config.el")
+                 (if (my/repo-dirty-p repo)
+                     (display-warning 'emacs-setup
+                      (concat "Uncommitted changes block git-crypt unlock.\n"
+                              "Commit or stash them, then restart Emacs.\n"
+                              "Or run manually: bash ~/unlock-git-crypt.sh")
+                      :warning)
+                   (message "Startup sync: reset encrypted blobs before unlock.")))
+               (unless (my/repo-dirty-p repo)
+               (message "Startup sync: org files encrypted — running unlock-git-crypt.sh...")
+               (let ((unlock (start-process "git-crypt-unlock" " *git-crypt-unlock*"
+                                            (expand-file-name "~/unlock-git-crypt.sh"))))
+                 (set-process-sentinel
+                  unlock
+                  (lambda (u _)
+                    (if (= (process-exit-status u) 0)
+                        (progn
+                          (message "Startup sync: git-crypt unlocked.")
+                          (my/revert-org-buffers)
+                          (my/beorg-sync org-d beorg))
+                      (display-warning 'emacs-setup
+                       "git-crypt unlock failed — run: bash ~/unlock-git-crypt.sh"
+                       :warning))))))))))))))
 
 (add-hook 'after-init-hook #'my/startup-sync)
 #+end_src
@@ -833,7 +903,7 @@
 #+begin_src emacs-lisp
 (require 'org-habit)
 (setq org-habit-graph-column 50)
-(run-at-time "06:00" 86400 '(lambda () (setq org-habit-show-habits t)))
+(run-at-time "06:00" 86400 (lambda () (setq org-habit-show-habits t)))
 #+end_src
 
 * Encryption
@@ -897,7 +967,7 @@
     (bh/narrow-to-org-subtree)))
 
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "N" 'bh/narrow-to-subtree)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "N" 'bh/narrow-to-subtree)) 'append)
 
 (defun bh/narrow-up-one-org-level ()
   (widen)
@@ -921,7 +991,7 @@
     (bh/narrow-up-one-org-level)))
 
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "U" 'bh/narrow-up-one-level)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "U" 'bh/narrow-up-one-level)) 'append)
 
 (defun bh/narrow-to-org-project ()
   (widen)
@@ -942,7 +1012,7 @@
     (save-restriction (org-agenda-set-restriction-lock))))
 
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "P" 'bh/narrow-to-project)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "P" 'bh/narrow-to-project)) 'append)
 
 (defvar bh/project-list nil)
 
@@ -980,7 +1050,7 @@
         (error "All projects viewed.")))))
 
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "V" 'bh/view-next-project)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "V" 'bh/view-next-project)) 'append)
 
 (defun bh/set-agenda-restriction-lock (arg)
   "Set restriction lock to current task subtree or file if prefix."
@@ -1008,11 +1078,11 @@
     (beginning-of-buffer)))
 
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "F" 'bh/restrict-to-file-or-follow)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "F" 'bh/restrict-to-file-or-follow)) 'append)
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "\C-c\C-x<" 'bh/set-agenda-restriction-lock)) 'append)
+          (lambda () (org-defkey org-agenda-mode-map "\C-c\C-x<" 'bh/set-agenda-restriction-lock)) 'append)
 (add-hook 'org-agenda-mode-hook
-          '(lambda () (org-defkey org-agenda-mode-map "W"
+          (lambda () (org-defkey org-agenda-mode-map "W"
                         (lambda () (interactive) (setq bh/hide-scheduled-and-waiting-next-tasks t) (bh/widen)))) 'append)
 #+end_src
 
@@ -1089,7 +1159,7 @@
 (defun bh/is-scheduled-today   (date-str) (string-match "Scheduled:" date-str))
 (defun bh/is-scheduled-late    (date-str) (string-match "Sched\\.\\(.*\\)x:" date-str))
 
-(add-hook 'org-agenda-mode-hook '(lambda () (hl-line-mode 1)) 'append)
+(add-hook 'org-agenda-mode-hook (lambda () (hl-line-mode 1)) 'append)
 #+end_src
 
 * Export & Babel
@@ -1124,7 +1194,6 @@
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)
-   (org        . t)
    (python     . t)
    (shell      . t)
    (latex      . t)))
@@ -1196,6 +1265,23 @@ inline-image hook fires automatically.
       (error nil))))
 (add-hook 'gptel-post-response-functions
           #'my/gptel-refresh-inline-images)
+
+;; Render LaTeX fragments in the gptel response region automatically.
+;; org-fragtog only triggers on cursor movement, not on programmatic text
+;; insertion, so newly generated LaTeX would stay as raw text until the
+;; user moves the cursor in and out. This hook renders the response region
+;; immediately after each gptel reply.
+(defun my/gptel-render-latex (beg end)
+  "Render LaTeX fragments in the gptel response region BEG..END."
+  (when (derived-mode-p 'org-mode)
+    (condition-case nil
+        (save-excursion
+          (save-restriction
+            (narrow-to-region beg end)
+            (org-latex-preview '(16))))
+      (error nil))))
+(add-hook 'gptel-post-response-functions
+          #'my/gptel-render-latex)
 #+end_src
 
 ** External-Tools Auto-Install (brew)
@@ -1215,6 +1301,12 @@ not → ~brew install~ in the background + log entry.
         (my/brew-install-and-log "formula" formula "install" formula)
         (message "%s not found — installing brew %s in background. Restart Emacs when done."
                  bin formula)))))
+
+;; Python packages for org-babel execution
+(dolist (pkg '("matplotlib" "numpy"))
+  (unless (= 0 (call-process "pip3" nil nil nil "show" pkg))
+    (my/pip-install-and-log pkg)
+    (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
 #+end_src
 
 ** Enable Babel Languages for Graphics
@@ -1226,7 +1318,6 @@ Extends the list from =* Export & Babel= with the plot/diagram languages.
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)
-   (org        . t)
    (python     . t)
    (shell      . t)
    (latex      . t)
@@ -1463,8 +1554,8 @@ sequenceDiagram
   "#+begin_src emacs-lisp\n" _ - \n "#+end_src\n")
 (define-abbrev org-mode-abbrev-table "selisp" "" 'skel-org-block-elisp)
 
-(global-set-key (kbd "<C-f6>") '(lambda () (interactive) (bookmark-set "SAVED")))
-(global-set-key (kbd "<f6>")   '(lambda () (interactive) (bookmark-jump "SAVED")))
+(global-set-key (kbd "<C-f6>") (lambda () (interactive) (bookmark-set "SAVED")))
+(global-set-key (kbd "<f6>")   (lambda () (interactive) (bookmark-jump "SAVED")))
 #+end_src
 
 * Appointments & Reminders
@@ -1557,7 +1648,7 @@ sequenceDiagram
 (setq org-remove-highlights-with-change t)
 
 (add-hook 'org-mode-hook
-          '(lambda ()
+          (lambda ()
              (org-defkey org-mode-map "\C-c[" 'undefined)
              (org-defkey org-mode-map "\C-c]" 'undefined)
              (org-defkey org-mode-map "\C-c;" 'undefined)
@@ -1648,7 +1739,7 @@ they only need to be set by the time of the first request.
 ;; -- LM Studio (local, OpenAI-compatible) ----------------------------
 ;; LM Studio must be running: Sidebar → Local Server → Start Server
 ;; Port: 1234 (default). No API key required.
-;; Installed model: DeepSeek-R1-Distill-Qwen-7B
+;; Verify model IDs with: curl http://localhost:1234/v1/models
 (let ((backend (gptel-make-openai "LM Studio"
                   :stream t
                   :protocol "http"
@@ -1656,15 +1747,35 @@ they only need to be set by the time of the first request.
                   :endpoint "/v1/chat/completions"
                   :key "lm-studio"
                   :models '(mistralai/ministral-3-14b-reasoning
-                            deepseek-r1-distill-qwen-7b))))
+                            deepseek-r1-distill-qwen-7b
+                            gemma-4-31b-it
+                            gemma-3-12b-it))))
   (setq my/gptel-backends
         (append my/gptel-backends
                 `(("Ministral 3B 14B Reasoning (LM Studio)" ,backend . mistralai/ministral-3-14b-reasoning)
-                  ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b))))
+                  ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b)
+                  ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
+                  ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
   ;; Default: LM Studio (local, private, free)
   ;; If server is offline: C-c M → select Claude or ChatGPT
   (setq gptel-backend backend
         gptel-model   'mistralai/ministral-3-14b-reasoning))
+
+;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
+;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
+;; Models download automatically from HuggingFace on first run.
+(let ((backend (gptel-make-openai "MLX"
+                  :stream t
+                  :protocol "http"
+                  :host "localhost:8080"
+                  :endpoint "/v1/chat/completions"
+                  :key "mlx"
+                  :models '(mlx-community/Qwen3-14B-4bit
+                            mlx-community/gemma-3-12b-it-4bit))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Qwen3 14B (MLX)"    ,backend . mlx-community/Qwen3-14B-4bit)
+                  ("Gemma 3 12B (MLX)"  ,backend . mlx-community/gemma-3-12b-it-4bit)))))
 
 ;; -- Ollama (local) ---------------------------------------------------
 ;; Only activated when `ollama' is found in PATH.
@@ -1784,13 +1895,27 @@ and rendering them inline.
 - gptel >= 0.9 with multimodal support (present in your setup)
 - Vision-capable model (Opus/Sonnet/Haiku 4.x — ~claude-opus-4-7~ in your case)
 
-** External-Tool Auto-Install (pngpaste)
+** External-Tool Auto-Install (pngpaste / xclip)
 
 #+begin_src emacs-lisp
-(unless (executable-find "pngpaste")
-  (when (executable-find "brew")
-    (my/brew-install-and-log "formula" "pngpaste" "install" "pngpaste")
-    (message "pngpaste not found — installing brew pngpaste in background. Restart Emacs when done.")))
+(cond
+  ;; macOS: pngpaste via brew
+  ((and (eq system-type 'darwin)
+        (not (executable-find "pngpaste"))
+        (executable-find "brew"))
+   (my/brew-install-and-log "formula" "pngpaste" "install" "pngpaste")
+   (message "pngpaste not found — installing via brew in background. Restart Emacs when done."))
+  ;; Linux/Docker: xclip via apt — try sudo, fall back to plain apt-get
+  ((and (eq system-type 'gnu/linux)
+        (not (executable-find "xclip")))
+   (condition-case nil
+       (let ((cmd (if (executable-find "sudo") "sudo" "apt-get"))
+             (args (if (executable-find "sudo")
+                       '("apt-get" "install" "-y" "xclip")
+                     '("install" "-y" "xclip"))))
+         (apply #'start-process "install-xclip" "*install-xclip*" cmd args)
+         (message "xclip not found — installing via apt in background. Restart Emacs when done."))
+     (error (message "xclip not found — install manually: apt-get install xclip")))))
 #+end_src
 
 ** Image Directory & Org-Download Configuration
@@ -1819,10 +1944,12 @@ safely below the Anthropic 5 MB limit."
   :type 'integer
   :group 'claude-executor)
 
-;; org-download uses pngpaste as screenshot backend (also for clipboard)
 (with-eval-after-load 'org-download
-  (when (executable-find "pngpaste")
-    (setq org-download-screenshot-method "pngpaste %s"))
+  (cond
+    ((executable-find "pngpaste")
+     (setq org-download-screenshot-method "pngpaste %s"))
+    ((executable-find "xclip")
+     (setq org-download-screenshot-method "xclip -selection clipboard -t image/png -o > %s")))
   (setq org-download-image-dir my/gptel-image-dir
         org-download-method    'directory
         org-download-heading-lvl nil))
@@ -1866,36 +1993,47 @@ Returns the final path (may change to .jpg on JPEG conversion)."
 ** Insert Clipboard Image + Attach to gptel
 
 #+begin_src emacs-lisp
-(defun my/insert-clipboard-image (&optional name)
-  "Save image from system clipboard via pngpaste, shrink if needed,
-insert as org link at point and attach to the next gptel request
-(via `gptel-add-file').
+(defun my/--clipboard-to-file (path)
+  "Save clipboard image to PATH using the available backend.
+macOS: pngpaste. Linux/XQuartz: xclip.
+Returns t on success, nil if no backend available or clipboard empty."
+  (cond
+    ((executable-find "pngpaste")
+     (= 0 (call-process "pngpaste" nil nil nil path)))
+    ((executable-find "xclip")
+     ;; XQuartz bridges the macOS clipboard to X11 on focus — click the
+     ;; Emacs window after copying on iPhone to trigger the sync first.
+     (= 0 (shell-command
+           (format "xclip -selection clipboard -t image/png -o > %s"
+                   (shell-quote-argument path)))))
+    (t nil)))
 
-If NAME is nil or empty → use timestamp as filename.
-When called interactively, prompts for NAME."
+(defun my/insert-clipboard-image (&optional name)
+  "Save clipboard image, shrink if needed, insert as org link and attach to gptel.
+Uses pngpaste on macOS or xclip on Linux (XQuartz).
+If NAME is nil or empty → timestamp filename."
   (interactive
    (list (read-string "Filename (without extension, Enter = timestamp): " "")))
-  (unless (executable-find "pngpaste")
-    (user-error "pngpaste missing — please run 'brew install pngpaste'"))
+  (unless (or (executable-find "pngpaste") (executable-find "xclip"))
+    (user-error (if (eq system-type 'darwin)
+                    "pngpaste missing — run: brew install pngpaste"
+                  "xclip missing — run: sudo apt-get install xclip")))
   (make-directory my/gptel-image-dir t)
   (let* ((basename (if (or (null name) (string-empty-p name))
                        (format "img-%s" (format-time-string "%Y%m%d-%H%M%S"))
                      name))
          (raw-path (expand-file-name (concat basename ".png")
                                      my/gptel-image-dir))
-         (rc       (call-process "pngpaste" nil nil nil raw-path))
-         (size     (and (file-exists-p raw-path)
+         (ok       (my/--clipboard-to-file raw-path))
+         (size     (and ok (file-exists-p raw-path)
                         (nth 7 (file-attributes raw-path)))))
     (cond
-     ((and (= rc 0) size (> size 0))
+     ((and ok size (> size 0))
       (let* ((final-path (my/--shrink-image raw-path))
              (final-size (nth 7 (file-attributes final-path))))
         (insert (format "[[file:%s]]\n" final-path))
         (when (derived-mode-p 'org-mode)
           (org-display-inline-images t t))
-        ;; Explicitly load gptel-context.el (otherwise no alias resolves).
-        ;; gptel-context-add-file is autoloaded and the canonical name —
-        ;; gptel-add-file is just a defalias for it.
         (if (require 'gptel-context nil 'noerror)
             (progn
               (gptel-context-add-file final-path)
@@ -1906,7 +2044,7 @@ When called interactively, prompts for NAME."
                    final-path))))
      (t
       (when (file-exists-p raw-path) (delete-file raw-path))
-      (user-error "No image in clipboard (or pngpaste error %d)" rc)))))
+      (user-error "No image in clipboard — on Linux/XQuartz: click Emacs window after copying to trigger clipboard sync")))))
 #+end_src
 
 ** Attach Image at Point to gptel
@@ -2205,7 +2343,7 @@ gptel-post-response-functions
 
 We require [[https://github.com/karthink/gptel][gptel]] as the frontend for the Claude API.
 
-#+begin_src elisp
+#+begin_src elisp :tangle yes
 (use-package gptel
   :ensure t)
 #+end_src
@@ -2627,7 +2765,7 @@ When the user wants to perform an action in Emacs, respond with a
 ,#+end_src
 block. It is executed automatically.
 For org-mode TODO in inbox.org:
-  (find-file \"~/org/inbox.org\")
+  (find-file \"~/emacs-config/org/inbox.org\")
   (goto-char (point-max))
   (insert \"* TODO Task\")
 For arbitrary M-x commands use call-interactively or funcall."))))
@@ -2653,6 +2791,19 @@ NEVER write:
 • \"You need to press C-c C-c\" or explain any manual step
 • Create external files that the user has to find/open themselves
 Everything runs automatically. You write the block — the hook executes it.
+
+════════════════════════════════════════════════
+WORKSPACE LAYOUT
+════════════════════════════════════════════════
+Org directory : ~/emacs-config/org/
+  inbox.org        — capture all new tasks here first
+  Erledigen.org    — main task list
+  Gewohnheiten.org — habits tracker
+  refile.org       — items pending filing
+  mode.org         — workflow and mode notes
+TODO states (in order): TODO → NEXT → WAITING → DONE
+Image directory: ~/.emacs.d/gptel-images/
+Presentations : export org subtree via org-reveal (reveal.js)
 
 ════════════════════════════════════════════════
 HOW EXECUTION WORKS
@@ -2689,9 +2840,41 @@ DECISION TREE — WHICH BLOCK FOR WHAT
   Output data/text (calculation, agenda, system info)?
     → #+begin_src LANG :results output
 
-  Graph / plot / diagram?
+  Graph / plot / diagram / image?
     → #+begin_src LANG :file name.png
     No :AUTORUN needed — Hook C handles it automatically.
+
+  Multi-step task needing intermediate results?
+    → Use native tools (Claude/GPT-4o only — see NATIVE TOOLS below)
+
+════════════════════════════════════════════════
+NATIVE TOOLS (Claude & GPT-4o only)
+════════════════════════════════════════════════
+When tool calling is active you have these Emacs-native tools.
+Use them for multi-step tasks where you need results before deciding next action.
+
+  get_todos           — list all open TODO items with states, tags, deadlines
+  read_org_file       — read any org file's full content
+  write_org_file      — write/overwrite an org file
+  add_todo            — add a task to inbox.org (title, tags, deadline)
+  change_todo_state   — change state of a heading (TODO/NEXT/WAITING/DONE)
+  set_deadline        — set a deadline on a heading
+  add_tag             — add a tag to a heading
+  move_heading        — move a heading to another org file
+  get_org_structure   — get heading outline of a file
+
+  execute_code        — run python/bash/sh/R code and get output back
+  run_elisp           — evaluate Emacs Lisp and get result back
+
+  read_file           — read any file
+  write_file          — write content to any file
+  list_directory      — list files in a directory
+  search_files        — search text in files (ripgrep)
+
+  list_buffers        — list all open Emacs buffers
+  get_buffer_content  — get current content of any buffer
+
+  org_export          — export org to: html / pdf / md / reveal / beamer
 
 ════════════════════════════════════════════════
 MATHEMATICS — ALWAYS INLINE, ALWAYS COMPLETE
@@ -2717,7 +2900,7 @@ For EVERY mathematical question, immediately and without being asked:
    splot [-5:5][-5:5] sin(sqrt(x**2+y**2)) title \"f(x,y)\"
    ,#+end_src
 
-   More complex plot with matplotlib (always use Agg backend!):
+   Complex plot with matplotlib (always use Agg backend!):
    ,#+begin_src python :results file graphics :file plot.png
    import matplotlib; matplotlib.use('Agg')
    import matplotlib.pyplot as plt, numpy as np
@@ -2752,12 +2935,12 @@ EMACS ACTIONS (AUTORUN examples)
 ════════════════════════════════════════════════
 Open file:
 ,#+begin_src elisp :AUTORUN
-(find-file \"~/org/inbox.org\")
+(find-file \"~/emacs-config/org/inbox.org\")
 ,#+end_src
 
 Insert TODO:
 ,#+begin_src elisp :AUTORUN
-(with-current-buffer (find-file-noselect \"~/org/inbox.org\")
+(with-current-buffer (find-file-noselect \"~/emacs-config/org/inbox.org\")
   (goto-char (point-max))
   (insert \"\n* TODO New task\")
   (save-buffer))
@@ -2825,9 +3008,9 @@ All functions are defined and directly callable:
   → Appends [[file:PATH]] to buffer end + calls org-display-inline-images.
   → For URL: downloads first. Returns local path.
 
-Rule: data/text → :results output.  Insert image → :AUTORUN.
+Rule: Data/text → :results output.  Insert image → :AUTORUN.
 
-Summarise webpage:
+Summarize webpage:
 ,#+begin_src elisp :results output
 (princ (my/web-text \"https://orgmode.org\" 2000))
 ,#+end_src
@@ -2844,9 +3027,9 @@ Insert image from URL:
 ,#+end_src
 
 ════════════════════════════════════════════════
-ANALYSE IMAGES (worksheets, photos, sketches)
+ANALYZE IMAGES (worksheets, photos, sketches)
 ════════════════════════════════════════════════
-When the user has attached an image:
+When the user attaches an image:
 1. Identify content: math, text, diagrams, tables.
 2. Solve each task with LaTeX formulas + gnuplot graph.
 3. One org heading per task (** Task 1).
@@ -2859,8 +3042,7 @@ $(x+5)(x-1)=0 \\Rightarrow x_1=-5,\\; x_2=1$
 set terminal png size 800,500
 set xlabel \"x\"; set ylabel \"y\"; set grid; set zeroaxis lw 2
 plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
-,#+end_src"))
-              ))
+,#+end_src"))))
 #+end_src
 
 *** Set Default Directive
@@ -2989,3 +3171,434 @@ output in ~*Claude Execution Results*~.
   between "mode on" and "elisp-eval on".
 - ~gptel-api-key~ is commented out here. Recommendation: load via
   ~auth-source~ from ~~/.authinfo.gpg~ instead of plain text.
+
+* Workspace Context
+
+** Context Collector
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/collect-org-todos (&optional limit)
+  "Return a list of TODO entries from all org agenda files.
+Each entry is a plist with :state :heading :file :deadline :tags."
+  (let ((limit (or limit 120))
+        results)
+    (dolist (file (org-agenda-files))
+      (when (file-exists-p file)
+        (with-current-buffer (or (find-buffer-visiting file)
+                                 (find-file-noselect file t))
+          (org-map-entries
+           (lambda ()
+             (when (< (length results) limit)
+               (push (list :state    (org-get-todo-state)
+                           :heading  (org-get-heading t t t t)
+                           :file     (abbreviate-file-name file)
+                           :tags     (mapconcat #'identity (org-get-tags) " ")
+                           :deadline (org-entry-get nil "DEADLINE"))
+                     results)))
+           "/TODO|NEXT|IN-PROGRESS|WAIT|REVIEW" 'agenda))))
+    (nreverse results)))
+
+(defun my/build-workspace-context ()
+  "Build a compact workspace context string for the gptel system prompt."
+  (let* ((todos (my/collect-org-todos 80))
+         (by-state (seq-group-by (lambda (e) (plist-get e :state)) todos))
+         (format-entries
+          (lambda (state entries)
+            (when entries
+              (concat (format "\n[%s]\n" state)
+                      (mapconcat
+                       (lambda (e)
+                         (let ((dl (plist-get e :deadline))
+                               (tags (plist-get e :tags)))
+                           (format "  - %s%s%s"
+                                   (plist-get e :heading)
+                                   (if (and dl (not (string-empty-p dl)))
+                                       (format " [due: %s]" dl) "")
+                                   (if (and tags (not (string-empty-p tags)))
+                                       (format " :%s:" tags) ""))))
+                       entries "\n")))))
+         (buf (current-buffer))
+         (buf-name (buffer-name buf))
+         (major (format "%s" major-mode))
+         (open-org (seq-filter
+                    (lambda (b) (with-current-buffer b
+                                  (derived-mode-p 'org-mode)))
+                    (buffer-list))))
+    (concat
+     "=== WORKSPACE CONTEXT ===\n"
+     (format "Active buffer: %s  [%s]\n" buf-name major)
+     (when open-org
+       (format "Open org buffers: %s\n"
+               (mapconcat #'buffer-name open-org ", ")))
+     "\nTODO summary:\n"
+     (mapconcat (lambda (state)
+                  (funcall format-entries state (cdr (assoc state by-state))))
+                '("NEXT" "IN-PROGRESS" "TODO" "WAIT" "REVIEW") "")
+     "\n=== END WORKSPACE CONTEXT ===\n")))
+#+end_src
+
+** Context Cache
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/gptel-context--cache nil)
+(defvar my/gptel-context--time 0)
+(defconst my/gptel-context--ttl 60)
+
+(defun my/workspace-context-string ()
+  "Return cached workspace context, refreshing if stale."
+  (when (> (- (float-time) my/gptel-context--time)
+           my/gptel-context--ttl)
+    (setq my/gptel-context--cache (my/build-workspace-context)
+          my/gptel-context--time  (float-time)))
+  my/gptel-context--cache)
+
+(defun my/gptel-context-invalidate ()
+  "Force workspace context to be rebuilt on next gptel call."
+  (interactive)
+  (setq my/gptel-context--time 0)
+  (message "gptel workspace context cache cleared."))
+
+(add-hook 'after-save-hook
+          (lambda ()
+            (when (derived-mode-p 'org-mode)
+              (my/gptel-context-invalidate))))
+#+end_src
+
+** Auto-Injection
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/gptel-context-enabled t
+  "When non-nil, inject workspace context into every gptel-send call.")
+
+(defun my/gptel--inject-context (orig-fn &rest args)
+  "Around advice for `gptel-send': prepend workspace context to system prompt."
+  (if (not my/gptel-context-enabled)
+      (apply orig-fn args)
+    (let* ((ctx   (my/workspace-context-string))
+           (orig  gptel--system-message)
+           (gptel--system-message (if (and ctx (not (string-empty-p ctx)))
+                                      (concat orig "\n\n" ctx)
+                                    orig)))
+      (apply orig-fn args))))
+
+(advice-add 'gptel-send :around #'my/gptel--inject-context)
+#+end_src
+
+* AI Tools
+
+** Org Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; get_todos — return the current TODO list as text
+  (gptel-make-tool
+   :name "get_todos"
+   :description "Return all open TODO entries from the org agenda."
+   :function (lambda ()
+               (mapconcat
+                (lambda (e)
+                  (format "[%s] %s%s"
+                          (plist-get e :state)
+                          (plist-get e :heading)
+                          (let ((dl (plist-get e :deadline)))
+                            (if (and dl (not (string-empty-p dl)))
+                                (format " (due %s)" dl) ""))))
+                (my/collect-org-todos 200) "\n")))
+
+  ;; read_org_file — get raw text of an org file
+  (gptel-make-tool
+   :name "read_org_file"
+   :description "Read the contents of an org file. Path relative to ~ is accepted."
+   :args '((:name "path" :type string :description "File path, e.g. ~/emacs-config/org/todo.org"))
+   :function (lambda (path)
+               (let ((p (expand-file-name path)))
+                 (if (file-exists-p p)
+                     (with-temp-buffer
+                       (insert-file-contents p)
+                       (buffer-string))
+                   (format "File not found: %s" p)))))
+
+  ;; write_org_file — overwrite an org file
+  (gptel-make-tool
+   :name "write_org_file"
+   :description "Overwrite an org file with new content. Creates the file if absent."
+   :args '((:name "path"    :type string :description "File path")
+           (:name "content" :type string :description "Full new file content"))
+   :function (lambda (path content)
+               (let ((p (expand-file-name path)))
+                 (make-directory (file-name-directory p) t)
+                 (with-temp-file p (insert content))
+                 (format "Written: %s" p))))
+
+  ;; add_todo — append a new TODO heading to a file
+  (gptel-make-tool
+   :name "add_todo"
+   :description "Append a new TODO entry to an org file."
+   :args '((:name "file"    :type string :description "Target org file path")
+           (:name "heading" :type string :description "Heading text (without TODO keyword)")
+           (:name "state"   :type string :description "TODO state, e.g. TODO, NEXT")
+           (:name "body"    :type string :description "Optional body text"))
+   :function (lambda (file heading state body)
+               (let ((p (expand-file-name file)))
+                 (with-current-buffer (find-file-noselect p)
+                   (goto-char (point-max))
+                   (insert (format "\n* %s %s\n%s" state heading (or body "")))
+                   (save-buffer))
+                 (format "Added %s: %s to %s" state heading p))))
+
+  ;; change_todo_state — change state of a heading by exact title match
+  (gptel-make-tool
+   :name "change_todo_state"
+   :description "Change the TODO state of a heading that matches the given title."
+   :args '((:name "file"    :type string :description "Org file path")
+           (:name "heading" :type string :description "Exact heading text (case-insensitive)")
+           (:name "state"   :type string :description "New state, e.g. DONE, IN-PROGRESS"))
+   :function (lambda (file heading state)
+               (let ((p (expand-file-name file))
+                     found)
+                 (with-current-buffer (find-file-noselect p)
+                   (goto-char (point-min))
+                   (while (re-search-forward
+                           (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
+                           nil t)
+                     (org-todo state)
+                     (setq found t))
+                   (when found (save-buffer)))
+                 (if found
+                     (format "State set to %s for: %s" state heading)
+                   (format "Heading not found: %s" heading)))))
+
+  ;; set_deadline — set or update deadline on a heading
+  (gptel-make-tool
+   :name "set_deadline"
+   :description "Set a DEADLINE on a heading. Use ISO date format YYYY-MM-DD."
+   :args '((:name "file"    :type string :description "Org file path")
+           (:name "heading" :type string :description "Exact heading text")
+           (:name "date"    :type string :description "Date string YYYY-MM-DD"))
+   :function (lambda (file heading date)
+               (let ((p (expand-file-name file))
+                     found)
+                 (with-current-buffer (find-file-noselect p)
+                   (goto-char (point-min))
+                   (when (re-search-forward
+                          (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
+                          nil t)
+                     (org-deadline nil date)
+                     (setq found t)
+                     (save-buffer)))
+                 (if found
+                     (format "Deadline %s set on: %s" date heading)
+                   (format "Heading not found: %s" heading)))))
+
+  ;; add_tag — add a tag to a heading
+  (gptel-make-tool
+   :name "add_tag"
+   :description "Add a tag to a matching org heading."
+   :args '((:name "file"    :type string :description "Org file path")
+           (:name "heading" :type string :description "Exact heading text")
+           (:name "tag"     :type string :description "Tag to add (no colons)"))
+   :function (lambda (file heading tag)
+               (let ((p (expand-file-name file))
+                     found)
+                 (with-current-buffer (find-file-noselect p)
+                   (goto-char (point-min))
+                   (when (re-search-forward
+                          (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
+                          nil t)
+                     (org-set-tags (cons tag (org-get-tags nil t)))
+                     (setq found t)
+                     (save-buffer)))
+                 (if found
+                     (format "Tag :%s: added to: %s" tag heading)
+                   (format "Heading not found: %s" heading)))))
+
+  ;; get_org_structure — outline of an org file (headings only)
+  (gptel-make-tool
+   :name "get_org_structure"
+   :description "Return the heading outline of an org file without body text."
+   :args '((:name "path" :type string :description "Org file path"))
+   :function (lambda (path)
+               (let ((p (expand-file-name path)))
+                 (if (not (file-exists-p p))
+                     (format "File not found: %s" p)
+                   (with-temp-buffer
+                     (insert-file-contents p)
+                     (org-mode)
+                     (let (lines)
+                       (org-map-entries
+                        (lambda ()
+                          (push (concat (make-string (org-outline-level) ?*) " "
+                                        (org-get-heading t t t t))
+                                lines)))
+                       (mapconcat #'identity (nreverse lines) "\n"))))))))
+#+end_src
+
+** Code Execution Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; execute_code — run a snippet in a temp org babel block
+  (gptel-make-tool
+   :name "execute_code"
+   :description "Execute a code snippet and return the output. Supported languages: python, bash, sh, R, emacs-lisp."
+   :args '((:name "language" :type string :description "Language: python, bash, sh, R, emacs-lisp")
+           (:name "code"     :type string :description "Source code to execute"))
+   :function (lambda (language code)
+               (let* ((lang (downcase language))
+                      (tmp  (make-temp-file "gptel-exec-" nil ".org"))
+                      result)
+                 (with-temp-file tmp
+                   (insert (format "#+begin_src %s\n%s\n#+end_src\n" lang code)))
+                 (with-temp-buffer
+                   (insert-file-contents tmp)
+                   (org-mode)
+                   (goto-char (point-min))
+                   (when (search-forward "#+begin_src" nil t)
+                     (beginning-of-line)
+                     (condition-case err
+                         (let* ((info (org-babel-get-src-block-info))
+                                (res  (org-babel-execute-src-block nil info)))
+                           (setq result (if res (format "%s" res) "(no output)")))
+                       (error (setq result (format "Error: %s" err))))))
+                 (delete-file tmp)
+                 (or result "(no output)"))))
+
+  ;; run_elisp — evaluate elisp and return the result
+  (gptel-make-tool
+   :name "run_elisp"
+   :description "Evaluate Emacs Lisp and return the printed result. Use for Emacs introspection and automation."
+   :args '((:name "code" :type string :description "Elisp expression(s) to evaluate"))
+   :function (lambda (code)
+               (condition-case err
+                   (let ((result (eval (car (read-from-string
+                                             (concat "(progn " code ")"))))))
+                     (format "%S" result))
+                 (error (format "Error: %s" err))))))
+#+end_src
+
+** File System Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; read_file — read any text file
+  (gptel-make-tool
+   :name "read_file"
+   :description "Read the contents of any text file on disk."
+   :args '((:name "path" :type string :description "Absolute or ~-relative file path"))
+   :function (lambda (path)
+               (let ((p (expand-file-name path)))
+                 (if (file-exists-p p)
+                     (with-temp-buffer
+                       (insert-file-contents p)
+                       (buffer-string))
+                   (format "File not found: %s" p)))))
+
+  ;; write_file — write content to any file
+  (gptel-make-tool
+   :name "write_file"
+   :description "Write content to a file, creating parent directories if needed."
+   :args '((:name "path"    :type string :description "File path")
+           (:name "content" :type string :description "Content to write"))
+   :function (lambda (path content)
+               (let ((p (expand-file-name path)))
+                 (make-directory (file-name-directory p) t)
+                 (with-temp-file p (insert content))
+                 (format "Written: %s" p))))
+
+  ;; list_directory — list files in a directory
+  (gptel-make-tool
+   :name "list_directory"
+   :description "List files and directories at a given path."
+   :args '((:name "path"      :type string  :description "Directory path")
+           (:name "recursive" :type boolean :description "If true, list recursively"))
+   :function (lambda (path recursive)
+               (let ((p (expand-file-name path)))
+                 (if (not (file-directory-p p))
+                     (format "Not a directory: %s" p)
+                   (if recursive
+                       (mapconcat #'identity
+                                  (directory-files-recursively p "." nil nil t)
+                                  "\n")
+                     (mapconcat #'identity
+                                (directory-files p t nil t)
+                                "\n"))))))
+
+  ;; search_files — grep-style search
+  (gptel-make-tool
+   :name "search_files"
+   :description "Search for a regex pattern across files under a directory."
+   :args '((:name "directory" :type string :description "Root directory for search")
+           (:name "pattern"   :type string :description "Regex pattern")
+           (:name "glob"      :type string :description "File glob, e.g. *.org (optional)"))
+   :function (lambda (directory pattern glob)
+               (let* ((dir  (expand-file-name directory))
+                      (args (if (and glob (not (string-empty-p glob)))
+                                (list "grep" "-r" "--include" glob "-n" pattern dir)
+                              (list "grep" "-r" "-n" pattern dir))))
+                 (with-temp-buffer
+                   (apply #'call-process (car args) nil t nil (cdr args))
+                   (if (string-empty-p (buffer-string))
+                       "No matches found."
+                     (buffer-string)))))))
+#+end_src
+
+** Buffer Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; list_buffers — list all open buffers
+  (gptel-make-tool
+   :name "list_buffers"
+   :description "Return the names of all currently open Emacs buffers."
+   :function (lambda ()
+               (mapconcat #'buffer-name (buffer-list) "\n")))
+
+  ;; get_buffer_content — get text of a named buffer
+  (gptel-make-tool
+   :name "get_buffer_content"
+   :description "Return the full text content of an open Emacs buffer."
+   :args '((:name "name" :type string :description "Buffer name as shown by list_buffers"))
+   :function (lambda (name)
+               (let ((buf (get-buffer name)))
+                 (if buf
+                     (with-current-buffer buf (buffer-string))
+                   (format "Buffer not found: %s" name))))))
+#+end_src
+
+** Export Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; org_export — export an org file to a target format
+  (gptel-make-tool
+   :name "org_export"
+   :description "Export an org file to html, pdf, md, reveal (slides), or beamer. Returns the output file path."
+   :args '((:name "path"   :type string :description "Org file to export")
+           (:name "format" :type string :description "Output format: html, pdf, md, reveal, beamer"))
+   :function (lambda (path format)
+               (let ((p (expand-file-name path)))
+                 (if (not (file-exists-p p))
+                     (format "File not found: %s" p)
+                   (with-current-buffer (find-file-noselect p)
+                     (condition-case err
+                         (pcase (downcase format)
+                           ("html"
+                            (org-html-export-to-html)
+                            (format "Exported to: %s.html" (file-name-sans-extension p)))
+                           ("pdf"
+                            (org-latex-export-to-pdf)
+                            (format "Exported to: %s.pdf" (file-name-sans-extension p)))
+                           ("md"
+                            (org-md-export-to-markdown)
+                            (format "Exported to: %s.md" (file-name-sans-extension p)))
+                           ("reveal"
+                            (if (fboundp 'org-reveal-export-to-html)
+                                (progn (org-reveal-export-to-html)
+                                       (format "Exported to: %s.html" (file-name-sans-extension p)))
+                              "org-reveal not installed."))
+                           ("beamer"
+                            (org-beamer-export-to-pdf)
+                            (format "Exported to: %s.pdf" (file-name-sans-extension p)))
+                           (_ (format "Unknown format: %s" format)))
+                       (error (format "Export error: %s" err)))))))))
+#+end_src
