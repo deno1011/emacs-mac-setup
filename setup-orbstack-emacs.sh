@@ -123,7 +123,9 @@ CLEAN_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
 orbu bash -c "
     if [ -d ~/emacs-config/.git ]; then
         echo 'Repo already cloned — pulling.'
+        git -C ~/emacs-config remote set-url origin '${CLONE_URL}'
         git -C ~/emacs-config pull
+        git -C ~/emacs-config remote set-url origin '${CLEAN_URL}'
     else
         git clone '${CLONE_URL}' ~/emacs-config
         git -C ~/emacs-config remote set-url origin '${CLEAN_URL}'
