@@ -571,3 +571,6 @@ if orbu test -f ~/.git-crypt-key 2>/dev/null; then
 else
     echo "git-crypt: run  bash ~/unlock-git-crypt.sh  inside the machine to unlock org files."
 fi
+echo ""
+echo "Setup script:   ~/setup-emacs-orbstack-mac.sh"
+echo "Uninstall with: bash ~/uninstall-emacs-orbstack-mac.sh"
