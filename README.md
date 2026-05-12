@@ -385,6 +385,74 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 
 ---
 
+## AI Integration
+
+The configuration includes a fully wired AI assistant inside Emacs via **gptel**, extended with a custom **claude-executor** layer that makes AI responses executable — not just readable.
+
+### Backends
+
+Multiple AI backends are pre-configured and switchable at any time (`M-x gptel-send` or `C-c RET`):
+
+| Backend | Models |
+|---|---|
+| **Claude** (Anthropic) | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
+| **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
+| **LM Studio** | Any local model loaded in LM Studio |
+
+API keys are stored in Bitwarden and loaded at startup via `secrets.el` — never hardcoded.
+
+### Executable Responses (claude-executor)
+
+Claude responses containing code blocks are **automatically executed** by Emacs:
+
+| Block type | What happens |
+|---|---|
+| `` #+begin_src elisp :AUTORUN `` | Executed immediately — runs any Emacs command, edits buffers, opens files, sets variables |
+| `` #+begin_src python/R/gnuplot :results output `` | Executed via org-babel, output inserted inline |
+| `` #+begin_src python/R/gnuplot :file name.png `` | Executed and result displayed as an inline image |
+| `` #+begin_src sh :results output `` | Shell command executed, output inserted |
+
+This means you can ask Claude to "add a TODO to inbox.org", "plot sin(x) from 0 to 2π", or "set the font size to 14" and it happens directly — no copy-pasting.
+
+### Graph and Diagram Generation
+
+Supported renderers for inline output:
+
+| Tool | Output |
+|---|---|
+| Python + matplotlib | 2D/3D plots, data visualisations |
+| gnuplot | Function plots, data graphs |
+| R | Statistical plots |
+| graphviz (dot) | Dependency and flow graphs |
+| mermaid | Sequence diagrams, flowcharts |
+| plantuml | UML diagrams |
+| LaTeX / dvipng | Inline math, rendered equations |
+
+All diagrams appear inline in the org buffer after Claude responds — no external viewer needed.
+
+### Org-mode Tools
+
+Claude has access to live Emacs state via gptel tools:
+
+| Tool | What it does |
+|---|---|
+| `get_todos` | Reads all open TODO entries from the org agenda |
+| `read_org_file` | Reads any org file by path |
+| `write_org_file` | Overwrites an org file |
+| `append_org_file` | Appends a heading or text to an org file |
+
+Combined with `:AUTORUN` blocks, Claude can query your tasks, reason about them, and update your org files in a single response.
+
+### LaTeX in Responses
+
+LaTeX fragments in Claude responses are rendered automatically as math images in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
+
+### Local Models
+
+LM Studio (or any OpenAI-compatible local server) can be selected as backend. The same executor runs on local model responses, but local models follow the custom block conventions less reliably than Claude — graph generation and `:AUTORUN` work best with Claude.
+
+---
+
 ## Uninstall
 
 ```bash
