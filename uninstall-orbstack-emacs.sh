@@ -26,12 +26,17 @@ orb stop "$MACHINE" 2>/dev/null || warn "Machine was not running."
 step "Deleting machine '$MACHINE'..."
 orb delete "$MACHINE" 2>/dev/null || warn "Machine not found — already deleted?"
 
-# ── remove app launchers ──────────────────────────────────────────────────────
-step "Removing app launchers..."
-rm -f "$APPS_DIR/Emacs OrbStack GUI.command"
-rm -f "$APPS_DIR/Emacs OrbStack Console.command"
-rm -f "$APPS_DIR/Emacs OrbStack Shell.command"
-rm -f "$APPS_DIR/Emacs OrbStack Root Shell.command"
+# ── remove app bundles ────────────────────────────────────────────────────────
+step "Removing app bundles..."
+rm -rf "$APPS_DIR/Emacs OrbStack GUI.app"
+rm -rf "$APPS_DIR/Emacs OrbStack Console.app"
+rm -rf "$APPS_DIR/Emacs OrbStack Shell.app"
+rm -rf "$APPS_DIR/Emacs OrbStack Root Shell.app"
+# also clean up any old .command files from a previous install
+rm -f "$APPS_DIR/Emacs OrbStack GUI.command" \
+      "$APPS_DIR/Emacs OrbStack Console.command" \
+      "$APPS_DIR/Emacs OrbStack Shell.command" \
+      "$APPS_DIR/Emacs OrbStack Root Shell.command"
 
 # ── remove alias ──────────────────────────────────────────────────────────────
 step "Removing shell alias..."
