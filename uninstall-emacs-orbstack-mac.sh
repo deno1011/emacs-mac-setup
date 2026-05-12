@@ -1,8 +1,8 @@
 #!/bin/zsh
-# uninstall-orbstack-emacs.sh
+# uninstall-emacs-orbstack-mac.sh
 # Removes the OrbStack Emacs machine and its launchers.
 # Does NOT uninstall OrbStack itself (other machines may exist).
-# Usage: bash uninstall-orbstack-emacs.sh [--ask]
+# Usage: bash uninstall-emacs-orbstack-mac.sh [--ask]
 # --ask  Prompt before each optional step (delete machine, remove OrbStack)
 
 set -euo pipefail

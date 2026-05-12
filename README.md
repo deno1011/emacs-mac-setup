@@ -38,7 +38,7 @@ open ~/setup-emacs-mac.conf  # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
 bash ./setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
 bash ./setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
 bash ./setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
-bash ./setup-orbstack-emacs.sh              # isolated in OrbStack, no XQuartz needed
+bash ./setup-emacs-orbstack-mac.sh              # isolated in OrbStack, no XQuartz needed
 
 # 4. Start Emacs
 open "/Applications/Emacs (emacs-plus).app"
@@ -82,7 +82,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `setup-emacs-native-yamamoto-mac.sh` | Install emacs-mac@30exp (Yamamoto patches) — thin wrapper |
 | `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
 | `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container (XQuartz) |
-| `setup-orbstack-emacs.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
+| `setup-emacs-orbstack-mac.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
 
 ### Uninstall
 
@@ -91,7 +91,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `uninstall-emacs-native-plus-mac.sh` | Remove emacs-plus |
 | `uninstall-emacs-native-yamamoto-mac.sh` | Remove emacs-mac@30exp |
 | `uninstall-emacs-docker-mac.sh` | Remove Docker variant |
-| `uninstall-orbstack-emacs.sh` | Remove OrbStack variant |
+| `uninstall-emacs-orbstack-mac.sh` | Remove OrbStack variant |
 
 ### Utilities
 
@@ -185,7 +185,7 @@ App icons in `~/Applications/`:
 - Requires OrbStack (`brew install --cask orbstack`)
 
 ```bash
-bash ./setup-orbstack-emacs.sh
+bash ./setup-emacs-orbstack-mac.sh
 ```
 
 App launchers in `~/Applications/`:
@@ -391,7 +391,7 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 bash ./uninstall-emacs-native-plus-mac.sh       # remove emacs-plus
 bash ./uninstall-emacs-native-yamamoto-mac.sh   # remove emacs-mac@30exp
 bash ./uninstall-emacs-docker-mac.sh            # remove Docker variant
-bash ./uninstall-orbstack-emacs.sh              # remove OrbStack variant
+bash ./uninstall-emacs-orbstack-mac.sh              # remove OrbStack variant
 
 bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master password from Keychain
 ```

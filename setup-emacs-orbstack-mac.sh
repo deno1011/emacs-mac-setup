@@ -1,5 +1,5 @@
 #!/bin/zsh
-# setup-orbstack-emacs.sh
+# setup-emacs-orbstack-mac.sh
 # Sets up Emacs in an OrbStack Linux machine.
 # Idempotent — safe to run multiple times.
 
