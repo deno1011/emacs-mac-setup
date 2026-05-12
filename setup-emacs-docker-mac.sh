@@ -516,7 +516,7 @@ else
 fi
 
 # --- Create macOS app bundle in ~/Applications ---
-APP_PATH="$HOME/Applications/Emacs Docker GUI.app"
+APP_PATH="$HOME/Applications/GUI Docker Emacs.app"
 if [ -d "$APP_PATH" ]; then
   skip "Emacs app bundle"
 else
@@ -546,7 +546,7 @@ APPSCRIPT
     <key>CFBundleIdentifier</key>
     <string>org.gnu.emacs.docker</string>
     <key>CFBundleName</key>
-    <string>Emacs Docker GUI</string>
+    <string>GUI Docker Emacs</string>
     <key>CFBundleIconFile</key>
     <string>Emacs</string>
     <key>CFBundlePackageType</key>
@@ -575,7 +575,7 @@ PLIST
 fi
 
 # --- Console app bundle ---
-CONSOLE_APP_PATH="$HOME/Applications/Emacs Docker Console.app"
+CONSOLE_APP_PATH="$HOME/Applications/Console Docker Emacs.app"
 if [ -d "$CONSOLE_APP_PATH" ]; then
   skip "Emacs Console app bundle"
 else
@@ -605,7 +605,7 @@ CONSOLESCRIPT
     <key>CFBundleIdentifier</key>
     <string>org.gnu.emacs.docker.console</string>
     <key>CFBundleName</key>
-    <string>Emacs Docker Console</string>
+    <string>Console Docker Emacs</string>
     <key>CFBundleIconFile</key>
     <string>Emacs</string>
     <key>CFBundlePackageType</key>
@@ -623,7 +623,7 @@ PLIST
 fi
 
 # --- Docker shell app bundle ---
-SHELL_APP_PATH="$HOME/Applications/Emacs Docker Shell.app"
+SHELL_APP_PATH="$HOME/Applications/Shell Docker Emacs.app"
 if [ -d "$SHELL_APP_PATH" ]; then
   skip "Docker Shell app bundle"
 else
@@ -653,7 +653,7 @@ SHELLSCRIPT
     <key>CFBundleIdentifier</key>
     <string>org.gnu.emacs.docker.shell</string>
     <key>CFBundleName</key>
-    <string>Emacs Docker Shell</string>
+    <string>Shell Docker Emacs</string>
     <key>CFBundleIconFile</key>
     <string>Emacs</string>
     <key>CFBundlePackageType</key>
@@ -671,7 +671,7 @@ PLIST
 fi
 
 # --- Docker root shell app bundle ---
-ROOT_APP_PATH="$HOME/Applications/Emacs Docker Root Shell.app"
+ROOT_APP_PATH="$HOME/Applications/Root Shell Docker Emacs.app"
 if [ -d "$ROOT_APP_PATH" ]; then
   skip "Docker Root Shell app bundle"
 else
@@ -701,7 +701,7 @@ ROOTSCRIPT
     <key>CFBundleIdentifier</key>
     <string>org.gnu.emacs.docker.rootshell</string>
     <key>CFBundleName</key>
-    <string>Emacs Docker Root Shell</string>
+    <string>Root Shell Docker Emacs</string>
     <key>CFBundleIconFile</key>
     <string>Emacs</string>
     <key>CFBundlePackageType</key>

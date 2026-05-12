@@ -28,15 +28,19 @@ orb delete "$MACHINE" 2>/dev/null || warn "Machine not found — already deleted
 
 # ── remove app bundles ────────────────────────────────────────────────────────
 step "Removing app bundles..."
-rm -rf "$APPS_DIR/Emacs OrbStack GUI.app"
-rm -rf "$APPS_DIR/Emacs OrbStack Console.app"
-rm -rf "$APPS_DIR/Emacs OrbStack Shell.app"
-rm -rf "$APPS_DIR/Emacs OrbStack Root Shell.app"
-# also clean up any old .command files from a previous install
-rm -f "$APPS_DIR/Emacs OrbStack GUI.command" \
-      "$APPS_DIR/Emacs OrbStack Console.command" \
-      "$APPS_DIR/Emacs OrbStack Shell.command" \
-      "$APPS_DIR/Emacs OrbStack Root Shell.command"
+rm -rf "$APPS_DIR/GUI OrbStack Emacs.app"
+rm -rf "$APPS_DIR/Console OrbStack Emacs.app"
+rm -rf "$APPS_DIR/Shell OrbStack Emacs.app"
+rm -rf "$APPS_DIR/Root Shell OrbStack Emacs.app"
+# also clean up old names from previous installs
+rm -rf "$APPS_DIR/Emacs OrbStack GUI.app" \
+       "$APPS_DIR/Emacs OrbStack Console.app" \
+       "$APPS_DIR/Emacs OrbStack Shell.app" \
+       "$APPS_DIR/Emacs OrbStack Root Shell.app"
+rm -f  "$APPS_DIR/Emacs OrbStack GUI.command" \
+       "$APPS_DIR/Emacs OrbStack Console.command" \
+       "$APPS_DIR/Emacs OrbStack Shell.command" \
+       "$APPS_DIR/Emacs OrbStack Root Shell.command"
 
 # ── remove alias ──────────────────────────────────────────────────────────────
 step "Removing shell alias..."

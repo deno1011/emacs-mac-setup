@@ -215,11 +215,15 @@ root chown $EUSER:$EUSER /home/$EUSER/unlock-git-crypt.sh
 step "Creating app bundles in ~/Applications/..."
 mkdir -p "$APPS_DIR"
 
-# Remove old .command files if present from a previous run
-rm -f "$APPS_DIR/Emacs OrbStack GUI.command" \
-      "$APPS_DIR/Emacs OrbStack Console.command" \
-      "$APPS_DIR/Emacs OrbStack Shell.command" \
-      "$APPS_DIR/Emacs OrbStack Root Shell.command"
+# Remove old names from previous runs
+rm -f  "$APPS_DIR/Emacs OrbStack GUI.command" \
+       "$APPS_DIR/Emacs OrbStack Console.command" \
+       "$APPS_DIR/Emacs OrbStack Shell.command" \
+       "$APPS_DIR/Emacs OrbStack Root Shell.command"
+rm -rf "$APPS_DIR/Emacs OrbStack GUI.app" \
+       "$APPS_DIR/Emacs OrbStack Console.app" \
+       "$APPS_DIR/Emacs OrbStack Shell.app" \
+       "$APPS_DIR/Emacs OrbStack Root Shell.app"
 
 # Download and build Emacs icon (shared by all bundles)
 if ! [[ -f /tmp/emacs.iconset/icon_128x128.png ]]; then
@@ -245,9 +249,9 @@ install_icon() {
 }
 
 # GUI Emacs — opens directly, no Terminal window (OrbStack handles display)
-GUI_APP="$APPS_DIR/Emacs OrbStack GUI.app"
+GUI_APP="$APPS_DIR/GUI OrbStack Emacs.app"
 rm -rf "$GUI_APP"   # always recreate to pick up script updates
-echo "==> Creating Emacs OrbStack GUI app..."
+echo "==> Creating GUI OrbStack Emacs app..."
 mkdir -p "$GUI_APP/Contents/MacOS" "$GUI_APP/Contents/Resources"
 cat > "$GUI_APP/Contents/MacOS/Emacs" << APPSCRIPT
 #!/bin/bash
@@ -262,7 +266,7 @@ cat > "$GUI_APP/Contents/Info.plist" << 'PLIST'
 <dict>
     <key>CFBundleExecutable</key><string>Emacs</string>
     <key>CFBundleIdentifier</key><string>org.gnu.emacs.orbstack</string>
-    <key>CFBundleName</key><string>Emacs OrbStack GUI</string>
+    <key>CFBundleName</key><string>GUI OrbStack Emacs</string>
     <key>CFBundleIconFile</key><string>Emacs</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1.0</string>
@@ -273,9 +277,9 @@ install_icon "$GUI_APP"
 xattr -dr com.apple.quarantine "$GUI_APP" 2>/dev/null || true
 
 # Console Emacs — opens in Terminal
-CONSOLE_APP="$APPS_DIR/Emacs OrbStack Console.app"
+CONSOLE_APP="$APPS_DIR/Console OrbStack Emacs.app"
 if [[ ! -d "$CONSOLE_APP" ]]; then
-    echo "==> Creating Emacs OrbStack Console app..."
+    echo "==> Creating Console OrbStack Emacs app..."
     mkdir -p "$CONSOLE_APP/Contents/MacOS" "$CONSOLE_APP/Contents/Resources"
     cat > "$CONSOLE_APP/Contents/MacOS/EmacsConsole" << CONSOLESCRIPT
 #!/bin/bash
@@ -291,7 +295,7 @@ CONSOLESCRIPT
 <dict>
     <key>CFBundleExecutable</key><string>EmacsConsole</string>
     <key>CFBundleIdentifier</key><string>org.gnu.emacs.orbstack.console</string>
-    <key>CFBundleName</key><string>Emacs OrbStack Console</string>
+    <key>CFBundleName</key><string>Console OrbStack Emacs</string>
     <key>CFBundleIconFile</key><string>Emacs</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1.0</string>
@@ -303,9 +307,9 @@ PLIST
 fi
 
 # Shell (emacs user)
-SHELL_APP="$APPS_DIR/Emacs OrbStack Shell.app"
+SHELL_APP="$APPS_DIR/Shell OrbStack Emacs.app"
 if [[ ! -d "$SHELL_APP" ]]; then
-    echo "==> Creating Emacs OrbStack Shell app..."
+    echo "==> Creating Shell OrbStack Emacs app..."
     mkdir -p "$SHELL_APP/Contents/MacOS" "$SHELL_APP/Contents/Resources"
     cat > "$SHELL_APP/Contents/MacOS/OrbShell" << SHELLSCRIPT
 #!/bin/bash
@@ -321,7 +325,7 @@ SHELLSCRIPT
 <dict>
     <key>CFBundleExecutable</key><string>OrbShell</string>
     <key>CFBundleIdentifier</key><string>org.gnu.emacs.orbstack.shell</string>
-    <key>CFBundleName</key><string>Emacs OrbStack Shell</string>
+    <key>CFBundleName</key><string>Shell OrbStack Emacs</string>
     <key>CFBundleIconFile</key><string>Emacs</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1.0</string>
@@ -333,9 +337,9 @@ PLIST
 fi
 
 # Root shell
-ROOT_APP="$APPS_DIR/Emacs OrbStack Root Shell.app"
+ROOT_APP="$APPS_DIR/Root Shell OrbStack Emacs.app"
 if [[ ! -d "$ROOT_APP" ]]; then
-    echo "==> Creating Emacs OrbStack Root Shell app..."
+    echo "==> Creating Root Shell OrbStack Emacs app..."
     mkdir -p "$ROOT_APP/Contents/MacOS" "$ROOT_APP/Contents/Resources"
     cat > "$ROOT_APP/Contents/MacOS/OrbRootShell" << ROOTSCRIPT
 #!/bin/bash
@@ -351,7 +355,7 @@ ROOTSCRIPT
 <dict>
     <key>CFBundleExecutable</key><string>OrbRootShell</string>
     <key>CFBundleIdentifier</key><string>org.gnu.emacs.orbstack.rootshell</string>
-    <key>CFBundleName</key><string>Emacs OrbStack Root Shell</string>
+    <key>CFBundleName</key><string>Root Shell OrbStack Emacs</string>
     <key>CFBundleIconFile</key><string>Emacs</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1.0</string>
@@ -375,8 +379,8 @@ print -P "\n${GREEN}✓ OrbStack Emacs setup complete!${NC}"
 echo ""
 echo "Launch options:"
 echo "  Terminal:     emacs-orb  (after reloading shell: source ~/.zshrc)"
-echo "  App:          ~/Applications/Emacs OrbStack GUI.app"
-echo "  Console:      ~/Applications/Emacs OrbStack Console.app"
+echo "  App:          ~/Applications/GUI OrbStack Emacs.app"
+echo "  Console:      ~/Applications/Console OrbStack Emacs.app"
 echo ""
 echo "First start installs Emacs packages — may take a few minutes."
 echo ""
