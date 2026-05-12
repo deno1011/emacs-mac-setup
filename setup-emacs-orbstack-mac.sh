@@ -438,6 +438,17 @@ mkdir -p "$GUI_APP/Contents/MacOS" "$GUI_APP/Contents/Resources"
 cat > "$GUI_APP/Contents/MacOS/Emacs" << APPSCRIPT
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/OrbStack.app/Contents/MacOS:\$PATH"
+# macOS app bundles have no DISPLAY — read it from launchd and start XQuartz if needed
+DISPLAY=\$(launchctl getenv DISPLAY 2>/dev/null || true)
+if [[ -z "\$DISPLAY" ]]; then
+    open -a XQuartz 2>/dev/null || true
+    for i in 1 2 3 4 5; do
+        sleep 2
+        DISPLAY=\$(launchctl getenv DISPLAY 2>/dev/null || true)
+        [[ -n "\$DISPLAY" ]] && break
+    done
+fi
+export DISPLAY
 orb -m ${MACHINE} -u ${EUSER} bash -c "~/bin/startup-sync.sh 2>/dev/null; emacs"
 APPSCRIPT
 chmod +x "$GUI_APP/Contents/MacOS/Emacs"
