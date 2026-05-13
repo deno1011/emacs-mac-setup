@@ -499,3 +499,76 @@ Setup scripts unlock automatically — on first clone and on every subsequent ru
 ## Theme
 
 All variants use **modus-vivendi** — built into Emacs 28+, designed for high contrast and readability (WCAG AAA standard).
+
+---
+
+## Development
+
+This section is for the repo owner testing changes before promoting them to `stable`.
+
+### Branch structure
+
+| Branch | Purpose |
+|---|---|
+| `stable` | What new users get via bootstrap. Always a known-good state. |
+| `main` | Active development. May contain untested changes. |
+| `session-YYYY-MM-DD-working` | Tags marking the last known-good commit of a session. Used for rollback. |
+
+### Reinstall from `stable` (new-user path)
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+```
+
+Bootstrap downloads all scripts from `stable`, configures Bitwarden + GitHub auth, then prompts you to run a setup script.
+
+### Reinstall from `main` (dev/testing path)
+
+Bootstrap always pulls `stable` scripts — use it for first-time machine setup only. For testing `main` changes, work with the local clone directly:
+
+```bash
+# Refresh scripts from main
+cd /tmp/emacs-mac-setup && git pull origin main
+
+# Run setup directly (brew / gh / Bitwarden already installed)
+bash setup-emacs-native-plus-mac.sh
+```
+
+Or from scratch on a fresh machine:
+
+```bash
+git clone -b main https://github.com/deno1011/emacs-mac-setup.git /tmp/emacs-mac-setup
+bash /tmp/emacs-mac-setup/setup-emacs-native-plus-mac.sh
+```
+
+### Session tags and rollback
+
+After every working session, tag the last known-good commit:
+
+```bash
+git tag session-YYYY-MM-DD-working
+git push origin session-YYYY-MM-DD-working
+```
+
+Rollback the whole repo:
+
+```bash
+git reset --hard session-YYYY-MM-DD-working
+```
+
+Restore a single file from a tag:
+
+```bash
+git checkout session-YYYY-MM-DD-working -- config.org
+```
+
+### Promoting `main` → `stable`
+
+Once changes are tested:
+
+```bash
+git checkout stable
+git merge main --no-edit
+git push origin stable
+git checkout main
+```
