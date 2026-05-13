@@ -5,7 +5,7 @@
 Open **Terminal**, `cd` to the folder where you want the scripts, then run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
 ```
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  

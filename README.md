@@ -27,7 +27,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 
 ```bash
 # 1. Download all scripts (pulls personal config automatically if accessible)
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
 
 # 2. Only needed if GitHub was not yet authenticated during bootstrap:
 bash ./fill-config.sh        # interactive guided config fill

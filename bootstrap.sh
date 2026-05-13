@@ -42,7 +42,7 @@ CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
 echo "==> Downloading all scripts to $DEST/..."
 _DL_TMP=$(mktemp -d)
-curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/main.tar.gz" \
+curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/stable.tar.gz" \
   | tar -xz -C "$_DL_TMP" --strip-components=1
 for _F in "$_DL_TMP"/*; do
   _NAME="$(basename "$_F")"
@@ -299,7 +299,7 @@ echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack,
 echo ""
 if [ -n "${GH_USER:-}" ] && [ -n "${CONF_REPO:-}" ]; then
   echo "  On a new Mac, skip config questions by passing your config repo:"
-  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh) $GH_USER/$CONF_REPO"
+  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER/$CONF_REPO"
   echo ""
 fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
