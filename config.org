@@ -116,9 +116,15 @@
 #+begin_src emacs-lisp
 (use-package git-auto-commit-mode
   :config
-  (setq gac-automatically-push-p t
+  (setq gac-automatically-push-p nil
         gac-automatically-add-new-files-p t))
-(add-hook 'org-mode-hook 'git-auto-commit-mode)
+
+(add-hook 'org-mode-hook
+          (lambda ()
+            (when (and buffer-file-name
+                       (string-match-p "/org/" buffer-file-name)
+                       (not (string-match-p "config\\.org$" buffer-file-name)))
+              (git-auto-commit-mode 1))))
 #+end_src
 
 * Startup Sync
@@ -2793,6 +2799,11 @@ NEVER write:
 • Create external files that the user has to find/open themselves
 Everything runs automatically. You write the block — the hook executes it.
 
+NEVER call write_file or write_org_file on:
+  config.org, init.el, config.el
+These are protected config files. Use read_file to inspect them, never write.
+The tools will return an error if you try — do not retry with a different path.
+
 ════════════════════════════════════════════════
 WORKSPACE LAYOUT
 ════════════════════════════════════════════════
@@ -3068,6 +3079,12 @@ plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
           (lambda ()
             (setq-local gptel--system-message
                         (alist-get 'emacs-assistant gptel-directives))))
+
+;; Enable all registered tools automatically for every gptel session
+(add-hook 'gptel-mode-hook
+          (lambda ()
+            (setq-local gptel-tools
+                        (mapcar #'cdr gptel--known-tools))))
 #+end_src
 
 ** Personal Settings
@@ -3297,6 +3314,21 @@ Each entry is a plist with :state :heading :file :deadline :tags."
 
 * AI Tools
 
+** Protected Files
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/gptel-protected-files
+  (list (expand-file-name "~/emacs-config/config.org")
+        (expand-file-name "~/.emacs.d/init.el")
+        (expand-file-name "~/.emacs.d/config.el"))
+  "Files that gptel write tools may never overwrite.")
+
+(defun my/gptel-protected-p (path)
+  "Return t if PATH is a protected config file."
+  (member (file-truename path)
+          (mapcar #'file-truename my/gptel-protected-files)))
+#+end_src
+
 ** Org Tools
 
 #+begin_src emacs-lisp :tangle yes
@@ -3332,14 +3364,16 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   ;; write_org_file — overwrite an org file
   (gptel-make-tool
    :name "write_org_file"
-   :description "Overwrite an org file with new content. Creates the file if absent."
+   :description "Overwrite an org file with new content. Creates the file if absent. Cannot write to protected config files."
    :args '((:name "path"    :type string :description "File path")
            (:name "content" :type string :description "Full new file content"))
    :function (lambda (path content)
-               (let ((p (expand-file-name path)))
-                 (make-directory (file-name-directory p) t)
-                 (with-temp-file p (insert content))
-                 (format "Written: %s" p))))
+               (let ((p (file-truename (expand-file-name path))))
+                 (if (my/gptel-protected-p p)
+                     (format "Error: %s is a protected config file — use read_file to inspect it, never write." p)
+                   (make-directory (file-name-directory p) t)
+                   (with-temp-file p (insert content))
+                   (format "Written: %s" p)))))
 
   ;; add_todo — append a new TODO heading to a file
   (gptel-make-tool
@@ -3507,14 +3541,16 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   ;; write_file — write content to any file
   (gptel-make-tool
    :name "write_file"
-   :description "Write content to a file, creating parent directories if needed."
+   :description "Write content to a file, creating parent directories if needed. Cannot write to protected config files."
    :args '((:name "path"    :type string :description "File path")
            (:name "content" :type string :description "Content to write"))
    :function (lambda (path content)
-               (let ((p (expand-file-name path)))
-                 (make-directory (file-name-directory p) t)
-                 (with-temp-file p (insert content))
-                 (format "Written: %s" p))))
+               (let ((p (file-truename (expand-file-name path))))
+                 (if (my/gptel-protected-p p)
+                     (format "Error: %s is a protected config file — use read_file to inspect it, never write." p)
+                   (make-directory (file-name-directory p) t)
+                   (with-temp-file p (insert content))
+                   (format "Written: %s" p)))))
 
   ;; list_directory — list files in a directory
   (gptel-make-tool
