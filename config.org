@@ -3650,17 +3650,19 @@ Each entry is a plist with :state :heading :file :deadline :tags."
 ** Tool Activation
 
 #+begin_src emacs-lisp :tangle yes
+(defun my/gptel-tools-all ()
+  "Return list of all registered gptel-tool structs."
+  (delq nil (mapcar (lambda (e)
+                      (when (gptel-tool-p (cdr e)) (cdr e)))
+                    gptel--known-tools)))
+
+(defun my/gptel-ensure-tools (&rest _)
+  "Activate all registered tools before each gptel request if none are set."
+  (when (and (boundp 'gptel--known-tools)
+             gptel--known-tools
+             (null gptel-tools))
+    (setq-local gptel-tools (my/gptel-tools-all))))
+
 (with-eval-after-load 'gptel
-  ;; Runs after all tool registrations. Depth 90 ensures this hook fires
-  ;; after gptel's own mode hooks (depth 0) restore buffer properties,
-  ;; so our tools list is not overwritten by property restore.
-  (add-hook 'gptel-mode-hook
-            (lambda ()
-              (setq-local gptel-tools
-                          (delq nil
-                                (mapcar (lambda (entry)
-                                          (when (gptel-tool-p (cdr entry))
-                                            (cdr entry)))
-                                        gptel--known-tools))))
-            90))
+  (advice-add 'gptel-send :before #'my/gptel-ensure-tools))
 #+end_src
