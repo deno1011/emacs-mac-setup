@@ -3688,18 +3688,14 @@ Each entry is a plist with :state :heading :file :deadline :tags."
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/gptel-tools-all ()
-  "Return list of all registered gptel-tool structs."
-  (delq nil (mapcar (lambda (e)
-                      (when (gptel-tool-p (cdr e)) (cdr e)))
-                    gptel--known-tools)))
-
-(defun my/gptel-ensure-tools (&rest _)
-  "Activate all registered tools before each gptel request if none are set."
-  (when (and (boundp 'gptel--known-tools)
-             gptel--known-tools
-             (null gptel-tools))
-    (setq-local gptel-tools (my/gptel-tools-all))))
+  "Return list of all registered gptel-tool structs.
+gptel--known-tools is a two-level alist: (category . ((name . struct) ...))."
+  (cl-loop for (_cat . tools) in gptel--known-tools
+           append (cl-loop for (_name . tool) in tools
+                           when (gptel-tool-p tool) collect tool)))
 
 (with-eval-after-load 'gptel
-  (advice-add 'gptel-send :before #'my/gptel-ensure-tools))
+  ;; Set globally — all tools are registered by this point since this section
+  ;; is the last with-eval-after-load 'gptel block in config.el.
+  (setq gptel-tools (my/gptel-tools-all)))
 #+end_src
