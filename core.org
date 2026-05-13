@@ -1,0 +1,421 @@
+#+TITLE: Core Emacs Configuration
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+* System Packages
+#+begin_src emacs-lisp
+;;; -*- lexical-binding: t -*-
+(message "Loading config... (first start may take a few minutes while packages install)")
+
+;; Install a brew package in the background and log it for clean uninstall.
+;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
+;; the full brew arguments (e.g. "install" "--cask" "font-jetbrains-mono").
+(defun my/brew-install-and-log (type package &rest brew-args)
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "%s:%s\n" type package))
+         (proc     (apply #'start-process
+                          (format "install-%s" package)
+                          (format "*install-%s*" package)
+                          "brew" brew-args)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
+
+;; Install a pip package in the background and log it for clean uninstall.
+(defun my/pip-install-and-log (package)
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "pip:%s\n" package))
+         (proc     (start-process (format "install-%s" package)
+                                  (format "*install-%s*" package)
+                                  "pip3" "install" "--break-system-packages" package)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
+#+end_src
+
+* PATH
+#+begin_src elisp :tangle yes
+(use-package exec-path-from-shell
+  :if (eq system-type 'darwin)
+  :config
+  (exec-path-from-shell-initialize))
+#+end_src
+
+* UI & Appearance
+#+begin_src emacs-lisp
+(add-to-list 'default-frame-alist
+             `(inhibit-double-buffering . ,(eq system-type 'gnu/linux)))
+(tool-bar-mode -1)
+(scroll-bar-mode -1)
+(menu-bar-mode -1)
+(setq inhibit-startup-screen t)
+(setq-default line-spacing 3)
+(add-to-list 'default-frame-alist '(internal-border-width . 12))
+(add-to-list 'default-frame-alist '(fullscreen . maximized))
+(defalias 'yes-or-no-p 'y-or-n-p)
+(show-paren-mode 1)
+(delete-selection-mode 1)
+(column-number-mode 1)
+(global-auto-revert-mode t)
+(setq save-abbrevs 'silently)
+#+end_src
+
+* Font
+#+begin_src emacs-lisp
+(unless (find-font (font-spec :name "JetBrains Mono"))
+  (when (executable-find "brew")
+    (my/brew-install-and-log "cask" "font-jetbrains-mono"
+                             "install" "--cask" "font-jetbrains-mono")
+    (message "JetBrains Mono: installing in background — restart Emacs when done.")))
+
+(when (find-font (font-spec :name "JetBrains Mono"))
+  (set-face-attribute 'default nil :font "JetBrains Mono-13")
+  (add-to-list 'default-frame-alist '(font . "JetBrains Mono-13")))
+#+end_src
+
+* Theme & Modeline
+#+begin_src emacs-lisp
+(use-package doom-themes
+  :demand t
+  :config
+  (load-theme 'doom-one t)
+  (doom-themes-org-config))
+
+(use-package doom-modeline
+  :hook (after-init . doom-modeline-mode)
+  :custom
+  (doom-modeline-height 28)
+  (doom-modeline-icon nil))
+#+end_src
+
+* Scrolling
+#+begin_src emacs-lisp
+(setq scroll-conservatively 101
+      scroll-margin 3
+      fast-but-imprecise-scrolling t)
+#+end_src
+
+* Version Control
+#+begin_src emacs-lisp
+(use-package magit
+  :bind ("C-x g" . magit-status))
+#+end_src
+
+* Protected Files
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/gptel-protected-files
+  (list (expand-file-name "~/emacs-config/config.org")
+        (expand-file-name "~/.emacs.d/init.el")
+        (expand-file-name "~/.emacs.d/config.el"))
+  "Files that gptel write tools may never overwrite.")
+
+(defun my/gptel-protected-p (path)
+  "Return t if PATH is a protected config file."
+  (member (file-truename path)
+          (mapcar #'file-truename my/gptel-protected-files)))
+#+end_src
+
+* Config.org Write Guard
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/config-org-write-guard ()
+  "Abort any save that would overwrite a protected config file."
+  (when (and buffer-file-name
+             (my/gptel-protected-p (file-truename buffer-file-name)))
+    (error "Save blocked: %s is a protected config file (buffer: %s)"
+           buffer-file-name (buffer-name))))
+
+(add-hook 'before-save-hook #'my/config-org-write-guard)
+
+;; Block write-file targeting protected paths
+(define-advice write-file (:before (filename &rest _) gptel-protect)
+  (when (and filename
+             (my/gptel-protected-p (expand-file-name filename)))
+    (error "write-file blocked: %s is a protected config file" filename)))
+
+;; Block linking any buffer to a protected file path
+(define-advice set-visited-file-name (:before (filename &rest _) gptel-protect)
+  (when (and filename
+             (not (string-empty-p filename))
+             (my/gptel-protected-p (expand-file-name filename)))
+    (error "set-visited-file-name blocked: %s is a protected config file" filename)))
+#+end_src
+
+* Auto-commit Org files
+#+begin_src emacs-lisp
+(use-package git-auto-commit-mode
+  :config
+  (setq gac-automatically-push-p nil
+        gac-automatically-add-new-files-p t))
+
+(add-hook 'org-mode-hook
+          (lambda ()
+            (when (and buffer-file-name
+                       (string-match-p "/org/" buffer-file-name)
+                       (not (string-match-p "config\\.org$" buffer-file-name)))
+              (git-auto-commit-mode 1))))
+#+end_src
+
+* Startup Sync
+#+begin_src emacs-lisp
+(defun my/org-encrypted-p (org-dir)
+  "Return t if any .org file in ORG-DIR starts with a git-crypt null byte."
+  (let ((first (car (and (file-directory-p org-dir)
+                         (directory-files org-dir t "\\.org$")))))
+    (when first
+      (with-temp-buffer
+        (insert-file-contents-literally first nil 0 10)
+        (string-match-p "\x00" (buffer-string))))))
+
+(defun my/repo-dirty-p (repo)
+  "Return t if REPO has uncommitted changes."
+  (not (string-empty-p
+        (shell-command-to-string
+         (format "git -C %s status --porcelain" (shell-quote-argument repo))))))
+
+(defun my/revert-org-buffers ()
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when (and (derived-mode-p 'org-mode)
+                 buffer-file-name
+                 (file-exists-p buffer-file-name))
+        (revert-buffer t t t)))))
+
+(defun my/beorg-sync (org-d beorg)
+  (when (and (file-directory-p org-d) (file-directory-p beorg))
+    (start-process "beorg-sync" " *beorg-sync*"
+                   "rsync" "-a" "--delete"
+                   org-d (file-name-as-directory beorg))))
+
+(defun my/startup-sync ()
+  "Pull emacs-config from origin on startup; unlock git-crypt if needed; sync org/ to beorg."
+  (let* ((repo  (file-truename (expand-file-name "~/emacs-config")))
+         (org-d (file-name-as-directory (expand-file-name "org" repo)))
+         (beorg (expand-file-name
+                 "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
+                 (getenv "HOME"))))
+    (when (and (file-directory-p repo)
+               (file-directory-p (expand-file-name ".git" repo)))
+      (let ((proc (let ((default-directory repo))
+                    (start-process "startup-sync" " *startup-sync*"
+                                   "git" "pull" "--ff-only" "origin" "main"))))
+        (set-process-sentinel
+         proc
+         (lambda (p _)
+           (when (= (process-exit-status p) 0)
+             (message "Startup sync: pull complete.")
+             (if (not (my/org-encrypted-p org-d))
+                 (progn (my/revert-org-buffers)
+                        (my/beorg-sync org-d beorg))
+               ;; Org files are encrypted — git-crypt refuses to unlock when
+               ;; the working tree is dirty. Surgically reset only the
+               ;; encrypted paths (org/, emacs.d/secrets.el) and the
+               ;; auto-generated config.el. Real edits (config.org) are
+               ;; left untouched; if they still block unlock, warn the user.
+               (when (my/repo-dirty-p repo)
+                 (call-process "git" nil nil nil "-C" repo
+                               "checkout" "--" "org/" "emacs.d/secrets.el" "config.el")
+                 (if (my/repo-dirty-p repo)
+                     (display-warning 'emacs-setup
+                      (concat "Uncommitted changes block git-crypt unlock.\n"
+                              "Commit or stash them, then restart Emacs.\n"
+                              "Or run manually: bash ~/unlock-git-crypt.sh")
+                      :warning)
+                   (message "Startup sync: reset encrypted blobs before unlock.")))
+               (unless (my/repo-dirty-p repo)
+               (message "Startup sync: org files encrypted — running unlock-git-crypt.sh...")
+               (let ((unlock (start-process "git-crypt-unlock" " *git-crypt-unlock*"
+                                            (expand-file-name "~/unlock-git-crypt.sh"))))
+                 (set-process-sentinel
+                  unlock
+                  (lambda (u _)
+                    (if (= (process-exit-status u) 0)
+                        (progn
+                          (message "Startup sync: git-crypt unlocked.")
+                          (my/revert-org-buffers)
+                          (my/beorg-sync org-d beorg))
+                      (display-warning 'emacs-setup
+                       "git-crypt unlock failed — run: bash ~/unlock-git-crypt.sh"
+                       :warning))))))))))))))
+
+(add-hook 'after-init-hook #'my/startup-sync)
+#+end_src
+
+* Editing Utilities
+#+begin_src emacs-lisp
+(use-package which-key
+  :ensure t
+  :config (which-key-mode))
+
+(use-package rainbow-delimiters
+  :ensure t
+  :hook (prog-mode . rainbow-delimiters-mode))
+
+(use-package ace-window
+  :ensure t
+  :bind ([remap other-window] . ace-window))
+
+(use-package neotree
+  :ensure t
+  :config (setq neo-window-width 40)
+  :bind ("<f1>" . neotree-toggle))
+
+(use-package undo-tree
+  :ensure t
+  :config
+  (setq undo-tree-auto-save-history nil)
+  (global-undo-tree-mode 1))
+
+(use-package expand-region
+  :ensure t
+  :bind ("C-=" . er/expand-region))
+
+(global-set-key (kbd "C-x C-b") 'buffer-menu)
+#+end_src
+
+* Completion
+#+begin_src emacs-lisp
+(use-package smex :ensure t)
+
+(use-package ivy
+  :ensure t
+  :diminish ivy-mode
+  :config
+  (ivy-mode t)
+  (setq ivy-initial-inputs-alist nil))
+
+(use-package counsel
+  :ensure t
+  :bind (("M-x" . counsel-M-x)
+         ("C-x x" . smex)))
+
+(use-package swiper
+  :ensure t
+  :bind (("M-s" . swiper)))
+#+end_src
+
+* Org Capture
+#+begin_src emacs-lisp
+(global-set-key (kbd "C-c c") 'org-capture)
+(global-set-key (kbd "C-c a") 'org-agenda)
+(global-set-key (kbd "C-c l") 'org-store-link)
+#+end_src
+
+* Terminal
+#+begin_src emacs-lisp
+(global-set-key (kbd "C-c t") 'eshell)
+#+end_src
+
+* Miscellaneous Settings
+#+begin_src emacs-lisp
+(setq org-enforce-todo-dependencies t)
+(setq org-cycle-separator-lines 0)
+(setq org-blank-before-new-entry '((heading) (plain-list-item . auto)))
+(setq org-insert-heading-respect-content nil)
+(setq org-reverse-note-order nil)
+(setq org-show-following-heading t)
+(setq org-show-hierarchy-above t)
+(setq org-show-siblings '((default)))
+(setq org-special-ctrl-a/e t)
+(setq org-special-ctrl-k t)
+(setq org-yank-adjusted-subtrees t)
+(setq org-id-method 'uuidgen)
+(setq org-deadline-warning-days 30)
+(setq org-table-export-default-format "orgtbl-to-csv")
+(setq org-table-use-standard-references 'from)
+(setq org-read-date-prefer-future 'time)
+(setq org-tags-match-list-sublevels t)
+(setq org-catch-invisible-edits 'error)
+(setq org-clone-delete-id t)
+(setq org-cycle-include-plain-lists t)
+(setq org-odd-levels-only nil)
+(setq org-id-link-to-org-use-id 'create-if-interactive-and-no-custom-id)
+(setq require-final-newline t)
+(setq org-log-state-notes-insert-after-drawers nil)
+(setq org-file-apps '((auto-mode . emacs)
+                       ("\\.mm\\'"    . system)
+                       ("\\.x?html?\\'" . system)
+                       ("\\.pdf\\'"   . system)))
+
+(setq org-link-mailto-program '(compose-mail "%a" "%s"))
+
+(defvar bh/insert-inactive-timestamp nil)
+
+(defun bh/toggle-insert-inactive-timestamp ()
+  (interactive)
+  (setq bh/insert-inactive-timestamp (not bh/insert-inactive-timestamp))
+  (message "Heading timestamps are %s" (if bh/insert-inactive-timestamp "ON" "OFF")))
+
+(defun bh/insert-inactive-timestamp ()
+  (interactive)
+  (org-insert-time-stamp nil t t nil nil nil))
+
+(defun bh/insert-heading-inactive-timestamp ()
+  (save-excursion
+    (when bh/insert-inactive-timestamp
+      (org-return)
+      (org-cycle)
+      (bh/insert-inactive-timestamp))))
+
+(add-hook 'org-insert-heading-hook 'bh/insert-heading-inactive-timestamp 'append)
+
+(defun bh/prepare-meeting-notes ()
+  "Convert selected region to meeting notes format and copy to kill ring."
+  (interactive)
+  (let (prefix)
+    (save-excursion
+      (save-restriction
+        (narrow-to-region (region-beginning) (region-end))
+        (untabify (point-min) (point-max))
+        (goto-char (point-min))
+        (while (re-search-forward "^\\( *-\\) \\(TODO\\|DONE\\): " (point-max) t)
+          (replace-match (concat (make-string (length (match-string 1)) ?>) " " (match-string 2) ": ")))
+        (goto-char (point-min))
+        (kill-ring-save (point-min) (point-max))))))
+
+(prefer-coding-system 'utf-8)
+(set-charset-priority 'unicode)
+(setq default-process-coding-system '(utf-8-unix . utf-8-unix))
+(setq org-time-clocksum-format
+      '(:hours "%d" :require-hours t :minutes ":%02d" :require-minutes t))
+(setq org-list-demote-modify-bullet
+      '(("+" . "-") ("*" . "-") ("1." . "-") ("1)" . "-")))
+(setq org-remove-highlights-with-change t)
+
+(add-hook 'org-mode-hook
+          (lambda ()
+             (org-defkey org-mode-map "\C-c[" 'undefined)
+             (org-defkey org-mode-map "\C-c]" 'undefined)
+             (org-defkey org-mode-map "\C-c;" 'undefined)
+             (org-defkey org-mode-map "\C-c\C-x\C-q" 'undefined))
+          'append)
+
+(run-at-time "00:59" 3600 'org-save-all-org-buffers)
+#+end_src
+
+* Spelling
+#+begin_src emacs-lisp
+(use-package ispell
+  :ensure nil
+  :init
+  (unless (executable-find "aspell")
+    (when (executable-find "brew")
+      (my/brew-install-and-log "formula" "aspell" "install" "aspell")))
+  :config
+  (setq ispell-program-name "aspell"
+        ispell-dictionary "german"))
+(add-hook 'org-mode-hook 'turn-on-flyspell 'append)
+#+end_src
+
