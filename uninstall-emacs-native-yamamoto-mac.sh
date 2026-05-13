@@ -52,7 +52,7 @@ SYMLINK="$HOME/$GH_REPO"
 echo "==> Removing Emacs (emacs-mac@30exp)..."
 brew uninstall emacs-mac@30exp 2>/dev/null && echo "    emacs-mac@30exp removed." || echo "    emacs-mac@30exp not found."
 brew untap railwaycat/emacsmacport 2>/dev/null || true
-rm -rf "/Applications/Emacs (Yamamoto).app" 2>/dev/null && echo "    Emacs (Yamamoto).app removed." || echo "    Emacs (Yamamoto).app not found."
+rm -rf "/Applications/Yamamoto Emacs.app" "/Applications/Emacs (Yamamoto).app" 2>/dev/null && echo "    Yamamoto Emacs.app removed." || echo "    Yamamoto Emacs.app not found."
 
 if ! _other_emacs_installed; then
   echo "==> Removing ~/.emacs.d (init.el, secrets.el, packages)..."

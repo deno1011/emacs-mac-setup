@@ -13,7 +13,7 @@ case "${EMACS_FLAVOR:-plus}" in
     _EMACS_PKG="emacs-mac@30exp"
     _EMACS_OTHER_PKG="emacs-plus@30"
     _EMACS_TAP="railwaycat/emacsmacport"
-    _EMACS_APP_NAME="Emacs (Yamamoto).app"
+    _EMACS_APP_NAME="Yamamoto Emacs.app"
     _EMACS_LABEL="Yamamoto"
     _EMACS_UNINSTALL="uninstall-emacs-native-yamamoto-mac.sh"
     ;;
@@ -21,7 +21,7 @@ case "${EMACS_FLAVOR:-plus}" in
     _EMACS_PKG="emacs-plus@30"
     _EMACS_OTHER_PKG="emacs-mac@30exp"
     _EMACS_TAP="d12frosted/emacs-plus"
-    _EMACS_APP_NAME="Emacs (emacs-plus).app"
+    _EMACS_APP_NAME="Plus Emacs.app"
     _EMACS_LABEL="emacs-plus"
     _EMACS_UNINSTALL="uninstall-emacs-native-plus-mac.sh"
     ;;

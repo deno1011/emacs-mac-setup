@@ -57,7 +57,7 @@ SYMLINK="$HOME/$GH_REPO"
 
 echo "==> Removing Emacs (emacs-plus)..."
 brew uninstall emacs-plus@30 2>/dev/null && echo "    emacs-plus@30 removed." || echo "    emacs-plus@30 not found."
-rm -rf "/Applications/Emacs (emacs-plus).app" 2>/dev/null && echo "    Emacs (emacs-plus).app removed." || echo "    Emacs (emacs-plus).app not found."
+rm -rf "/Applications/Plus Emacs.app" "/Applications/Emacs (emacs-plus).app" 2>/dev/null && echo "    Plus Emacs.app removed." || echo "    Plus Emacs.app not found."
 
 if ! _other_emacs_installed; then
   echo "==> Removing ~/.emacs.d (init.el, secrets.el, packages)..."
