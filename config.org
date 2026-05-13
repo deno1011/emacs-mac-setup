@@ -372,7 +372,9 @@
 
 (use-package undo-tree
   :ensure t
-  :config (global-undo-tree-mode 1))
+  :config
+  (setq undo-tree-auto-save-history nil)
+  (global-undo-tree-mode 1))
 
 (use-package expand-region
   :ensure t
@@ -3080,11 +3082,6 @@ plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
             (setq-local gptel--system-message
                         (alist-get 'emacs-assistant gptel-directives))))
 
-;; Enable all registered tools automatically for every gptel session
-(add-hook 'gptel-mode-hook
-          (lambda ()
-            (setq-local gptel-tools
-                        (mapcar #'cdr gptel--known-tools))))
 #+end_src
 
 ** Personal Settings
@@ -3648,4 +3645,22 @@ Each entry is a plist with :state :heading :file :deadline :tags."
                             (format "Exported to: %s.pdf" (file-name-sans-extension p)))
                            (_ (format "Unknown format: %s" format)))
                        (error (format "Export error: %s" err)))))))))
+#+end_src
+
+** Tool Activation
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; Runs after all tool registrations. Depth 90 ensures this hook fires
+  ;; after gptel's own mode hooks (depth 0) restore buffer properties,
+  ;; so our tools list is not overwritten by property restore.
+  (add-hook 'gptel-mode-hook
+            (lambda ()
+              (setq-local gptel-tools
+                          (delq nil
+                                (mapcar (lambda (entry)
+                                          (when (gptel-tool-p (cdr entry))
+                                            (cdr entry)))
+                                        gptel--known-tools))))
+            90))
 #+end_src
