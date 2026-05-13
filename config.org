@@ -366,9 +366,7 @@
 
 (use-package undo-tree
   :ensure t
-  :config
-  (setq undo-tree-auto-save-history nil)
-  (global-undo-tree-mode 1))
+  :config (global-undo-tree-mode 1))
 
 (use-package expand-region
   :ensure t
@@ -2837,7 +2835,11 @@ RULE: Every block you write MUST have one of these three headers.
 DECISION TREE — WHICH BLOCK FOR WHAT
 ════════════════════════════════════════════════
 
-  Emacs action (open file, insert TODO, window, buffer)?
+  Emacs action — user just wants it done (no code to show)?
+    → Call run_elisp tool directly (silent, nothing in buffer)
+    Example: open file, switch buffer, insert TODO, close window
+
+  Emacs action — user wants to SEE the code or keep it in buffer?
     → #+begin_src elisp :AUTORUN
 
   Output data/text (calculation, agenda, system info)?
@@ -2849,6 +2851,12 @@ DECISION TREE — WHICH BLOCK FOR WHAT
 
   Multi-step task needing intermediate results?
     → Use native tools (Claude/GPT-4o only — see NATIVE TOOLS below)
+
+PREFER tools over :AUTORUN when:
+  • The user says "open", "go to", "switch", "insert", "add", "close"
+    and does not ask to SEE the code
+  • The action produces no meaningful output to display
+  • The buffer should stay clean (only the answer lands here, not code blocks)
 
 ════════════════════════════════════════════════
 NATIVE TOOLS (Claude & GPT-4o only)
