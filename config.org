@@ -112,6 +112,32 @@
   :bind ("C-x g" . magit-status))
 #+end_src
 
+* Config.org Write Guard
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/config-org-write-guard ()
+  "Abort any save that would overwrite a protected config file."
+  (when (and buffer-file-name
+             (my/gptel-protected-p (file-truename buffer-file-name)))
+    (error "Save blocked: %s is a protected config file (buffer: %s)"
+           buffer-file-name (buffer-name))))
+
+(add-hook 'before-save-hook #'my/config-org-write-guard)
+
+;; Block write-file targeting protected paths
+(define-advice write-file (:before (filename &rest _) gptel-protect)
+  (when (and filename
+             (my/gptel-protected-p (expand-file-name filename)))
+    (error "write-file blocked: %s is a protected config file" filename)))
+
+;; Block linking any buffer to a protected file path
+(define-advice set-visited-file-name (:before (filename &rest _) gptel-protect)
+  (when (and filename
+             (not (string-empty-p filename))
+             (my/gptel-protected-p (expand-file-name filename)))
+    (error "set-visited-file-name blocked: %s is a protected config file" filename)))
+#+end_src
+
 * Auto-commit Org files
 #+begin_src emacs-lisp
 (use-package git-auto-commit-mode
@@ -3508,13 +3534,24 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   ;; run_elisp — evaluate elisp and return the result
   (gptel-make-tool
    :name "run_elisp"
-   :description "Evaluate Emacs Lisp and return the printed result. Use for Emacs introspection and automation."
+   :description "Evaluate Emacs Lisp and return the printed result. Use for Emacs introspection and automation. Cannot write to protected config files."
    :args '((:name "code" :type string :description "Elisp expression(s) to evaluate"))
    :function (lambda (code)
                (condition-case err
-                   (let ((result (eval (car (read-from-string
-                                             (concat "(progn " code ")"))))))
-                     (format "%S" result))
+                   (cl-letf (((symbol-function 'write-file)
+                              (lambda (file &rest args)
+                                (if (my/gptel-protected-p (expand-file-name file))
+                                    (error "write-file blocked by run_elisp: %s is protected" file)
+                                  (apply #'write-file file args))))
+                             ((symbol-function 'set-visited-file-name)
+                              (lambda (file &rest args)
+                                (if (and file (not (string-empty-p file))
+                                         (my/gptel-protected-p (expand-file-name file)))
+                                    (error "set-visited-file-name blocked by run_elisp: %s is protected" file)
+                                  (apply #'set-visited-file-name file args)))))
+                     (let ((result (eval (car (read-from-string
+                                               (concat "(progn " code ")"))))))
+                       (format "%S" result)))
                  (error (format "Error: %s" err))))))
 #+end_src
 
