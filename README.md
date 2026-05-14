@@ -51,9 +51,16 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 
 ## GitHub Repos
 
+**This repo** (belongs to `deno1011` — the shared template everyone uses):
+
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
+| `deno1011/emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
+
+**Your repos** (created under your own GitHub account during bootstrap):
+
+| Repo | Visibility | Purpose |
+|---|---|---|
 | `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
 | `emacs-config` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
 
