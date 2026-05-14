@@ -41,8 +41,10 @@ bash ./setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
 bash ./setup-emacs-orbstack-mac.sh              # isolated in OrbStack, no XQuartz needed
 
 # 4. Start Emacs
-open "/Applications/Emacs (emacs-plus).app"
-open "/Applications/Emacs (Yamamoto).app"
+open "/Applications/Plus Emacs.app"                # Plus
+open "/Applications/Yamamoto Emacs.app"            # Yamamoto
+open "$HOME/Applications/GUI Docker Emacs.app"     # Docker
+open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 ```
 
 ---
@@ -51,9 +53,9 @@ open "/Applications/Emacs (Yamamoto).app"
 
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org`, `setup-emacs-mac.conf.template` |
+| `emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
 | `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
-| `emacs-config` | private | Emacs config: `config.org`, `org/` files, `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
+| `emacs-config` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
 
 ---
 
@@ -69,7 +71,10 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `setup-emacs-mac.conf` | Personal config — pulled from private repo |
 | `setup-emacs-mac.conf.template` | Fallback template if private repo not accessible |
 | `init.el` | Emacs entry point — copied to `~/.emacs.d/init.el` |
-| `config.org` | Default Emacs config — used when `emacs-config` repo is empty |
+| `config.org` | Emacs config index — entry point linking to the three config files below |
+| `core.org` | Base config: UI, font, version control, protected files, auto-commit, startup sync |
+| `org-setup.org` | Org mode: agenda, capture templates, tags, clocking, export, LaTeX |
+| `gptel-setup.org` | AI assistant: gptel backends, tools, claude-executor, workspace context |
 | `fill-config.sh` | Interactive guided config fill |
 | `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
 | `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
@@ -83,6 +88,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
 | `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container (XQuartz) |
 | `setup-emacs-orbstack-mac.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
+| `bw-unlock.sh` | Unlock Bitwarden vault (used internally by setup scripts) |
 
 ### Uninstall
 
@@ -147,7 +153,7 @@ Safe to store in a private GitHub repo without encryption.
 bash ./setup-emacs-native-plus-mac.sh
 ```
 
-Starts as: `/Applications/Emacs (emacs-plus).app`
+Starts as: `/Applications/Plus Emacs.app`
 
 ### 2. emacs-mac — Yamamoto *(smooth rendering)*
 
@@ -159,7 +165,7 @@ Starts as: `/Applications/Emacs (emacs-plus).app`
 bash ./setup-emacs-native-yamamoto-mac.sh
 ```
 
-Starts as: `/Applications/Emacs (Yamamoto).app`
+Starts as: `/Applications/Yamamoto Emacs.app`
 
 ### 3. Docker *(isolated, XQuartz)*
 
@@ -171,11 +177,11 @@ Starts as: `/Applications/Emacs (Yamamoto).app`
 bash ./setup-emacs-docker-mac.sh
 ```
 
-App icons in `~/Applications/`:
-- `Emacs Docker GUI.app` — graphical Emacs via XQuartz
-- `Emacs Docker Console.app` — Emacs in terminal (`-nw`)
-- `Emacs Docker Shell.app` — shell inside the container
-- `Emacs Docker Root Shell.app` — root shell inside the container
+App bundles in `~/Applications/`:
+- `GUI Docker Emacs.app` — graphical Emacs via XQuartz
+- `Console Docker Emacs.app` — Emacs in terminal (`-nw`)
+- `Shell Docker Emacs.app` — shell inside the container
+- `Root Shell Docker Emacs.app` — root shell inside the container
 
 ### 4. OrbStack *(isolated, no XQuartz)*
 
@@ -188,11 +194,11 @@ App icons in `~/Applications/`:
 bash ./setup-emacs-orbstack-mac.sh
 ```
 
-App launchers in `~/Applications/`:
-- `Emacs OrbStack GUI.command` — graphical Emacs
-- `Emacs OrbStack Console.command` — Emacs in terminal (`-nw`)
-- `Emacs OrbStack Shell.command` — shell inside the machine
-- `Emacs OrbStack Root Shell.command` — root shell inside the machine
+App bundles in `~/Applications/`:
+- `GUI OrbStack Emacs.app` — graphical Emacs
+- `Console OrbStack Emacs.app` — Emacs in terminal (`-nw`)
+- `Shell OrbStack Emacs.app` — shell inside the machine
+- `Root Shell OrbStack Emacs.app` — root shell inside the machine
 
 ---
 
@@ -201,15 +207,15 @@ App launchers in `~/Applications/`:
 **Native (Plus / Yamamoto):**
 
 ```bash
-open "/Applications/Emacs (emacs-plus).app"
-open "/Applications/Emacs (Yamamoto).app"
+open "/Applications/Plus Emacs.app"
+open "/Applications/Yamamoto Emacs.app"
 # or via Spotlight — type "Emacs"
 emacs -nw   # TUI mode
 ```
 
-**Docker:** Double-click one of the app icons in `~/Applications/`, or use Spotlight.
+**Docker:** Double-click one of the app bundles in `~/Applications/`, or use Spotlight.
 
-**OrbStack:** Double-click one of the `.command` launchers in `~/Applications/`, or run `emacs-orb` in the terminal (after reloading shell).
+**OrbStack:** Double-click one of the app bundles in `~/Applications/`, or run `emacs-orb` in the terminal (after reloading shell: `source ~/.zshrc`).
 
 ---
 
@@ -250,15 +256,15 @@ GitHub (source of truth)
      │
      │ git pull / push
      │
-Native Emacs              Docker Emacs
-     │                         │
-on startup:              startup-sync.sh
-  git pull + revert           │
-  rsync → beorg               │
-     │                         │
-post-commit hook         post-commit hook
-     │                         │
-beorg iCloud folder  ◄─────────┘
+Native Emacs        Docker Emacs       OrbStack Emacs
+     │                   │                   │
+on startup:         startup-sync.sh    startup-sync.sh
+  git pull + revert      │                   │
+  rsync → beorg          │                   │
+     │                   │                   │
+post-commit hook    post-commit hook   post-commit hook
+     │                   │                   │
+beorg iCloud folder ◄────┴───────────────────┘
      │
 iPhone (beorg app)
 ```
@@ -320,7 +326,7 @@ Starting with an empty `emacs-config` repo is fine:
 |---|---|
 | `git clone` on empty repo | OK |
 | `git-crypt unlock` fails | Warning only — not an error |
-| `config.org` missing | Copied automatically from bundled `config.org` |
+| Config files missing | `config.org`, `core.org`, `org-setup.org`, `gptel-setup.org` copied automatically from bundled copies |
 | `org/` folder missing | beorg hook runs empty — no crash |
 
 A friend only needs their own GitHub account and Bitwarden account — no access to your git-crypt key or org files needed.
@@ -358,7 +364,7 @@ The setup scripts install the following brew packages automatically:
 | `docker` | Docker CLI |
 | XQuartz | X11 display server for GUI Emacs |
 
-**config.org-installed packages (brew):**
+**core.org-installed packages (brew):**
 
 Installed at first Emacs launch, tracked in `~/.emacs.d/system-packages.log`:
 
@@ -374,7 +380,7 @@ Installed at first Emacs launch, tracked in `~/.emacs.d/system-packages.log`:
 | `aspell` | Spell checking |
 | `font-jetbrains-mono` | Editor font (cask) |
 
-**config.org-installed packages (pip):**
+**core.org-installed packages (pip):**
 
 | Package | Purpose |
 |---|---|
@@ -403,11 +409,12 @@ API keys are stored in Bitwarden and loaded at startup via `secrets.el` — neve
 
 ### Executable Responses (claude-executor)
 
-Claude responses containing code blocks are **automatically executed** by Emacs:
+Claude can act on Emacs state silently via gptel tools, or produce visible code blocks that are automatically executed:
 
-| Block type | What happens |
+| Method | What happens |
 |---|---|
-| `` #+begin_src elisp :AUTORUN `` | Executed immediately — runs any Emacs command, edits buffers, opens files, sets variables |
+| `run_elisp` tool | Claude calls it silently — Emacs action executes, no code block appears in the buffer |
+| `` #+begin_src elisp :AUTORUN `` | Executed immediately — code block visible; runs any Emacs command, edits buffers, opens files |
 | `` #+begin_src python/R/gnuplot :results output `` | Executed via org-babel, output inserted inline |
 | `` #+begin_src python/R/gnuplot :file name.png `` | Executed and result displayed as an inline image |
 | `` #+begin_src sh :results output `` | Shell command executed, output inserted |
@@ -438,10 +445,23 @@ Claude has access to live Emacs state via gptel tools:
 |---|---|
 | `get_todos` | Reads all open TODO entries from the org agenda |
 | `read_org_file` | Reads any org file by path |
-| `write_org_file` | Overwrites an org file |
-| `append_org_file` | Appends a heading or text to an org file |
+| `write_org_file` | Overwrites an org file (protected files blocked) |
+| `add_todo` | Appends a new TODO heading to an org file |
+| `change_todo_state` | Changes the state of a TODO entry (e.g. TODO → DONE) |
+| `set_deadline` | Sets or updates the DEADLINE on a TODO entry |
+| `add_tag` | Adds a tag to a heading |
+| `get_org_structure` | Returns the heading outline of an org file |
+| `execute_code` | Runs a code block (Python, R, shell, etc.) via org-babel |
+| `run_elisp` | Evaluates Elisp and performs Emacs actions silently (no code block in buffer) |
+| `read_file` | Reads any plain-text file |
+| `write_file` | Writes a plain-text file (protected files blocked) |
+| `list_directory` | Lists files and directories at a given path |
+| `search_files` | Full-text search across files (ripgrep) |
+| `list_buffers` | Lists all currently open Emacs buffers |
+| `get_buffer_content` | Returns the content of an open buffer |
+| `org_export` | Exports an org file to PDF, HTML, or other formats |
 
-Combined with `:AUTORUN` blocks, Claude can query your tasks, reason about them, and update your org files in a single response.
+`run_elisp` is the primary tool for silent Emacs actions — Claude calls it instead of writing `:AUTORUN` code blocks when no visible code is needed. Combined with the other tools, Claude can query your tasks, reason about them, and update your org files in a single response.
 
 ### LaTeX in Responses
 
