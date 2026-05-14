@@ -11,18 +11,36 @@ set -e
 [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 
 # --- Homebrew ---
+# Per-user Homebrew (~/homebrew) — used when user has no admin rights
+[ -f "$HOME/homebrew/bin/brew" ] && eval "$($HOME/homebrew/bin/brew shellenv)"
+
 if ! command -v brew &>/dev/null; then
-  echo "==> Installing Homebrew (sudo password required)..."
-  sudo -v
-  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-  [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+  if groups 2>/dev/null | grep -qw admin; then
+    echo "==> Installing Homebrew (sudo password required)..."
+    sudo -v
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+    [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+  else
+    echo "==> No admin rights — installing per-user Homebrew to ~/homebrew/ (no sudo needed)..."
+    mkdir -p "$HOME/homebrew"
+    curl -fsSL https://github.com/Homebrew/brew/tarball/master \
+      | tar xz --strip-components 1 -C "$HOME/homebrew"
+    eval "$($HOME/homebrew/bin/brew shellenv)"
+    echo "    Per-user Homebrew installed at ~/homebrew/"
+  fi
 fi
+
+# --- Detect Homebrew write access ---
+_BREW_WRITABLE=false
+[ -w "$(brew --prefix 2>/dev/null)" ] && _BREW_WRITABLE=true
 
 # Persist brew in shell profile so all future shells and scripts find it
 _BREW_SHELLENV_LINE='eval "$(/opt/homebrew/bin/brew shellenv)"'
 if [ -f /usr/local/bin/brew ]; then
   _BREW_SHELLENV_LINE='eval "$(/usr/local/bin/brew shellenv)"'
+elif [ -f "$HOME/homebrew/bin/brew" ]; then
+  _BREW_SHELLENV_LINE="eval \"\$(${HOME}/homebrew/bin/brew shellenv)\""
 fi
 for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
   if [ -f "$_PROFILE" ] || [ "$_PROFILE" = "$HOME/.zprofile" ]; then
@@ -68,8 +86,13 @@ if [ -n "$CONF_REPO" ]; then
 
   # Install gh if missing — needed for private repo access
   if ! command -v gh &>/dev/null; then
-    echo "    Installing GitHub CLI..."
-    brew install gh &>/dev/null
+    if [ "$_BREW_WRITABLE" = true ]; then
+      echo "    Installing GitHub CLI..."
+      brew install gh &>/dev/null
+    else
+      echo "    WARN: gh not installed and Homebrew is read-only — private repo pull skipped."
+      echo "          Ask the Mac owner to run: brew install gh"
+    fi
   fi
 
   # Authenticate gh — fetch token from Bitwarden automatically
@@ -83,9 +106,14 @@ if [ -n "$CONF_REPO" ]; then
     _BS_BW_FIELD="Key"
 
     if ! command -v bw &>/dev/null; then
-      echo "    Installing Bitwarden CLI..."
-      brew install bitwarden-cli &>/dev/null
-      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+      if [ "$_BREW_WRITABLE" = true ]; then
+        echo "    Installing Bitwarden CLI..."
+        brew install bitwarden-cli &>/dev/null
+        export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+      else
+        echo "    WARN: Bitwarden CLI not installed and Homebrew is read-only."
+        echo "          Ask the Mac owner to run: brew install bitwarden-cli"
+      fi
     fi
 
     _BS_GH_TOKEN=""
@@ -208,9 +236,14 @@ fi
 # --- GitHub auth (with token from Bitwarden) ---
 if [ -n "$GH_USER" ]; then
   if ! command -v gh &>/dev/null; then
-    echo "==> Installing GitHub CLI..."
-    brew install gh &>/dev/null
-    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    if [ "$_BREW_WRITABLE" = true ]; then
+      echo "==> Installing GitHub CLI..."
+      brew install gh &>/dev/null
+      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    else
+      echo "WARN: gh not installed and Homebrew is read-only — GitHub auth skipped."
+      echo "      Ask the Mac owner to run: brew install gh"
+    fi
   fi
   if gh auth status &>/dev/null 2>&1; then
     echo "==> GitHub auth: already authenticated."

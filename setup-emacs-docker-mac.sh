@@ -1,11 +1,30 @@
 #!/bin/bash
 set -e
 
-[ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-[ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+[ -f /opt/homebrew/bin/brew ]    && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -f /usr/local/bin/brew ]       && eval "$(/usr/local/bin/brew shellenv)"
+[ -f "$HOME/homebrew/bin/brew" ] && eval "$($HOME/homebrew/bin/brew shellenv)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
+
+# --- Detect Homebrew write access ---
+_BREW_WRITABLE=false
+[ -w "$(brew --prefix 2>/dev/null)" ] && _BREW_WRITABLE=true
+
+brew_install_or_warn() {
+  local PKG="$1"; shift
+  if brew list "$PKG" &>/dev/null 2>&1 || brew list --cask "$PKG" &>/dev/null 2>&1; then
+    skip "$PKG"; return 0
+  fi
+  if [ "$_BREW_WRITABLE" = true ]; then
+    brew install "$PKG" "$@"
+  else
+    echo "WARN: $PKG not installed — Homebrew is read-only for this user."
+    echo "      Ask the Mac owner to run: brew install $PKG $*"
+    return 1
+  fi
+}
 
 # --- Load configuration ---
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
@@ -45,7 +64,7 @@ ANTHROPIC_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exe
 if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "$ANTHROPIC_KEY_SET" != "yes" ]; then
   if ! command -v bw &>/dev/null; then
     echo "==> Installing Bitwarden CLI (needed for setup)..."
-    brew install bitwarden-cli
+    brew_install_or_warn bitwarden-cli
   fi
   bw_ensure_session || exit 1
 fi
@@ -57,6 +76,10 @@ rm -f ~/Library/Caches/Homebrew/downloads/*.incomplete
 # --- XQuartz (install directly, not via brew cask, so the sudo cache stays active) ---
 if [ -d "/Applications/Utilities/XQuartz.app" ]; then
   skip "XQuartz (already installed)"
+elif ! groups 2>/dev/null | grep -qw admin; then
+  echo "WARN: XQuartz not installed and admin rights are required to install it."
+  echo "      Ask the Mac owner to install XQuartz, then re-run this script."
+  echo "      Download: https://www.xquartz.org"
 else
   echo "==> Downloading XQuartz..."
   XQUARTZ_URL=$(brew info --cask xquartz --json=v2 2>/dev/null \
@@ -70,35 +93,16 @@ else
 fi
 
 # --- Docker CLI ---
-if command -v docker &>/dev/null; then
-  echo "==> Upgrading Docker CLI..."
-  brew upgrade docker 2>/dev/null || true
-else
-  echo "==> Installing Docker CLI..."
-  brew install docker
-fi
+command -v docker &>/dev/null || brew_install_or_warn docker
 
 # --- Colima (Docker runtime) ---
-if command -v colima &>/dev/null; then
-  skip "Colima (already installed)"
-else
-  echo "==> Installing Colima..."
-  brew install colima
-fi
+command -v colima &>/dev/null || brew_install_or_warn colima
 
 # --- Bitwarden CLI ---
-if command -v bw &>/dev/null; then
-  skip "Bitwarden CLI (already installed)"
-else
-  echo "==> Installing Bitwarden CLI..."
-  brew install bitwarden-cli
-fi
+command -v bw &>/dev/null || brew_install_or_warn bitwarden-cli
 
 # --- GitHub CLI ---
-if ! command -v gh &>/dev/null; then
-  echo "==> Installing GitHub CLI..."
-  brew install gh
-fi
+command -v gh &>/dev/null || brew_install_or_warn gh
 
 if gh auth status &>/dev/null 2>&1; then
   skip "GitHub CLI auth (already authenticated)"
@@ -114,12 +118,7 @@ else
 fi
 
 # --- git-crypt (Mac) ---
-if command -v git-crypt &>/dev/null; then
-  skip "git-crypt (already installed)"
-else
-  echo "==> Installing git-crypt..."
-  brew install git-crypt
-fi
+command -v git-crypt &>/dev/null || brew_install_or_warn git-crypt
 
 echo "==> Configuring XQuartz to allow network connections..."
 defaults write org.xquartz.X11 nolisten_tcp -bool false

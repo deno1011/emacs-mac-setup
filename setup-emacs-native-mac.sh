@@ -1,11 +1,30 @@
 #!/bin/bash
 set -e
 
-[ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-[ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+[ -f /opt/homebrew/bin/brew ]        && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -f /usr/local/bin/brew ]           && eval "$(/usr/local/bin/brew shellenv)"
+[ -f "$HOME/homebrew/bin/brew" ]     && eval "$($HOME/homebrew/bin/brew shellenv)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
+
+# --- Detect Homebrew write access ---
+_BREW_WRITABLE=false
+[ -w "$(brew --prefix 2>/dev/null)" ] && _BREW_WRITABLE=true
+
+brew_install_or_warn() {
+  local PKG="$1"; shift
+  if brew list "$PKG" &>/dev/null 2>&1 || brew list --cask "$PKG" &>/dev/null 2>&1; then
+    skip "$PKG"; return 0
+  fi
+  if [ "$_BREW_WRITABLE" = true ]; then
+    brew install "$PKG" "$@"
+  else
+    echo "WARN: $PKG not installed — Homebrew is read-only for this user."
+    echo "      Ask the Mac owner to run: brew install $PKG $*"
+    return 1
+  fi
+}
 
 # --- Flavor parameter (set by wrapper scripts or directly via EMACS_FLAVOR=...) ---
 case "${EMACS_FLAVOR:-plus}" in
@@ -99,9 +118,9 @@ fi
 
 # --- Tools (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
-  command -v bw &>/dev/null       && skip "Bitwarden CLI"  || { echo "==> Installing Bitwarden CLI..."; brew install bitwarden-cli; }
-  command -v gh &>/dev/null       && skip "GitHub CLI"     || { echo "==> Installing GitHub CLI...";    brew install gh; }
-  command -v git-crypt &>/dev/null && skip "git-crypt"     || { echo "==> Installing git-crypt...";     brew install git-crypt; }
+  command -v bw &>/dev/null        || brew_install_or_warn bitwarden-cli
+  command -v gh &>/dev/null        || brew_install_or_warn gh
+  command -v git-crypt &>/dev/null || brew_install_or_warn git-crypt
 fi
 
 # --- Install Emacs ---
@@ -110,6 +129,11 @@ brew unlink coreutils 2>/dev/null || true
 if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
   skip "Emacs ($_EMACS_PKG)"
 else
+  if [ "$_BREW_WRITABLE" = false ]; then
+    echo "ERROR: Emacs ($_EMACS_PKG) is not installed and Homebrew is read-only for this user."
+    echo "       Ask the Mac owner to run this setup script first, then re-run as this user."
+    exit 1
+  fi
   echo "==> Installing Emacs ($_EMACS_PKG)..."
   echo "    This may take 10-25 minutes..."
   brew tap "$_EMACS_TAP"
@@ -136,11 +160,19 @@ find "$HOME/.emacs.d/elpa" -name "*.elc" -delete 2>/dev/null && echo "    Done."
 _EMACS_CELLAR_DIR="$(brew --prefix)/Cellar/$_EMACS_PKG"
 EMACS_APP=$(find "$_EMACS_CELLAR_DIR" -name "Emacs.app" -maxdepth 4 2>/dev/null | head -1)
 if [ -n "$EMACS_APP" ]; then
-  rm -rf "/Applications/$_EMACS_APP_NAME"
-  cp -r "$EMACS_APP" "/Applications/$_EMACS_APP_NAME"
-  echo "==> $_EMACS_APP_NAME → /Applications"
+  if [ -w /Applications ]; then
+    _APP_DEST="/Applications"
+  else
+    _APP_DEST="$HOME/Applications"
+    mkdir -p "$_APP_DEST"
+    echo "    NOTE: /Applications not writable — installing to ~/Applications/ instead."
+  fi
+  rm -rf "$_APP_DEST/$_EMACS_APP_NAME"
+  cp -r "$EMACS_APP" "$_APP_DEST/$_EMACS_APP_NAME"
+  echo "==> $_EMACS_APP_NAME → $_APP_DEST"
 else
   echo "WARN: Emacs.app not found under $_EMACS_CELLAR_DIR"
+  _APP_DEST="/Applications"
 fi
 
 EMACS_BIN=$(find "$_EMACS_CELLAR_DIR" -name "emacs" -path "*/bin/emacs" -maxdepth 4 2>/dev/null | head -1)
@@ -340,7 +372,7 @@ echo "======================================================================"
 echo "Native Emacs ($_EMACS_LABEL) setup complete!"
 echo "======================================================================"
 echo ""
-echo "Start Emacs:  open \"/Applications/$_EMACS_APP_NAME\""
+echo "Start Emacs:  open \"$_APP_DEST/$_EMACS_APP_NAME\""
 echo ""
 if [ -n "$GH_USER" ]; then
   echo "Your config:  ~/emacs-config/config.org  (synced via iCloud + GitHub)"

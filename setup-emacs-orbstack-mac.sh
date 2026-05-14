@@ -5,13 +5,32 @@
 
 set -euo pipefail
 
-[ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
-[ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+[ -f /opt/homebrew/bin/brew ]    && eval "$(/opt/homebrew/bin/brew shellenv)"
+[ -f /usr/local/bin/brew ]       && eval "$(/usr/local/bin/brew shellenv)"
+[ -f "$HOME/homebrew/bin/brew" ] && eval "$($HOME/homebrew/bin/brew shellenv)"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACHINE="emacs-orb"
 EUSER="emacs"
 APPS_DIR="$HOME/Applications"
+
+# --- Detect Homebrew write access ---
+_BREW_WRITABLE=false
+[ -w "$(brew --prefix 2>/dev/null)" ] && _BREW_WRITABLE=true
+
+brew_install_or_warn() {
+  local PKG="$1"; shift
+  if brew list "$PKG" &>/dev/null 2>&1 || brew list --cask "$PKG" &>/dev/null 2>&1; then
+    skip "$PKG"; return 0
+  fi
+  if [ "$_BREW_WRITABLE" = true ]; then
+    brew install "$PKG" "$@"
+  else
+    echo "WARN: $PKG not installed — Homebrew is read-only for this user."
+    echo "      Ask the Mac owner to run: brew install $PKG $*"
+    return 1
+  fi
+}
 
 # ── Load personal config ───────────────────────────────────────────────────────
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
@@ -71,10 +90,7 @@ orbu() { orb -m "$MACHINE" -u $EUSER "$@"; }
 
 # ── 1. OrbStack ───────────────────────────────────────────────────────────────
 step "Checking OrbStack..."
-if ! command -v orb &>/dev/null; then
-    echo "Installing OrbStack..."
-    brew install --cask orbstack
-fi
+command -v orb &>/dev/null || brew_install_or_warn orbstack --cask
 
 if ! orb list &>/dev/null 2>&1; then
     echo "Starting OrbStack..."
