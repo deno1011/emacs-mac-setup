@@ -104,14 +104,16 @@ they only need to be set by the time of the first request.
                   :host "localhost:11434"
                   :endpoint "/v1/chat/completions"
                   :key "ollama"
-                  :models '(qwen2.5:14b
+                  :models '(llama3.1:8b
                             qwen2.5:7b
+                            qwen2.5:14b
                             qwen2.5:32b))))
   (setq my/gptel-backends
         (append my/gptel-backends
-                `(("Qwen2.5 14B (Ollama)" ,backend . qwen2.5:14b)
-                  ("Qwen2.5 7B (Ollama)"  ,backend . qwen2.5:7b)
-                  ("Qwen2.5 32B (Ollama)" ,backend . qwen2.5:32b)))))
+                `(("Llama 3.1 8B (Ollama)"  ,backend . llama3.1:8b)
+                  ("Qwen2.5 7B (Ollama)"    ,backend . qwen2.5:7b)
+                  ("Qwen2.5 14B (Ollama)"   ,backend . qwen2.5:14b)
+                  ("Qwen2.5 32B (Ollama)"   ,backend . qwen2.5:32b)))))
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
