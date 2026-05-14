@@ -10,3 +10,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/sta
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  
 See [README.md](README.md) for full documentation.
+
+---
+
+## What bootstrap installs automatically
+
+| Software | When | Notes |
+|---|---|---|
+| Homebrew | always | installed if not present; requires sudo once |
+| All setup scripts | always | downloaded to the current folder |
+| `gh` (GitHub CLI) | GitHub mode | needed to access your private config repo |
+| `bitwarden-cli` | GitHub mode | used to fetch your GitHub token and API keys |
+
+> **GitHub mode** is active when you pass a private config repo (`bootstrap.sh user/repo`) or have `GH_USER` set in your config file.
+
+After bootstrap completes, run one of the setup scripts it downloaded to install Emacs itself.

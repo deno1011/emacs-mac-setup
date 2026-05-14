@@ -51,9 +51,16 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 
 ## GitHub Repos
 
+**This repo** (belongs to `deno1011` — the shared template everyone uses):
+
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
+| `deno1011/emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
+
+**Your repos** (created under your own GitHub account during bootstrap):
+
+| Repo | Visibility | Purpose |
+|---|---|---|
 | `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
 | `emacs-config` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
 
@@ -345,28 +352,82 @@ Local mode — no Bitwarden, no GitHub, no iCloud. `config.org` is copied locall
 
 ## Installed Packages
 
-The setup scripts install the following brew packages automatically:
+### Native (emacs-plus and Yamamoto) — Mac-side
 
-**All native variants (emacs-plus and Yamamoto):**
+Installed via Homebrew by `setup-emacs-native-{plus,yamamoto}-mac.sh`:
+
+| Package | When | Purpose |
+|---|---|---|
+| `emacs-plus@30` / `emacs-mac@30exp` | always | Emacs itself |
+| `bitwarden-cli` | GitHub mode | Secret retrieval (git-crypt key, GitHub token, API keys) |
+| `gh` | GitHub mode | GitHub CLI (repo clone, auth, API) |
+| `git-crypt` | GitHub mode | Encrypt/decrypt org files in the repo |
+
+Additional tools (LaTeX, ripgrep, aspell, etc.) are installed by `core.org` on first Emacs launch — see [core.org-installed packages](#coreorg-installed-packages) below.
+
+### Docker — Mac-side
+
+Installed via Homebrew by `setup-emacs-docker-mac.sh`:
 
 | Package | Purpose |
 |---|---|
-| `emacs-plus@30` / `emacs-mac@30exp` | Emacs itself |
-| `bitwarden-cli` | Secret retrieval (git-crypt key, GitHub token, API keys) |
-| `gh` | GitHub CLI (repo clone, auth, API) |
-| `git-crypt` | Encrypt/decrypt org files in the repo |
-
-**Docker variant (additionally):**
-
-| Package | Purpose |
-|---|---|
-| `colima` | Docker runtime for macOS |
 | `docker` | Docker CLI |
-| XQuartz | X11 display server for GUI Emacs |
+| `colima` | Lightweight Docker runtime for macOS |
+| `bitwarden-cli` | Secret retrieval |
+| `gh` | GitHub CLI |
+| `git-crypt` | Repo encryption |
+| XQuartz | X11 display server for GUI Emacs (installed via `sudo installer`, prompts for admin password once) |
 
-**core.org-installed packages (brew):**
+### Docker — Inside the container (Ubuntu)
 
-Installed at first Emacs launch, tracked in `~/.emacs.d/system-packages.log`:
+Built into the Docker image via `apt-get` and `npm`:
+
+| Package | Purpose |
+|---|---|
+| `emacs-lucid` | Emacs with X11 GUI |
+| `texlive`, `texlive-latex-extra`, `texlive-fonts-recommended`, `texlive-science` | LaTeX and math preview |
+| `dvipng`, `imagemagick` | LaTeX fragment rendering in org |
+| `aspell`, `aspell-de`, `aspell-en` | Spell checking |
+| `ripgrep` | Fast text search |
+| `python3`, `python3-pip` | Python runtime |
+| `nodejs` (v20) | JavaScript runtime |
+| `@anthropic-ai/claude-code` | Claude Code CLI |
+| `fonts-jetbrains-mono` | Editor font |
+| `git`, `git-crypt`, `curl`, `wget`, `build-essential` | Dev tooling |
+
+### OrbStack — Mac-side
+
+Installed via Homebrew by `setup-emacs-orbstack-mac.sh`:
+
+| Package | Purpose |
+|---|---|
+| `orbstack` (cask) | OrbStack app — VM runtime and display server |
+
+### OrbStack — Inside the VM (Ubuntu)
+
+Installed via `apt-get` and `npm` inside the OrbStack Linux machine:
+
+| Package | Purpose |
+|---|---|
+| `emacs-lucid` | Emacs with X11 GUI |
+| `texlive`, `texlive-latex-extra`, `texlive-fonts-extra`, `texlive-science` | LaTeX and math preview |
+| `dvipng`, `imagemagick` | LaTeX fragment rendering in org |
+| `gnuplot` | Plot generation via org-babel |
+| `r-base` | R language via org-babel |
+| `graphviz`, `plantuml` | Diagram rendering via org-babel |
+| `aspell`, `aspell-de`, `aspell-en` | Spell checking |
+| `ripgrep` | Fast text search |
+| `python3`, `python3-pip` | Python runtime |
+| `nodejs`, `npm` | JavaScript runtime |
+| `@anthropic-ai/claude-code` | Claude Code CLI |
+| JetBrains Mono font | Monospace editor font (downloaded from GitHub releases) |
+| `git`, `git-crypt`, `curl`, `wget`, `unzip`, `xclip`, `fontconfig` | Dev tooling |
+
+### core.org-installed packages
+
+Installed at first Emacs launch on **native variants only** (tracked in `~/.emacs.d/system-packages.log`). Docker and OrbStack have equivalent packages pre-installed in their container/VM.
+
+**brew:**
 
 | Package | Purpose |
 |---|---|
@@ -380,7 +441,7 @@ Installed at first Emacs launch, tracked in `~/.emacs.d/system-packages.log`:
 | `aspell` | Spell checking |
 | `font-jetbrains-mono` | Editor font (cask) |
 
-**core.org-installed packages (pip):**
+**pip:**
 
 | Package | Purpose |
 |---|---|
