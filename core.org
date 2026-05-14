@@ -117,12 +117,23 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (pixel-scroll-precision-mode 1)
 (setq pixel-scroll-precision-use-momentum nil)
 
-;; macOS trackpad sends momentum events after finger lift — catch boundary
-;; signals silently so scrolling stops hard instead of bouncing and messaging.
-(define-advice scroll-down (:around (orig &rest args) suppress-boundary)
-  (condition-case nil (apply orig args) (beginning-of-buffer nil)))
-(define-advice scroll-up (:around (orig &rest args) suppress-boundary)
-  (condition-case nil (apply orig args) (end-of-buffer nil)))
+;; macOS trackpad sends momentum events after finger lift.
+;; Pre-check before pixel-scroll attempts to scroll past the edge —
+;; avoids the bounce that happens when the internal error is caught too late.
+(with-eval-after-load 'pixel-scroll
+  (define-advice pixel-scroll-precision-scroll-down (:around (orig delta) no-bounce)
+    (unless (and (= (window-start) (point-min))
+                 (= (window-vscroll nil t) 0))
+      (funcall orig delta)))
+  (define-advice pixel-scroll-precision-scroll-up (:around (orig delta) no-bounce)
+    (condition-case nil (funcall orig delta) (end-of-buffer nil))))
+
+;; Fallback for when pixel-scroll-precision-mode is off (mwheel path).
+(define-advice mwheel-scroll (:around (orig event &optional arg) suppress-boundary)
+  (condition-case nil
+      (funcall orig event arg)
+    (beginning-of-buffer nil)
+    (end-of-buffer nil)))
 #+end_src
 
 * Version Control
