@@ -105,6 +105,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 #+begin_src emacs-lisp
 (setq scroll-conservatively 101
       scroll-margin 3
+      maximum-scroll-margin 0.25
       scroll-preserve-screen-position t
       auto-window-vscroll nil)
 
@@ -114,6 +115,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 ;; Pixel-precise scrolling (Emacs 29+). Built into Yamamoto already —
 ;; disable if scrolling feels worse on that variant.
 (pixel-scroll-precision-mode 1)
+(setq pixel-scroll-precision-use-momentum nil)
 #+end_src
 
 * Version Control
