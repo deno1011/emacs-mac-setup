@@ -105,7 +105,15 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 #+begin_src emacs-lisp
 (setq scroll-conservatively 101
       scroll-margin 3
-      fast-but-imprecise-scrolling t)
+      scroll-preserve-screen-position t
+      auto-window-vscroll nil)
+
+(setq mouse-wheel-scroll-amount '(1 ((shift) . 5) ((control) . nil))
+      mouse-wheel-progressive-speed nil)
+
+;; Pixel-precise scrolling (Emacs 29+). Built into Yamamoto already —
+;; disable if scrolling feels worse on that variant.
+(pixel-scroll-precision-mode 1)
 #+end_src
 
 * Version Control
