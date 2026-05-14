@@ -116,6 +116,13 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 ;; disable if scrolling feels worse on that variant.
 (pixel-scroll-precision-mode 1)
 (setq pixel-scroll-precision-use-momentum nil)
+
+;; macOS trackpad sends momentum events after finger lift — catch boundary
+;; signals silently so scrolling stops hard instead of bouncing and messaging.
+(define-advice scroll-down (:around (orig &rest args) suppress-boundary)
+  (condition-case nil (apply orig args) (beginning-of-buffer nil)))
+(define-advice scroll-up (:around (orig &rest args) suppress-boundary)
+  (condition-case nil (apply orig args) (end-of-buffer nil)))
 #+end_src
 
 * Version Control
