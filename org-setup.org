@@ -1,5 +1,6 @@
 #+TITLE: Org Mode Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+# Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 * Org Mode
 #+begin_src emacs-lisp

@@ -1,5 +1,6 @@
 #+TITLE: Core Emacs Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+# Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 * System Packages
 #+begin_src emacs-lisp

@@ -1,5 +1,6 @@
 #+TITLE: Emacs Configuration
 #+STARTUP: overview
+# Loaded by: [[file:~/.emacs.d/init.el][init.el]]
 
 Configuration is split across three domain files. This file bootstraps them —
 downloading any that are missing on first install from the bundled defaults in
