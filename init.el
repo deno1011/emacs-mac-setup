@@ -1,4 +1,4 @@
-;; Entry point → ~/emacs-config/config.org → core.org / org-setup.org / gptel-setup.org
+;; Entry point → ~/emacs-config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
