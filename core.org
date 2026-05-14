@@ -118,7 +118,15 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (when (and (fboundp 'pixel-scroll-precision-mode)
            (not (boundp 'mac-mouse-wheel-smooth-scroll)))
   (pixel-scroll-precision-mode 1)
-  (setq pixel-scroll-precision-use-momentum nil))
+  (setq pixel-scroll-precision-use-momentum nil)
+  ;; macOS sends trackpad momentum events past buffer edges causing a bounce.
+  ;; Wrap the top-level handler to absorb boundary signals silently.
+  (with-eval-after-load 'pixel-scroll
+    (define-advice pixel-scroll-precision (:around (orig event) no-boundary-bounce)
+      (condition-case nil
+          (funcall orig event)
+        (beginning-of-buffer nil)
+        (end-of-buffer nil)))))
 #+end_src
 
 * Version Control
