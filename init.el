@@ -21,6 +21,10 @@
 ;; Load secrets (API keys etc.) — not tracked in git
 (load (expand-file-name "~/.emacs.d/secrets.el") t t)
 
+;; Base theme — applied before config so config can override or build on top.
+;; modus-vivendi is built into Emacs 28+ and requires no packages.
+(load-theme 'modus-vivendi t)
+
 ;; Locate config directory: prefer the fixed symlink (native setup always creates
 ;; ~/emacs-config → iCloud repo), fall back to ~/GH_REPO for Docker/OrbStack installs
 ;; where GH_REPO is injected as an environment variable by the setup script
@@ -35,22 +39,9 @@
      (t nil)))
   "Directory containing the Emacs config org files.")
 
-;; Load config from the three split org files
-(if my/config-dir
-    (dolist (f '("core.org" "org-setup.org" "gptel-setup.org"))
-      (let ((path (expand-file-name f my/config-dir)))
-        (if (file-exists-p path)
-            (condition-case err
-                (org-babel-load-file path)
-              (error (message "CONFIG LOAD ERROR (%s): %s" f err)))
-          (message "CONFIG NOT FOUND: %s" path))))
-  (message "CONFIG DIR NOT FOUND: ~/emacs-config/ not found and GH_REPO env var not set"))
-
-;; Force theme regardless of config errors
+;; Warn after init if org files look encrypted (git-crypt not unlocked).
 (add-hook 'after-init-hook
           (lambda ()
-            (load-theme 'modus-vivendi t)
-            ;; Warn if org files look encrypted (git-crypt not unlocked)
             (let* ((repo-dir (or my/config-dir
                                  (expand-file-name "~/emacs-config/")))
                    (org-dir (expand-file-name "org/" repo-dir))
@@ -64,6 +55,7 @@
                  'emacs-setup
                  "Org files appear encrypted (git-crypt not unlocked).\nRun: bash ~/unlock-git-crypt.sh"
                  :warning)))))
+
 (custom-set-variables
  ;; custom-set-variables was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
@@ -76,3 +68,14 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  )
+
+;; Load config files last — config has full control over the final Emacs state.
+(if my/config-dir
+    (dolist (f '("core.org" "org-setup.org" "gptel-setup.org"))
+      (let ((path (expand-file-name f my/config-dir)))
+        (if (file-exists-p path)
+            (condition-case err
+                (org-babel-load-file path)
+              (error (message "CONFIG LOAD ERROR (%s): %s" f err)))
+          (message "CONFIG NOT FOUND: %s" path))))
+  (message "CONFIG DIR NOT FOUND: ~/emacs-config/ not found and GH_REPO env var not set"))
