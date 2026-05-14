@@ -142,7 +142,7 @@ ANTHROPIC_VAL=""
 if [ -n "$(_bw_check_item "$BW_GH_ITEM")" ]; then
   echo "  GitHub Token already in Bitwarden — skipping."
 else
-  printf "  %-54s: " "GitHub Personal Access Token  (repo scope)"
+  printf "  %-54s: " "GitHub Personal Access Token  (repo scope, Enter to skip)"
   read -rs GH_TOKEN_VAL < /dev/tty
   echo ""
 fi
@@ -194,5 +194,11 @@ if [ "$HAS_PLACEHOLDER" = true ]; then
   echo ""
   echo "  IMPORTANT: Placeholder values were created."
   echo "  Open the Bitwarden app and replace them with real values before running setup."
+fi
+if [ -z "$GH_TOKEN_VAL" ] && [ -z "$(_bw_check_item "$BW_GH_ITEM")" ]; then
+  echo ""
+  echo "  NOTE: GitHub token was skipped — GitHub mode will fall back to interactive"
+  echo "  browser login. Run setup-bitwarden.sh again to add it when you have the token."
+  echo "  Generate one at: GitHub → Settings → Developer settings → Personal access tokens → Classic (scope: repo)"
 fi
 echo ""
