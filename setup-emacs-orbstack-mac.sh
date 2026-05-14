@@ -8,6 +8,7 @@ set -euo pipefail
 [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
 [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACHINE="emacs-orb"
 EUSER="emacs"
 APPS_DIR="$HOME/Applications"
@@ -307,54 +308,12 @@ root chown $EUSER:$EUSER /home/$EUSER/bin/startup-sync.sh
 orbu bash -c "~/bin/startup-sync.sh 2>/dev/null || true"
 
 # ── 15. init.el ───────────────────────────────────────────────────────────────
-step "Writing init.el..."
-root tee /home/$EUSER/.emacs.d/init.el > /dev/null << 'INITEOF'
-;; Suppress byte-compile warnings at startup
-(setq warning-minimum-level :error)
-
-;; Package archives
-(require 'package)
-(setq package-archives '(("melpa"  . "https://melpa.org/packages/")
-                         ("gnu"    . "https://elpa.gnu.org/packages/")
-                         ("nongnu" . "https://elpa.nongnu.org/packages/")))
-(package-initialize)
-
-;; Bootstrap use-package
-(unless (package-installed-p 'use-package)
-  (package-refresh-contents)
-  (package-install 'use-package))
-(require 'use-package)
-(setq use-package-always-ensure t)
-
-;; Load secrets (API keys etc.)
-(load (expand-file-name "~/.emacs.d/secrets.el") t t)
-
-(defvar my/config-org-path
-  (let ((symlink (expand-file-name "~/emacs-config/config.org")))
-    (when (file-exists-p symlink) symlink))
-  "Resolved path to config.org, or nil if not found.")
-
-(if my/config-org-path
-    (condition-case err
-        (org-babel-load-file my/config-org-path)
-      (error (message "CONFIG LOAD ERROR: %s" err)))
-  (message "CONFIG NOT FOUND: ~/emacs-config/config.org"))
-
-(add-hook 'after-init-hook
-          (lambda ()
-            (load-theme 'modus-vivendi t)
-            (when my/config-org-path
-              (let* ((org-dir (expand-file-name "org/" (file-name-directory my/config-org-path)))
-                     (first-org (car (and (file-directory-p org-dir)
-                                          (directory-files org-dir t "\\.org$")))))
-                (when (and first-org
-                           (with-temp-buffer
-                             (insert-file-contents-literally first-org nil 0 10)
-                             (string-match-p "\x00" (buffer-string))))
-                  (display-warning 'emacs-setup
-                   "Org files appear encrypted — run: bash ~/unlock-git-crypt.sh"
-                   :warning))))))
-INITEOF
+step "Installing init.el..."
+if [ ! -f "$SCRIPT_DIR/init.el" ]; then
+  echo "ERROR: init.el not found in $SCRIPT_DIR — run bootstrap.sh first."
+  exit 1
+fi
+root tee /home/$EUSER/.emacs.d/init.el > /dev/null < "$SCRIPT_DIR/init.el"
 root chown $EUSER:$EUSER /home/$EUSER/.emacs.d/init.el
 
 # ── 16. unlock-git-crypt helper ───────────────────────────────────────────────
