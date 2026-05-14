@@ -69,13 +69,12 @@
  ;; If there is more than one, they won't work right.
  )
 
-;; Load config files last — config has full control over the final Emacs state.
+;; Load config last — config.org bootstraps and loads the split files.
 (if my/config-dir
-    (dolist (f '("core.org" "org-setup.org" "gptel-setup.org"))
-      (let ((path (expand-file-name f my/config-dir)))
-        (if (file-exists-p path)
-            (condition-case err
-                (org-babel-load-file path)
-              (error (message "CONFIG LOAD ERROR (%s): %s" f err)))
-          (message "CONFIG NOT FOUND: %s" path))))
+    (let ((path (expand-file-name "config.org" my/config-dir)))
+      (if (file-exists-p path)
+          (condition-case err
+              (org-babel-load-file path)
+            (error (message "CONFIG LOAD ERROR: %s" err)))
+        (message "CONFIG NOT FOUND: %s" path)))
   (message "CONFIG DIR NOT FOUND: ~/emacs-config/ not found and GH_REPO env var not set"))
