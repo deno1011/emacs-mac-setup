@@ -92,27 +92,6 @@ they only need to be set by the time of the first request.
   (setq gptel-backend backend
         gptel-model   'mistralai/ministral-3-14b-reasoning))
 
-;; -- Ollama (local, OpenAI-compatible, Intel + Apple Silicon) --------
-;; Install: brew install ollama
-;; Start:   ollama serve
-;; Models:  ollama pull qwen2.5:14b  (recommended for Intel 64GB)
-;;          ollama pull qwen2.5:7b   (faster)
-;;          ollama pull qwen2.5:32b  (best quality, slower on Intel)
-(let ((backend (gptel-make-openai "Ollama"
-                  :stream t
-                  :protocol "http"
-                  :host "localhost:11434"
-                  :endpoint "/v1/chat/completions"
-                  :key "ollama"
-                  :models '(qwen2.5:14b
-                            qwen2.5:7b
-                            qwen2.5:32b))))
-  (setq my/gptel-backends
-        (append my/gptel-backends
-                `(("Qwen2.5 14B (Ollama)" ,backend . qwen2.5:14b)
-                  ("Qwen2.5 7B (Ollama)"  ,backend . qwen2.5:7b)
-                  ("Qwen2.5 32B (Ollama)" ,backend . qwen2.5:32b)))))
-
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
 ;; Models download automatically from HuggingFace on first run.
