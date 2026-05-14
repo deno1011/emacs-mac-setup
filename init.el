@@ -22,7 +22,9 @@
 (load (expand-file-name "~/.emacs.d/secrets.el") t t)
 
 ;; Locate config directory: prefer the fixed symlink (native setup always creates
-;; ~/emacs-config → iCloud repo), fall back to ~/GH_REPO (Docker, custom name)
+;; ~/emacs-config → iCloud repo), fall back to ~/GH_REPO for Docker/OrbStack installs
+;; where GH_REPO is injected as an environment variable by the setup script
+;; (docker run -e GH_REPO=... / OrbStack VM shell profile).
 (defvar my/config-dir
   (let ((symlink  (expand-file-name "~/emacs-config/"))
         (from-env (when (getenv "GH_REPO")
