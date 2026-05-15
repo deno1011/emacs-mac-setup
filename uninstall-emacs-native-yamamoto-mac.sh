@@ -47,7 +47,7 @@ fi
 source "$CONFIG_FILE"
 
 ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
-SYMLINK="$HOME/$GH_REPO"
+SYMLINK="$HOME/emacs-data"
 
 echo "==> Removing Emacs (emacs-mac@30exp)..."
 brew uninstall emacs-mac@30exp 2>/dev/null && echo "    emacs-mac@30exp removed." || echo "    emacs-mac@30exp not found."

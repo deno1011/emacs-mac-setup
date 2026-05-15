@@ -67,7 +67,7 @@ EMACS_INIT="$HOME/.emacs.d/init.el"
 EMACS_SECRETS="$HOME/.emacs.d/secrets.el"
 if [ -n "$GH_USER" ]; then
   ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
-  EMACS_CONFIG_DIR="$HOME/$GH_REPO"
+  EMACS_CONFIG_DIR="$HOME/emacs-data"   # always ~/emacs-data — init.el/org files hardcode this path
 else
   EMACS_CONFIG_DIR="$HOME/emacs-data"
   echo "==> GitHub not configured — using local config."
