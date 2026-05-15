@@ -27,18 +27,10 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Read GH_REPO from ~/emacs-mac-setup/setup-emacs-mac.conf to locate the data repo.
-;; Falls back to "emacs-data" if conf is missing or GH_REPO is unset.
-(defvar my/data-dir
-  (let* ((conf (expand-file-name "~/emacs-mac-setup/setup-emacs-mac.conf"))
-         (repo (when (file-exists-p conf)
-                 (with-temp-buffer
-                   (insert-file-contents conf)
-                   (goto-char (point-min))
-                   (when (re-search-forward "^GH_REPO=[\"']?\\([^\"'\n]+\\)[\"']?" nil t)
-                     (string-trim (match-string 1)))))))
-    (expand-file-name (concat "~/" (or repo "emacs-data") "/")))
-  "Root of the personal data repo symlink (e.g. ~/emacs-data/).")
+;; Hardcoded by setup script at install time. GH_REPO=emacs-data
+;; Re-running setup with a different GH_REPO overwrites this file.
+(defvar my/data-dir (expand-file-name "~/emacs-data/")
+  "Root of the personal data repo symlink.")
 
 ;; Locate config directory: prefer live iCloud repo, fall back to local copy.
 (defvar my/config-dir

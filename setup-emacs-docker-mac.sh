@@ -346,19 +346,19 @@ if ! docker ps -aq -f name="$DOCKER_CONTAINER" 2>/dev/null | grep -q .; then
     "$DOCKER_IMAGE" sleep infinity
 fi
 
-# --- init.el ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/init.el 2>/dev/null; then
-  skip "init.el (already present)"
+# --- init.el — always update (managed by setup, not user-customized) ---
+echo "==> Installing init.el..."
+docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
+if [ -f "$SCRIPT_DIR/init.el" ]; then
+  _INIT_TMP=$(mktemp)
+  sed "s|emacs-data|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$_INIT_TMP"
+  docker cp "$_INIT_TMP" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
+  rm -f "$_INIT_TMP"
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
 else
-  echo "==> Installing init.el..."
-  docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
-  if [ -f "$SCRIPT_DIR/init.el" ]; then
-    docker cp "$SCRIPT_DIR/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
-  else
-    echo "ERROR: init.el not found — run bootstrap.sh first."
-    exit 1
-  fi
+  echo "ERROR: init.el not found — run bootstrap.sh first."
+  exit 1
+fi
 fi
 
 # --- Git identity ---
