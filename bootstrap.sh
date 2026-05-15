@@ -46,10 +46,13 @@ _BS_BRANCH="refactor/emacs-data-layout"
 curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/${_BS_BRANCH}.tar.gz" \
   | tar -xz -C "$_DL_TMP" --strip-components=1
 for _F in "$_DL_TMP"/*; do
+  [ -f "$_F" ] || continue   # skip subdirectories (e.g. config/)
   _NAME="$(basename "$_F")"
   cp "$_F" "$DEST/$_NAME"
   echo "    $_NAME"
 done
+# Keep ~/fill-config.sh current for standalone use regardless of DEST
+[ "$DEST" != "$HOME" ] && [ -f "$DEST/fill-config.sh" ] && cp "$DEST/fill-config.sh" "$HOME/fill-config.sh" && chmod +x "$HOME/fill-config.sh"
 rm -rf "$_DL_TMP"
 
 chmod +x "$DEST"/*.sh
