@@ -86,13 +86,11 @@ done
 
 # --- Unlock Bitwarden upfront (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
-  if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ ! -f "$EMACS_SECRETS" ]; then
-    if ! command -v bw &>/dev/null; then
-      echo "==> Installing Bitwarden CLI..."
-      brew install bitwarden-cli
-    fi
-    bw_ensure_session || exit 1
+  if ! command -v bw &>/dev/null; then
+    echo "==> Installing Bitwarden CLI..."
+    brew install bitwarden-cli
   fi
+  bw_ensure_session || exit 1
 fi
 
 # --- Tools (GitHub mode only) ---
