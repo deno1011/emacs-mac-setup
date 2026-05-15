@@ -42,7 +42,8 @@ CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
 echo "==> Downloading all scripts to $DEST/..."
 _DL_TMP=$(mktemp -d)
-curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/stable.tar.gz" \
+_BS_BRANCH="stable"
+curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/${_BS_BRANCH}.tar.gz" \
   | tar -xz -C "$_DL_TMP" --strip-components=1
 for _F in "$_DL_TMP"/*; do
   _NAME="$(basename "$_F")"
