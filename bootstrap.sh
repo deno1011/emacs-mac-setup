@@ -1,7 +1,7 @@
 #!/bin/bash
 # Bootstrap: Downloads all Emacs setup scripts from GitHub.
-# Usage: bash bootstrap.sh [user/private-conf-repo]
-# Example: bash bootstrap.sh janedoe/mac-setup-conf
+# Usage: bash bootstrap.sh [user/emacs-data]
+# Example: bash bootstrap.sh janedoe/emacs-data
 # (user/repo required here since GH_USER is not yet known at bootstrap time)
 
 set -e
@@ -36,7 +36,7 @@ for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
 done
 unset _BREW_SHELLENV_LINE _PROFILE
 
-CONF_REPO="${1:-}"
+DATA_REPO="${1:-}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
@@ -59,11 +59,11 @@ if [ -z "${_BOOTSTRAP_UPDATED:-}" ] && [ -f "$DEST/bootstrap.sh" ]; then
   exec bash "$DEST/bootstrap.sh" "$@"
 fi
 
-# --- Pull personal config from private repo ---
+# --- Pull personal config from emacs-data repo ---
 CONF_PULLED=false
-if [ -n "$CONF_REPO" ]; then
+if [ -n "$DATA_REPO" ]; then
   echo ""
-  echo "==> Trying to pull personal config from github.com/${CONF_REPO}..."
+  echo "==> Trying to pull personal config from github.com/${DATA_REPO} (emacs-data repo)..."
   CONF_TMP=$(mktemp -d)
 
   # Install gh if missing — needed for private repo access
@@ -149,7 +149,7 @@ else:
   fi
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     mkdir -p "$CONF_TMP/conf"
-    _CONF_CONTENT=$(gh api "repos/$CONF_REPO/contents/setup-emacs-mac.conf" --jq '.content' 2>/dev/null) || true
+    _CONF_CONTENT=$(gh api "repos/$DATA_REPO/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null) || true
     if [ -n "$_CONF_CONTENT" ]; then
       echo "$_CONF_CONTENT" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" \
         > "$CONF_TMP/conf/setup-emacs-mac.conf" 2>/dev/null && CONF_PULLED=true
@@ -158,8 +158,8 @@ else:
   fi
   # Fallback: try unauthenticated (works if repo is public, fails silently if private)
   if [ "$CONF_PULLED" = false ]; then
-    if GIT_TERMINAL_PROMPT=0 git clone "https://github.com/${CONF_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
-      CONF_PULLED=true
+    if GIT_TERMINAL_PROMPT=0 git clone "https://github.com/${DATA_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
+      [ -f "$CONF_TMP/conf/config/setup-emacs-mac.conf" ] && CONF_PULLED=true
     fi
   fi
 
@@ -168,14 +168,14 @@ else:
     _PULLED_NAME="${_PULLED_NAME#*=}"; _PULLED_NAME="${_PULLED_NAME%\"}"; _PULLED_NAME="${_PULLED_NAME#\"}"
     if [ -n "$_PULLED_NAME" ]; then
       cp "$CONF_TMP/conf/setup-emacs-mac.conf" "$CONFIG_FILE"
-      echo "    setup-emacs-mac.conf pulled — config ready."
+      echo "    setup-emacs-mac.conf pulled from emacs-data repo — config ready."
     else
       echo "    Pulled config is empty — keeping local config."
       CONF_PULLED=false
     fi
     unset _PULLED_NAME
   else
-    echo "    Private repo not accessible — falling back to template."
+    echo "    emacs-data repo not accessible — falling back to template."
     CONF_PULLED=false
   fi
   rm -rf "$CONF_TMP"
@@ -195,8 +195,6 @@ bash "$DEST/fill-config.sh"
 
 # --- Bitwarden setup ---
 source "$CONFIG_FILE"
-# Normalise CONF_REPO: strip any leading "user/" prefix in case the config contains the full form
-CONF_REPO="${CONF_REPO##*/}"
 echo ""
 if [ -n "$GH_USER" ]; then
   bash "$DEST/setup-bitwarden.sh"
@@ -239,7 +237,6 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
   echo ""
   echo "==> Checking GitHub repos..."
   source "$CONFIG_FILE"
-  CONF_REPO="${CONF_REPO##*/}"
 
   _create_repo_if_missing() {
     local REPO_NAME="$1" DESC="$2"
@@ -259,31 +256,6 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
 
   _create_repo_if_missing "${GH_REPO:-emacs-data}" \
     "Emacs data: config and org files" || true
-
-  if [ -n "${CONF_REPO:-}" ]; then
-    _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config" || true
-    echo "==> Uploading setup-emacs-mac.conf → $GH_USER/$CONF_REPO..."
-    _CONF_B64=$(base64 -i "$CONFIG_FILE" | tr -d '\n')
-    _CONF_SHA=$(gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" --jq '.sha' 2>/dev/null || true)
-    if [ -n "$_CONF_SHA" ]; then
-      if gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
-          -X PUT -f message="Update config" -f content="$_CONF_B64" -f sha="$_CONF_SHA" \
-          >/dev/null; then
-        echo "    setup-emacs-mac.conf aktualisiert."
-      else
-        echo "WARN: Upload failed — please add setup-emacs-mac.conf to $GH_USER/$CONF_REPO manually."
-      fi
-    else
-      if gh api "repos/$GH_USER/$CONF_REPO/contents/setup-emacs-mac.conf" \
-          -X PUT -f message="Initial config" -f content="$_CONF_B64" \
-          >/dev/null; then
-        echo "    setup-emacs-mac.conf hochgeladen."
-      else
-        echo "WARN: Upload failed — please add setup-emacs-mac.conf to $GH_USER/$CONF_REPO manually."
-      fi
-    fi
-    unset _CONF_B64 _CONF_SHA
-  fi
 fi
 
 echo ""
@@ -297,9 +269,9 @@ echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, tra
 echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
 echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
 echo ""
-if [ -n "${GH_USER:-}" ] && [ -n "${CONF_REPO:-}" ]; then
-  echo "  On a new Mac, skip config questions by passing your config repo:"
-  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER/$CONF_REPO"
+if [ -n "${GH_USER:-}" ]; then
+  echo "  On a new Mac, skip config questions by passing your data repo:"
+  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER/${GH_REPO:-emacs-data}"
   echo ""
 fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"

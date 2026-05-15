@@ -44,8 +44,7 @@ _ASKED_NOTHING=false
 ask_value GIT_NAME            "Full name          (e.g. Jane Smith)"                   ""
 ask_value GIT_EMAIL           "Email              (e.g. jane@example.com)"             ""
 ask_value GH_USER             "GitHub username    (e.g. janedoe)"                      ""
-ask_value GH_REPO             "Emacs config repo  (e.g. emacs-config)"                 "emacs-config"
-ask_value CONF_REPO           "Private conf repo  (e.g. mac-setup-conf)"               "mac-setup-conf"
+ask_value GH_REPO             "Emacs config repo  (e.g. emacs-data)"                   "emacs-data"
 ask_value BW_FIELD            "Bitwarden field    (custom field name in all BW entries)" "Key"
 ask_value BW_ITEM             "git-crypt item     (Bitwarden entry name)"              "emacs-git-crypt-key"
 ask_value BW_GH_ITEM          "GitHub token item  (Bitwarden entry name)"              "github-cli-token"
@@ -56,6 +55,15 @@ if [ "$_HAD_MISSING" = true ]; then
   echo ""
   echo "  Config saved to $CONFIG_FILE"
   echo ""
-  grep -E "^(GIT_NAME|GIT_EMAIL|GH_USER|GH_REPO|CONF_REPO)=" "$CONFIG_FILE"
+  grep -E "^(GIT_NAME|GIT_EMAIL|GH_USER|GH_REPO)=" "$CONFIG_FILE"
   echo ""
+
+  # Sync conf to emacs-data/config/ if available
+  _EMACS_DATA_CONF="$HOME/emacs-data/config/setup-emacs-mac.conf"
+  if [ -d "$HOME/emacs-data/config" ]; then
+    cp "$CONFIG_FILE" "$_EMACS_DATA_CONF"
+    git -C "$HOME/emacs-data" add "config/setup-emacs-mac.conf" 2>/dev/null || true
+    git -C "$HOME/emacs-data" commit -m "chore: update setup-emacs-mac.conf" 2>/dev/null || true
+    echo "  Synced to ~/emacs-data/config/setup-emacs-mac.conf"
+  fi
 fi

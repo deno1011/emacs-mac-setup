@@ -47,8 +47,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
-# Normalise CONF_REPO: strip any leading "user/" prefix in case the config contains the full form
-CONF_REPO="${CONF_REPO##*/}"
 source "$HOME/bw-unlock.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
@@ -173,22 +171,12 @@ if [ -n "$GH_USER" ]; then
     fi
   fi
 
-  # --- Pull conf from private repo (if configured) ---
-  if [ -n "$CONF_REPO" ]; then
-    CONF_URL="https://github.com/${GH_USER}/${CONF_REPO}.git"
-    CONF_TMP=$(mktemp -d)
-    if git clone "$CONF_URL" "$CONF_TMP" &>/dev/null 2>&1; then
-      if [ -f "$CONF_TMP/setup-emacs-mac.conf" ]; then
-        cp "$CONF_TMP/setup-emacs-mac.conf" "$CONFIG_FILE"
-        source "$CONFIG_FILE"
-        echo "==> setup-emacs-mac.conf updated from private repo."
-      fi
-    else
-      echo "WARN: Private conf repo not reachable ($CONF_REPO) — using local config."
-    fi
-    rm -rf "$CONF_TMP"
-    ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
-    EMACS_CONFIG_DIR="$HOME/$GH_REPO"
+  # --- Use conf from emacs-data if already present (subsequent installs) ---
+  _EMACS_DATA_CONF="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO/config/setup-emacs-mac.conf"
+  if [ -f "$_EMACS_DATA_CONF" ]; then
+    cp "$_EMACS_DATA_CONF" "$CONFIG_FILE"
+    source "$CONFIG_FILE"
+    echo "==> setup-emacs-mac.conf loaded from emacs-data/config/."
   fi
 
   if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
@@ -276,6 +264,12 @@ HOOKEOF
     echo "==> Symlink ~/emacs-data → iCloud erstellen..."
     ln -sfn "$ICLOUD_REPO_PATH" "$EMACS_CONFIG_DIR"
   fi
+
+  echo "==> Saving setup-emacs-mac.conf to ~/emacs-data/config/..."
+  cp "$CONFIG_FILE" "$ICLOUD_REPO_PATH/config/setup-emacs-mac.conf"
+  git -C "$ICLOUD_REPO_PATH" add "config/setup-emacs-mac.conf"
+  git -C "$ICLOUD_REPO_PATH" commit -m "chore: update setup-emacs-mac.conf" \
+    -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" 2>/dev/null || true
 
 # --- Local mode: config.org from scripts folder ---
 else
