@@ -1,0 +1,183 @@
+#+TITLE: Apple Reminders Integration
+#+STARTUP: overview
+
+Integrates macOS Apple Reminders with Emacs/Org. Uses the
+[[https://github.com/keith/reminders-cli][reminders-cli]] Swift tool by Keith Smiley as a clean, scriptable backend.
+
+Loaded by: [[file:config.org][config.org]]
+
+* Overview
+
+This module provides:
+
+- Auto-install of =reminders-cli= via Homebrew on first run.
+- Elisp wrapper functions: list, show, add, complete.
+- Org integration: push the current TODO heading (with DEADLINE) to Apple Reminders.
+- Bulk-sync: mirror all DEADLINE'd TODOs into a dedicated Apple Reminders list.
+
+The dedicated list name is configurable via =my/apple-reminders-default-list=.
+By default it is =Emacs= so Apple Reminders entries created from Emacs stay
+separate from manually-entered ones and can be cleared/re-synced safely.
+
+* Prerequisites: Auto-Install reminders-cli
+
+Reuses =my/brew-install-and-log= from [[file:core.org][core.org]]. The CLI is a Homebrew
+formula from the =keith/formulae= tap, so we need both the tap and the formula.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/apple-reminders--ensure-cli ()
+  "Ensure the reminders-cli tool is installed via Homebrew."
+  (unless (executable-find "reminders")
+    (when (executable-find "brew")
+      ;; Tap first (idempotent), then install.
+      (my/brew-install-and-log "tap" "keith/formulae" "tap" "keith/formulae")
+      (my/brew-install-and-log "formula" "reminders-cli" "install" "reminders-cli")
+      (message "reminders-cli not found — installing in background. Restart Emacs when done."))))
+
+(my/apple-reminders--ensure-cli)
+#+end_src
+
+* Configuration
+
+#+begin_src emacs-lisp :tangle yes
+(defgroup my/apple-reminders nil
+  "Integration between Emacs/Org and macOS Apple Reminders."
+  :group 'org)
+
+(defcustom my/apple-reminders-default-list "Emacs"
+  "Name of the Apple Reminders list used for Org-synced items.
+Created on first use if it does not exist."
+  :type 'string
+  :group 'my/apple-reminders)
+
+(defcustom my/apple-reminders-cli (or (executable-find "reminders") "reminders")
+  "Path to the reminders-cli binary."
+  :type 'string
+  :group 'my/apple-reminders)
+#+end_src
+
+* Core Wrapper Functions
+
+Thin layer over the CLI. All functions return strings (CLI output) or signal
+an error if the CLI is missing or the command fails.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/apple-reminders--run (&rest args)
+  "Run reminders-cli with ARGS, return stdout. Signal error on failure."
+  (unless (executable-find my/apple-reminders-cli)
+    (user-error "reminders-cli not installed. Run: brew install keith/formulae/reminders-cli"))
+  (with-temp-buffer
+    (let ((exit (apply #'call-process my/apple-reminders-cli nil t nil args)))
+      (unless (zerop exit)
+        (error "reminders-cli failed (%d): %s" exit (buffer-string)))
+      (string-trim (buffer-string)))))
+
+(defun my/apple-reminders-lists ()
+  "Return a list of Apple Reminders list names."
+  (split-string (my/apple-reminders--run "show-lists") "\n" t))
+
+(defun my/apple-reminders-show (&optional list-name)
+  "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
+  (interactive)
+  (let ((list (or list-name my/apple-reminders-default-list)))
+    (message "%s" (my/apple-reminders--run "show" list))))
+
+(defun my/apple-reminders-add (title &optional list-name due-date notes)
+  "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES.
+DUE-DATE is an ISO date string like \"2025-12-31\" or natural language
+like \"tomorrow 9am\" — reminders-cli parses both."
+  (interactive
+   (list (read-string "Reminder: ")
+         (completing-read "List: " (my/apple-reminders-lists) nil nil
+                          my/apple-reminders-default-list)
+         (read-string "Due (optional, e.g. 2025-12-31 or 'tomorrow 9am'): ")
+         nil))
+  (let* ((list (or list-name my/apple-reminders-default-list))
+         (args (append (list "add" list title)
+                       (when (and due-date (not (string-empty-p due-date)))
+                         (list "--due-date" due-date))
+                       (when (and notes (not (string-empty-p notes)))
+                         (list "--notes" notes)))))
+    (apply #'my/apple-reminders--run args)
+    (message "Added to Apple Reminders [%s]: %s%s" list title
+             (if (and due-date (not (string-empty-p due-date)))
+                 (format " (due %s)" due-date) ""))))
+
+(defun my/apple-reminders-complete (list-name index)
+  "Mark reminder at INDEX in LIST-NAME as completed.
+INDEX matches the number shown by `my/apple-reminders-show'."
+  (interactive
+   (let* ((list (completing-read "List: " (my/apple-reminders-lists) nil t
+                                 my/apple-reminders-default-list))
+          (idx (read-number "Index: ")))
+     (list list idx)))
+  (my/apple-reminders--run "complete" list-name (number-to-string index))
+  (message "Completed [%s] #%d" list-name index))
+#+end_src
+
+* Org Integration
+
+Push the org heading at point to Apple Reminders, including its DEADLINE.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/org-heading-to-reminder (&optional list-name)
+  "Push the current Org heading to Apple Reminders.
+Uses DEADLINE (if present) as the due date. LIST-NAME defaults to
+`my/apple-reminders-default-list'."
+  (interactive
+   (when current-prefix-arg
+     (list (completing-read "List: " (my/apple-reminders-lists) nil nil
+                            my/apple-reminders-default-list))))
+  (unless (derived-mode-p 'org-mode)
+    (user-error "Not in an org-mode buffer"))
+  (save-excursion
+    (org-back-to-heading t)
+    (let* ((title    (org-get-heading t t t t))
+           (deadline (org-entry-get nil "DEADLINE"))
+           (due      (when deadline
+                       ;; "<2025-12-31 Wed>" -> "2025-12-31"
+                       (when (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" deadline)
+                         (match-string 1 deadline))))
+           (list     (or list-name my/apple-reminders-default-list)))
+      (my/apple-reminders-add title list due nil))))
+
+(defun my/org-sync-deadlines-to-reminders ()
+  "Push every TODO with a DEADLINE across `org-agenda-files' to Apple Reminders.
+Skips entries already tagged :reminded: (to avoid duplicates) and adds the
+tag after pushing."
+  (interactive)
+  (let ((count 0))
+    (org-map-entries
+     (lambda ()
+       (when (and (member (org-get-todo-state) '("TODO" "NEXT"))
+                  (org-entry-get nil "DEADLINE")
+                  (not (member "reminded" (org-get-tags))))
+         (my/org-heading-to-reminder)
+         (org-set-tags (cons "reminded" (org-get-tags)))
+         (setq count (1+ count))))
+     nil 'agenda)
+    (message "Pushed %d reminder(s) to Apple Reminders." count)))
+#+end_src
+
+* Key Bindings
+
+Under =C-c r= prefix so it doesn't collide with built-in org bindings.
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'org
+  (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
+  (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
+  (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
+  (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders))
+#+end_src
+
+* Future: Agenda Visualization
+
+/Planned, not yet implemented:/
+
+- Display open Apple Reminders inline in =org-agenda= via a virtual agenda
+  source (similar to the calendar/diary block).
+- Bidirectional sync (mark reminder complete in Apple → mark org TODO DONE).
+- Pull reminders created on iPhone back into =inbox.org=.
+
+These require deciding on a sync strategy — see discussion notes in chat.
