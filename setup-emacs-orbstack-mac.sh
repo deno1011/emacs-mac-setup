@@ -105,7 +105,7 @@ root apt-get install -y \
     gnuplot r-base \
     graphviz plantuml \
     nodejs npm \
-    git git-crypt curl wget unzip \
+    git git-crypt curl wget unzip rsync \
     xclip fontconfig \
     aspell aspell-de aspell-en \
     python3 python3-pip ripgrep \
