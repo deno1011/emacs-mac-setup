@@ -164,11 +164,15 @@ tag after pushing."
 Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 #+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'org
+(defun my/apple-reminders--setup-keys ()
   (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
   (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
   (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
   (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders))
+
+(if (featurep 'org)
+    (my/apple-reminders--setup-keys)
+  (with-eval-after-load 'org (my/apple-reminders--setup-keys)))
 #+end_src
 
 * Future: Agenda Visualization
