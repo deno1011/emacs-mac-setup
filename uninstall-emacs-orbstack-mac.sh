@@ -103,19 +103,15 @@ if ! _other_emacs_installed; then
 
   echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 
-  step "Logging out GitHub CLI..."
-  gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh auth not set."
-
   step "Removing brew packages installed by setup..."
   _pkg_remove formula bitwarden-cli
-  _pkg_remove formula gh
   _pkg_remove formula git-crypt
 
   step "Clearing global git identity..."
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
 else
-  echo "  Another Emacs variant still installed — keeping shared resources (gh, emacs.d, iCloud repo)."
+  echo "  Another Emacs variant still installed — keeping shared resources (emacs.d, iCloud repo)."
 fi
 
 print -P "\n${GREEN}✓ OrbStack Emacs uninstalled.${NC}"

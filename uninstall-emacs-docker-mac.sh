@@ -97,17 +97,13 @@ if ! _other_emacs_installed; then
 
   echo "==> Removing brew packages installed by setup..."
   _pkg_remove formula bitwarden-cli
-  _pkg_remove formula gh
   _pkg_remove formula git-crypt
-
-  echo "==> Logging out GitHub CLI..."
-  gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."
 
   echo "==> Clearing global git identity..."
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
 else
-  echo "  Another Emacs variant still installed — keeping shared resources (gh, iCloud repo)."
+  echo "  Another Emacs variant still installed — keeping shared resources (iCloud repo)."
 fi
 
 echo "==> Cleaning Homebrew cache..."
