@@ -25,6 +25,8 @@ Reuses =my/brew-install-and-log= from [[file:core.org][core.org]]. The CLI is a 
 formula from the =keith/formulae= tap, so we need both the tap and the formula.
 
 #+begin_src emacs-lisp :tangle yes
+;;; -*- lexical-binding: t -*-
+
 (defun my/apple-reminders--ensure-cli ()
   "Ensure the reminders-cli tool is installed via Homebrew."
   (unless (executable-find "reminders")
@@ -390,7 +392,8 @@ CALLBACK receives the stdout string when the process exits."
         (set-keymap-parent map org-mode-map)
         (define-key map (kbd "g")   #'my/apple-reminders-dashboard-refresh)
         (define-key map (kbd "q")   #'quit-window)
-        (define-key map (kbd "t")   #'my/apple-reminders-dashboard-complete)
+        (define-key map (kbd "t")       #'my/apple-reminders-dashboard-complete)
+        (define-key map (kbd "C-c C-t") #'my/apple-reminders-dashboard-complete)
         (define-key map (kbd "e t") #'my/apple-reminders-dashboard-edit-title)
         (define-key map (kbd "e n") #'my/apple-reminders-dashboard-edit-notes)
         (define-key map (kbd "e d") #'my/apple-reminders-dashboard-edit-due)
