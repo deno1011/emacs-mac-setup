@@ -257,8 +257,8 @@ if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
     fi
   }
 
-  _create_repo_if_missing "${GH_REPO:-emacs-config}" \
-    "Emacs configuration and org files" || true
+  _create_repo_if_missing "${GH_REPO:-emacs-data}" \
+    "Emacs data: config and org files" || true
 
   if [ -n "${CONF_REPO:-}" ]; then
     _create_repo_if_missing "$CONF_REPO" "Emacs Mac Setup personal config" || true

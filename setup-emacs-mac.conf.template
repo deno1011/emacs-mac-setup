@@ -25,7 +25,7 @@ CONF_REPO=""
 
 # Name of the GitHub repo containing your Emacs config
 # Repo name only, no username — GH_USER is prepended automatically
-# Example: GH_REPO="emacs-config"  →  github.com/janedoe/emacs-config
+# Example: GH_REPO="emacs-data"  →  github.com/janedoe/emacs-data
 GH_REPO=""
 
 # Name of the Bitwarden item containing the git-crypt key

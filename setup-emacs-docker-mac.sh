@@ -406,7 +406,7 @@ fi
 
 HOOK="\$REPO/.git/hooks/post-commit"
 if [ ! -f "\$HOOK" ]; then
-  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
+  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/data/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
   chmod +x "\$HOOK"
 fi
 
@@ -415,7 +415,7 @@ if [ -f "\$KEY" ] && [ -d "\$REPO/.git" ]; then
   git -C "\$REPO" crypt unlock "\$KEY" 2>/dev/null || true
 fi
 
-[ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
+[ -d "\$BEORG" ] && [ -d "\$REPO/data/org" ] && rsync -a --delete "\$REPO/data/org/" "\$BEORG/" 2>/dev/null || true
 EOF
   docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
   docker exec --user root "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
@@ -432,14 +432,14 @@ else
 fi
 
 # --- config.org fallback (only if repo didn't provide one) ---
-if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config.org" 2>/dev/null; then
+if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config/config.org" 2>/dev/null; then
   skip "config.org (already present from cloned repo)"
 else
   echo "==> Copying starter config.org into container..."
-  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}"
+  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
   if [ -f "$SCRIPT_DIR/config.org" ]; then
-    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config.org"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config.org"
+    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config/config.org"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config/config.org"
   else
     echo "WARN: config.org not found in script dir — Emacs will use built-in defaults."
   fi

@@ -1,4 +1,4 @@
-;; Entry point → ~/emacs-config/config.org
+;; Entry point → ~/emacs-data/config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
@@ -27,26 +27,20 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Locate config directory: prefer the fixed symlink (native setup always creates
-;; ~/emacs-config → iCloud repo), fall back to ~/GH_REPO for Docker/OrbStack installs
-;; where GH_REPO is injected as an environment variable by the setup script
-;; (docker run -e GH_REPO=... / OrbStack VM shell profile).
+;; Locate config directory: prefer ~/emacs-data/config/ (iCloud repo, config subfolder).
+;; Falls back to ~/.emacs.d/config-readonly/ (local copy kept by startup-sync).
 (defvar my/config-dir
-  (let ((symlink  (expand-file-name "~/emacs-config/"))
-        (from-env (when (getenv "GH_REPO")
-                    (expand-file-name (concat "~/" (getenv "GH_REPO") "/")))))
+  (let ((primary  (expand-file-name "~/emacs-data/config/"))
+        (fallback (expand-file-name "~/.emacs.d/config-readonly/")))
     (cond
-     ((file-directory-p symlink)                 symlink)
-     ((and from-env (file-directory-p from-env)) from-env)
+     ((file-directory-p primary)  primary)
+     ((file-directory-p fallback) fallback)
      (t nil)))
   "Directory containing the Emacs config org files.")
 
-;; Warn after init if org files look encrypted (git-crypt not unlocked).
 (add-hook 'after-init-hook
           (lambda ()
-            (let* ((repo-dir (or my/config-dir
-                                 (expand-file-name "~/emacs-config/")))
-                   (org-dir (expand-file-name "org/" repo-dir))
+            (let* ((org-dir  (expand-file-name "~/emacs-data/data/org/"))
                    (first-org (car (and (file-directory-p org-dir)
                                         (directory-files org-dir t "\\.org$")))))
               (when (and first-org
@@ -79,4 +73,4 @@
               (org-babel-load-file path)
             (error (message "CONFIG LOAD ERROR: %s" err)))
         (message "CONFIG NOT FOUND: %s" path)))
-  (message "CONFIG DIR NOT FOUND: ~/emacs-config/ not found and GH_REPO env var not set"))
+  (message "CONFIG DIR NOT FOUND: ~/emacs-data/config/ not found and ~/.emacs.d/config-readonly/ not found"))

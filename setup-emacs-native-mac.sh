@@ -71,7 +71,7 @@ if [ -n "$GH_USER" ]; then
   ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
   EMACS_CONFIG_DIR="$HOME/$GH_REPO"
 else
-  EMACS_CONFIG_DIR="$HOME/emacs-config"
+  EMACS_CONFIG_DIR="$HOME/emacs-data"
   echo "==> GitHub not configured — using local config."
 fi
 
@@ -204,9 +204,13 @@ if [ -n "$GH_USER" ]; then
     fi
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
-    if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-      cp "$SCRIPT_DIR/config.org" "$ICLOUD_REPO_PATH/config.org"
-      echo "    config.org copied from local fallback."
+    mkdir -p "$ICLOUD_REPO_PATH/config" "$ICLOUD_REPO_PATH/data/org"
+    if [ ! -f "$ICLOUD_REPO_PATH/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+      cp "$SCRIPT_DIR/config.org"      "$ICLOUD_REPO_PATH/config/config.org"
+      cp "$SCRIPT_DIR/core.org"        "$ICLOUD_REPO_PATH/config/core.org"        2>/dev/null || true
+      cp "$SCRIPT_DIR/org-setup.org"   "$ICLOUD_REPO_PATH/config/org-setup.org"   2>/dev/null || true
+      cp "$SCRIPT_DIR/gptel-setup.org" "$ICLOUD_REPO_PATH/config/gptel-setup.org" 2>/dev/null || true
+      echo "    Config files copied to config/ subfolder."
     fi
 
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
@@ -214,7 +218,7 @@ if [ -n "$GH_USER" ]; then
 
     cat > "$ICLOUD_REPO_PATH/.git/hooks/post-commit" << 'HOOKEOF'
 #!/bin/sh
-REPO_ORG="$(git rev-parse --show-toplevel)/org"
+REPO_ORG="$(git rev-parse --show-toplevel)/data/org"
 BEORG="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
 [ -d "$BEORG" ] && rsync -a --delete "$REPO_ORG/" "$BEORG/" 2>/dev/null || true
 git push origin main &
@@ -227,7 +231,7 @@ HOOKEOF
   _GC_INITIALIZED=false
   [ -d "$ICLOUD_REPO_PATH/.git/git-crypt" ] && _GC_INITIALIZED=true
 
-  _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/org" -name "*.org" 2>/dev/null | head -1)
+  _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/data/org" -name "*.org" 2>/dev/null | head -1)
   _FILES_ENCRYPTED=false
   [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
 
@@ -240,16 +244,16 @@ HOOKEOF
           (cd "$ICLOUD_REPO_PATH" && git crypt init) 2>/dev/null
           cp /tmp/gckey "$ICLOUD_REPO_PATH/.git/git-crypt/keys/default"
           if [ ! -f "$ICLOUD_REPO_PATH/.gitattributes" ]; then
-            echo "org/** filter=git-crypt diff=git-crypt" > "$ICLOUD_REPO_PATH/.gitattributes"
+            echo "data/org/** filter=git-crypt diff=git-crypt" > "$ICLOUD_REPO_PATH/.gitattributes"
             git -C "$ICLOUD_REPO_PATH" add .gitattributes
             git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
-              commit -m "Add git-crypt for org/ directory" 2>/dev/null || true
+              commit -m "Add git-crypt for data/org/ directory" 2>/dev/null || true
             git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
           fi
           echo "    git-crypt initialised."
         else
           if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
-            git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
+            git -C "$ICLOUD_REPO_PATH" checkout HEAD -- data/org/ 2>/dev/null || true
             echo "    git-crypt unlocked and org/ checked out."
           else
             echo "WARN: git-crypt unlock failed — org/ files still encrypted."
@@ -263,31 +267,39 @@ HOOKEOF
       echo "WARN: git-crypt key not found in Bitwarden."
     fi
   else
-    skip "git-crypt (org/ already decrypted)"
+    skip "git-crypt (data/org/ already decrypted)"
   fi
 
   if [ -L "$EMACS_CONFIG_DIR" ] && [ "$(readlink "$EMACS_CONFIG_DIR")" = "$ICLOUD_REPO_PATH" ]; then
-    skip "Symlink ~/emacs-config"
+    skip "Symlink ~/emacs-data"
   else
-    echo "==> Symlink ~/emacs-config → iCloud erstellen..."
+    echo "==> Symlink ~/emacs-data → iCloud erstellen..."
     ln -sfn "$ICLOUD_REPO_PATH" "$EMACS_CONFIG_DIR"
   fi
 
 # --- Local mode: config.org from scripts folder ---
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
-    mkdir -p "$EMACS_CONFIG_DIR"
-    echo "==> ~/emacs-config/ created."
+    mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
+    echo "==> ~/emacs-data/ created."
   fi
-  if [ ! -f "$EMACS_CONFIG_DIR/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config.org"
-    echo "==> config.org copied to ~/emacs-config/."
-  elif [ -f "$EMACS_CONFIG_DIR/config.org" ]; then
+  if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+    cp "$SCRIPT_DIR/config.org"      "$EMACS_CONFIG_DIR/config/config.org"
+    cp "$SCRIPT_DIR/core.org"        "$EMACS_CONFIG_DIR/config/core.org"        2>/dev/null || true
+    cp "$SCRIPT_DIR/org-setup.org"   "$EMACS_CONFIG_DIR/config/org-setup.org"   2>/dev/null || true
+    cp "$SCRIPT_DIR/gptel-setup.org" "$EMACS_CONFIG_DIR/config/gptel-setup.org" 2>/dev/null || true
+    echo "==> Config files copied to ~/emacs-data/config/."
+  elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
     skip "config.org (already present)"
   else
     echo "WARN: No config.org found — Emacs will start with basic setup."
   fi
 fi
+
+echo "==> Populating ~/.emacs.d/config-readonly/..."
+mkdir -p "$HOME/.emacs.d/config-readonly"
+rsync -a --delete "$EMACS_CONFIG_DIR/config/" "$HOME/.emacs.d/config-readonly/"
+echo "    config-readonly/ updated."
 
 # --- init.el ---
 if [ -f "$EMACS_INIT" ]; then
@@ -343,10 +355,10 @@ echo ""
 echo "Start Emacs:  open \"/Applications/$_EMACS_APP_NAME\""
 echo ""
 if [ -n "$GH_USER" ]; then
-  echo "Your config:  ~/emacs-config/config.org  (synced via iCloud + GitHub)"
-  echo "Your org files: ~/emacs-config/org/"
+  echo "Your config:  ~/emacs-data/config/  (synced via iCloud + GitHub)"
+  echo "Your org files: ~/emacs-data/data/org/"
 else
-  echo "Your config:  ~/emacs-config/config.org  (local)"
+  echo "Your config:  ~/emacs-data/config/  (local)"
   echo "To enable GitHub sync: set GH_USER in ~/setup-emacs-mac.conf and re-run."
 fi
 echo "======================================================================"

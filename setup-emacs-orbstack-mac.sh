@@ -24,7 +24,7 @@ else
 fi
 
 GH_USER="${GH_USER:-}"
-GH_REPO="${GH_REPO:-emacs-config}"
+GH_REPO="${GH_REPO:-emacs-data}"
 GIT_NAME="${GIT_NAME:-}"
 GIT_EMAIL="${GIT_EMAIL:-}"
 
@@ -143,7 +143,7 @@ orbu git config --global user.email "$GIT_EMAIL"
 orbu git config --global pull.rebase false
 
 # ── 8. Clone config repo ──────────────────────────────────────────────────────
-step "Cloning emacs-config repo..."
+step "Cloning emacs-data repo..."
 if [[ -n "$GH_TOKEN" ]]; then
     CLONE_URL="https://${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
 else
@@ -152,14 +152,15 @@ fi
 CLEAN_URL="https://github.com/${GH_USER}/${GH_REPO}.git"
 
 orbu bash -c "
-    if [ -d ~/emacs-config/.git ]; then
+    if [ -d ~/emacs-data/.git ]; then
         echo 'Repo already cloned — pulling.'
-        git -C ~/emacs-config remote set-url origin '${CLONE_URL}'
-        git -C ~/emacs-config pull
-        git -C ~/emacs-config remote set-url origin '${CLEAN_URL}'
+        git -C ~/emacs-data remote set-url origin '${CLONE_URL}'
+        git -C ~/emacs-data pull
+        git -C ~/emacs-data remote set-url origin '${CLEAN_URL}'
     else
-        git clone '${CLONE_URL}' ~/emacs-config
-        git -C ~/emacs-config remote set-url origin '${CLEAN_URL}'
+        git clone '${CLONE_URL}' ~/emacs-data
+        git -C ~/emacs-data remote set-url origin '${CLEAN_URL}'
+        mkdir -p ~/emacs-data/config ~/emacs-data/data/org
     fi
 "
 
@@ -180,7 +181,7 @@ fi
 step "Setting up git-crypt..."
 if orbu test -f ~/.git-crypt-key 2>/dev/null; then
     skip "git-crypt key"
-    orbu git -C ~/emacs-config crypt unlock ~/.git-crypt-key 2>/dev/null \
+    orbu git -C ~/emacs-data crypt unlock ~/.git-crypt-key 2>/dev/null \
         && echo "git-crypt unlocked." || true
 elif [[ "$BW_AVAILABLE" == true ]]; then
     GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
@@ -190,7 +191,7 @@ elif [[ "$BW_AVAILABLE" == true ]]; then
           > "$HOME/.emacs-gc-key-tmp"
         orbu bash -c "cp '/Users/${USER}/.emacs-gc-key-tmp' ~/.git-crypt-key && chmod 600 ~/.git-crypt-key"
         rm -f "$HOME/.emacs-gc-key-tmp"
-        orbu git -C ~/emacs-config crypt unlock ~/.git-crypt-key 2>/dev/null \
+        orbu git -C ~/emacs-data crypt unlock ~/.git-crypt-key 2>/dev/null \
             && echo "git-crypt unlocked." \
             || warn "git-crypt unlock failed — run bash ~/unlock-git-crypt.sh in the machine."
     else
@@ -274,7 +275,7 @@ fi
 step "Writing startup-sync.sh..."
 root tee /home/$EUSER/bin/startup-sync.sh > /dev/null << 'SYNCEOF'
 #!/bin/bash
-REPO="$HOME/emacs-config"
+REPO="$HOME/emacs-data"
 BEORG="$HOME/beorg"
 
 # Pull latest
@@ -286,7 +287,7 @@ if [ ! -x "$HOOK" ]; then
     cat > "$HOOK" << 'HOOKEOF'
 #!/bin/bash
 REPO="$(git rev-parse --show-toplevel)"
-[ -d "$HOME/beorg" ] && rsync -a --delete "$REPO/org/" "$HOME/beorg/" 2>/dev/null || true
+[ -d "$HOME/beorg" ] && rsync -a --delete "$REPO/data/org/" "$HOME/beorg/" 2>/dev/null || true
 git push origin main 2>/dev/null &
 HOOKEOF
     chmod +x "$HOOK"
@@ -298,8 +299,8 @@ if [ -f "$KEY" ]; then
     git -C "$REPO" crypt unlock "$KEY" 2>/dev/null || true
 fi
 
-# Sync org/ → beorg
-[ -d "$BEORG" ] && [ -d "$REPO/org" ] && rsync -a --delete "$REPO/org/" "$BEORG/" 2>/dev/null || true
+# Sync data/org/ → beorg
+[ -d "$BEORG" ] && [ -d "$REPO/data/org" ] && rsync -a --delete "$REPO/data/org/" "$BEORG/" 2>/dev/null || true
 SYNCEOF
 root chmod +x /home/$EUSER/bin/startup-sync.sh
 root chown $EUSER:$EUSER /home/$EUSER/bin/startup-sync.sh
@@ -321,7 +322,7 @@ step "Writing git-crypt unlock helper..."
 root tee /home/$EUSER/unlock-git-crypt.sh > /dev/null << 'GCEOF'
 #!/bin/bash
 set -e
-REPO="$HOME/emacs-config"
+REPO="$HOME/emacs-data"
 echo "Paste your git-crypt key (base64), then press Ctrl-D:"
 KEY_B64=$(cat)
 echo "$KEY_B64" | base64 -d > /tmp/gc.key
@@ -335,12 +336,13 @@ root chown $EUSER:$EUSER /home/$EUSER/unlock-git-crypt.sh
 
 # ── 17. config.org fallback ───────────────────────────────────────────────────
 step "Checking config.org..."
-ICLOUD_CONFIG="/Users/${USER}/Library/Mobile Documents/com~apple~CloudDocs/${GH_REPO}/config.org"
+ICLOUD_CONFIG="/Users/${USER}/Library/Mobile Documents/com~apple~CloudDocs/${GH_REPO}/config/config.org"
 orbu bash -c "
-    if [ -f ~/emacs-config/config.org ]; then
+    if [ -f ~/emacs-data/config/config.org ]; then
         echo 'config.org present.'
     elif [ -f '${ICLOUD_CONFIG}' ]; then
-        cp '${ICLOUD_CONFIG}' ~/emacs-config/config.org
+        mkdir -p ~/emacs-data/config
+        cp '${ICLOUD_CONFIG}' ~/emacs-data/config/config.org
         echo 'config.org copied from iCloud.'
     else
         echo 'WARN: config.org not found — Emacs will start without config.'
