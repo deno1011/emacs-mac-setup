@@ -86,8 +86,6 @@ INDEX matches the number shown by `my/apple-reminders-show'."
   (my/apple-reminders--run "complete" list-name (number-to-string index))
   (message "Completed [%s] #%d" list-name index))
 
-;;; Org Integration
-
 (defun my/apple-reminders--extract-notes ()
   "Extract body text from org heading, stripping LOGBOOK and org metadata."
   (save-excursion
@@ -120,7 +118,8 @@ INDEX matches the number shown by `my/apple-reminders-show'."
         (flagged . ,flagged) (notes . ,notes)))))
 
 (defun my/org-heading-to-reminder (&optional list-name)
-  "Push org heading at point to Apple Reminders (all synced fields)."
+  "Push org heading at point to Apple Reminders (all synced fields).
+With prefix arg, prompt for list name."
   (interactive
    (when current-prefix-arg
      (list (completing-read "List: " (my/apple-reminders-lists) nil nil
@@ -136,8 +135,8 @@ INDEX matches the number shown by `my/apple-reminders-show'."
       (message "Pushed to Apple Reminders [%s]: %s" list (alist-get 'title vals)))))
 
 (defun my/apple-reminders--on-todo-state-change ()
-  "Instantly sync org TODO state to Apple Reminders via REMINDER_ID.
-DONE/CANCELLED → completed. TODO/NEXT/WAITING → reopened."
+  "Instantly sync org TODO state change to Apple Reminders via REMINDER_ID.
+DONE/CANCELLED → completed=true. TODO/NEXT/WAITING → completed=false (reopen)."
   (let ((id   (org-entry-get nil "REMINDER_ID"))
         (list (org-entry-get nil "REMINDER_LIST")))
     (when (and id list)
@@ -153,8 +152,6 @@ DONE/CANCELLED → completed. TODO/NEXT/WAITING → reopened."
 
 (add-hook 'org-after-todo-state-change-hook #'my/apple-reminders--on-todo-state-change)
 
-;;; Bidirectional Sync
-
 (defcustom my/apple-reminders-sync-list my/apple-reminders-default-list
   "Apple Reminders list used for bidirectional sync with `my/apple-reminders-sync-file'."
   :type 'string :group 'my/apple-reminders)
@@ -165,6 +162,8 @@ DONE/CANCELLED → completed. TODO/NEXT/WAITING → reopened."
 
 (defvar my/apple-reminders--syncing nil
   "Non-nil while a sync is in progress; prevents recursive save-hook calls.")
+
+;;; JXA helpers
 
 (defun my/apple-reminders--jxa-run (script)
   "Run JXA SCRIPT synchronously via osascript. Returns stdout string."
@@ -240,10 +239,13 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
       (dolist (line (split-string notes "\n"))
         (insert (format "  %s\n" line))))))
 
+;;; Push-only (org → Apple): called from save hook
+
 (defun my/apple-reminders--push-to-apple ()
   "Push org → Apple only. No fetch. New items get REMINDER_ID stamped back."
   (let* ((list-name my/apple-reminders-sync-list)
-         (n-new 0) (n-updated 0) new-pts)
+         (n-new 0) (n-updated 0)
+         new-pts)
     (org-map-entries
      (lambda ()
        (let* ((id    (org-entry-get nil "REMINDER_ID"))
@@ -268,9 +270,16 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
         (setq n-new (1+ n-new))))
     (message "Reminders push: %d new, %d updated." n-new n-updated)))
 
+;;; Full bidirectional sync (C-c r R)
+
 (defun my/apple-reminders-sync ()
   "Full bidirectional sync: `my/apple-reminders-sync-file' ↔ `my/apple-reminders-sync-list'.
-Org wins for items present in both. See module docs for full semantics."
+
+- New org item (no REMINDER_ID) → created in Apple, ID stamped back.
+- Open in both → org values pushed to Apple (org wins on conflict).
+- DONE/CANCELLED in org, open in Apple → Apple completed.
+- Open in org, completed/gone in Apple → org marked DONE.
+- Open in Apple, missing from org → pulled as new TODO heading."
   (interactive)
   (message "Reminders: syncing…")
   (let* ((list-name my/apple-reminders-sync-list)
@@ -484,7 +493,8 @@ CALLBACK receives the stdout string when the process exits."
     (let ((file (expand-file-name my/apple-reminders-agenda-file)))
       (with-temp-file file
         (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
-        (insert "#+STARTUP: overview\n\n")
+        (insert "#+STARTUP: overview\n")
+        (insert "#+TODO: TODO | DONE\n\n")
         (dolist (entry data)
           (let ((lname (alist-get 'list  entry))
                 (items (alist-get 'items entry)))
@@ -560,10 +570,12 @@ CALLBACK receives the stdout string when the process exits."
                              :key (lambda (e) (alist-get 'id e))
                              :test #'string=))))
       (when item
+        ;; Move item from cache to done-items
         (let ((done-cell (cl-assoc lname my/apple-reminders--done-items :test #'string=)))
           (if done-cell
               (setcdr done-cell (cons item (cdr done-cell)))
             (push (cons lname (list item)) my/apple-reminders--done-items)))
+        ;; Remove from cache so re-renders don't re-show it as TODO
         (let ((items-cell (assq 'items list-entry)))
           (when items-cell
             (setcdr items-cell
@@ -635,8 +647,6 @@ CALLBACK receives the stdout string when the process exits."
        (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).priority=%d;"
                (json-encode (car loc)) (json-encode (cdr loc)) prio)))))
 
-;;; Auto-Sync
-
 (defcustom my/apple-reminders-auto-sync-interval 300
   "Seconds between background Apple → org pulls. 0 to disable."
   :type 'integer :group 'my/apple-reminders)
@@ -661,11 +671,14 @@ CALLBACK receives the stdout string when the process exits."
                                   (dolist (item (or sync-items '()))
                                     (puthash (alist-get 'id item) item ht))
                                   ht)))
+             ;; Update dashboard cache and agenda file
              (setq my/apple-reminders--cache data)
              (my/apple-reminders--write-agenda-file data)
+             ;; Pull-only sync to reminders.org
              (when (and sync-items (file-exists-p file))
                (let ((my/apple-reminders--syncing t))
                  (with-current-buffer (find-file-noselect file)
+                   ;; Mark Apple-completed as DONE in org
                    (let (done-pts)
                      (org-map-entries
                       (lambda ()
@@ -676,6 +689,7 @@ CALLBACK receives the stdout string when the process exits."
                       nil nil)
                      (dolist (m (nreverse done-pts))
                        (goto-char m) (org-todo "DONE") (set-marker m nil)))
+                   ;; Pull Apple items not yet in org
                    (let ((known-ids (let (ids)
                                       (org-map-entries
                                        (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
@@ -732,12 +746,20 @@ CALLBACK receives the stdout string when the process exits."
 ;;; Org-agenda: add both files so all reminders appear in M-x org-agenda
 
 (defun my/apple-reminders--ensure-agenda-files ()
+  "Register reminder files in org-agenda-files; write agenda file if cache is ready."
   (let ((sync   (expand-file-name my/apple-reminders-sync-file))
         (agenda (and my/apple-reminders-agenda-file
                      (expand-file-name my/apple-reminders-agenda-file))))
-    (when (file-exists-p sync)   (add-to-list 'org-agenda-files sync))
-    (when (and agenda (file-exists-p agenda))
-      (add-to-list 'org-agenda-files agenda))))
+    ;; Always register both paths — org-agenda skips missing files gracefully.
+    (add-to-list 'org-agenda-files sync)
+    (when agenda
+      ;; Write agenda file now if cache is available but file hasn't been written yet.
+      (when (and my/apple-reminders--cache (not (file-exists-p agenda)))
+        (my/apple-reminders--write-agenda-file my/apple-reminders--cache))
+      (add-to-list 'org-agenda-files agenda))
+    ;; If no cache yet (first run), trigger a background pull.
+    (unless my/apple-reminders--cache
+      (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull))))
 
 (my/apple-reminders--ensure-agenda-files)
 (add-hook 'org-agenda-mode-hook #'my/apple-reminders--ensure-agenda-files)
