@@ -3,7 +3,7 @@
 # Can be run standalone at any time: bash ~/fill-config.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 TEMPLATE="$SCRIPT_DIR/setup-emacs-mac.conf.template"
 
 if [ ! -f "$CONFIG_FILE" ]; then

@@ -32,7 +32,7 @@ _other_emacs_installed() {
 }
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1
@@ -117,4 +117,4 @@ brew cleanup 2>/dev/null || true
 echo ""
 echo "Uninstall complete. Environment is clean."
 echo "The setup script remains at: ~/setup-emacs-docker-mac.sh"
-echo "The config file remains at:  ~/setup-emacs-mac.conf"
+echo "The config file remains at:  ~/emacs-mac-setup/setup-emacs-mac.conf"

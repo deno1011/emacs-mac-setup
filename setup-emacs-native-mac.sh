@@ -40,10 +40,10 @@ if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
 fi
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
-  echo "Template: ~/setup-emacs-mac.conf.template"
+  echo "Template: ~/emacs-mac-setup/setup-emacs-mac.conf.template"
   exit 1
 fi
 source "$CONFIG_FILE"
@@ -398,6 +398,6 @@ if [ -n "$GH_USER" ]; then
   echo "Your org files: ~/${GH_REPO}/data/org/"
 else
   echo "Your config:  ~/${GH_REPO}/config/  (local)"
-  echo "To enable GitHub sync: set GH_USER in ~/setup-emacs-mac.conf and re-run."
+  echo "To enable GitHub sync: set GH_USER in ~/emacs-mac-setup/setup-emacs-mac.conf and re-run."
 fi
 echo "======================================================================"

@@ -27,10 +27,10 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Read GH_REPO from ~/setup-emacs-mac.conf to locate the data repo.
+;; Read GH_REPO from ~/emacs-mac-setup/setup-emacs-mac.conf to locate the data repo.
 ;; Falls back to "emacs-data" if conf is missing or GH_REPO is unset.
 (defvar my/data-dir
-  (let* ((conf (expand-file-name "~/setup-emacs-mac.conf"))
+  (let* ((conf (expand-file-name "~/emacs-mac-setup/setup-emacs-mac.conf"))
          (repo (when (file-exists-p conf)
                  (with-temp-buffer
                    (insert-file-contents conf)

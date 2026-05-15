@@ -14,7 +14,7 @@ EUSER="emacs"
 APPS_DIR="$HOME/Applications"
 
 # ── Load personal config ───────────────────────────────────────────────────────
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [[ -f "$CONFIG_FILE" ]]; then
     source "$CONFIG_FILE"
 else

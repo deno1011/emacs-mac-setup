@@ -93,7 +93,7 @@ if [[ "$_ASK" == true ]]; then
 fi
 
 # ── load config and remove shared resources if last variant ───────────────────
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 if ! _other_emacs_installed; then

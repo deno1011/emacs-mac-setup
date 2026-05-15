@@ -39,7 +39,7 @@ unset _BREW_SHELLENV_LINE _PROFILE
 _BS_BRANCH="${1:-stable}"
 DEST="$HOME/emacs-mac-setup"
 mkdir -p "$DEST"
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 
 echo "==> Downloading all scripts to $DEST/ (branch: ${_BS_BRANCH})"
 _DL_TMP=$(mktemp -d)

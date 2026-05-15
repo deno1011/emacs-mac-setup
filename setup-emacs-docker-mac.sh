@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   echo "Please create it (template: setup-emacs-mac.conf)"
@@ -26,7 +26,7 @@ MISSING=()
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "ERROR: The following required fields are missing or empty in $CONFIG_FILE:"
   for F in "${MISSING[@]}"; do echo "  $F"; done
-  echo "Template: ~/setup-emacs-mac.conf.template"
+  echo "Template: ~/emacs-mac-setup/setup-emacs-mac.conf.template"
   exit 1
 fi
 
