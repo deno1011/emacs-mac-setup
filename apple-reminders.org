@@ -166,6 +166,125 @@ tag after pushing."
     (message "Pushed %d reminder(s) to Apple Reminders." count)))
 #+end_src
 
+* Bidirectional Sync
+
+A dedicated org file (=my/apple-reminders-sync-file=, default =~/org/reminders.org=)
+acts as the two-way bridge to one Reminders list (=my/apple-reminders-sync-list=).
+
+=C-c r R= runs a full sync — three passes in one shot:
+
+1. *Org → Reminders*: any TODO in the sync file without a =:REMINDERS_LIST:=
+   property is pushed; the property is then stamped to prevent re-pushing.
+2. *Reminders → Org*: any open reminder not found by title in the sync file
+   gets a new =TODO= heading (items added on iPhone / via Siri appear here).
+3. *Completed elsewhere → DONE*: a linked org TODO whose reminder is no longer
+   open gets marked DONE automatically.
+
+A hook fires immediately on every state change: marking a heading DONE in
+Emacs completes its reminder right away, no full sync needed.
+
+#+begin_src emacs-lisp :tangle yes
+(defcustom my/apple-reminders-sync-list my/apple-reminders-default-list
+  "Apple Reminders list used for bidirectional sync."
+  :type 'string :group 'my/apple-reminders)
+
+(defcustom my/apple-reminders-sync-file "~/org/reminders.org"
+  "Org file that mirrors `my/apple-reminders-sync-list' bidirectionally."
+  :type 'string :group 'my/apple-reminders)
+
+(defun my/apple-reminders--parse-items (output)
+  "Parse `reminders show' OUTPUT into an alist of (title . due-or-nil)."
+  (let (result)
+    (dolist (line (split-string output "\n" t))
+      (when (string-match "^[0-9]+: \\(.*?\\)\\(?:  (\\([0-9-]+\\)[^)]*)?\\)?$" line)
+        (push (cons (string-trim (match-string 1 line))
+                    (match-string 2 line))
+              result)))
+    (nreverse result)))
+
+(defun my/apple-reminders--complete-by-title (list-name title)
+  "Complete the first open reminder in LIST-NAME whose title equals TITLE."
+  (condition-case nil
+      (let* ((items (my/apple-reminders--parse-items
+                     (my/apple-reminders--run "show" list-name)))
+             (idx (cl-position title items :key #'car :test #'string=)))
+        (when idx
+          (my/apple-reminders--run "complete" list-name (number-to-string idx))))
+    (error nil)))
+
+(defun my/apple-reminders--on-todo-state-change ()
+  "Complete a reminder in Apple when its linked org heading moves to DONE."
+  (when (string= org-state "DONE")
+    (let ((rlist (org-entry-get nil "REMINDERS_LIST")))
+      (when rlist
+        (my/apple-reminders--complete-by-title
+         rlist (org-get-heading t t t t))))))
+
+(add-hook 'org-after-todo-state-change-hook
+          #'my/apple-reminders--on-todo-state-change)
+
+(defun my/apple-reminders-sync ()
+  "Bidirectional sync between `my/apple-reminders-sync-file' and Apple Reminders.
+
+Org TODO with no REMINDERS_LIST  → pushed to Reminders.
+Open reminder not in org         → new TODO heading added to sync file.
+Org TODO linked but not in open  → marked DONE (completed on other device)."
+  (interactive)
+  (let* ((list  my/apple-reminders-sync-list)
+         (file  (expand-file-name my/apple-reminders-sync-file))
+         (open  (condition-case err
+                    (my/apple-reminders--parse-items
+                     (my/apple-reminders--run "show" list))
+                  (error (user-error "Cannot fetch Reminders list %s: %s" list err))))
+         (open-titles (mapcar #'car open))
+         done-markers pushed)
+    (unless (file-exists-p file)
+      (with-temp-file file
+        (insert (format "#+TITLE: Reminders — %s\n#+STARTUP: overview\n\n" list))))
+    (with-current-buffer (find-file-noselect file)
+      ;; 1: Linked TODOs no longer open in Reminders → completed on another device
+      (org-map-entries
+       (lambda ()
+         (when (and (org-entry-get nil "REMINDERS_LIST")
+                    (member (org-get-todo-state) '("TODO" "NEXT"))
+                    (not (member (org-get-heading t t t t) open-titles)))
+           (push (point-marker) done-markers)))
+       nil nil)
+      (dolist (m (nreverse done-markers))
+        (goto-char m) (org-todo "DONE") (set-marker m nil))
+      ;; 2: Unlinked org TODOs → push to Reminders and stamp property
+      (org-map-entries
+       (lambda ()
+         (when (not (org-entry-get nil "REMINDERS_LIST"))
+           (let* ((title (org-get-heading t t t t))
+                  (dl    (org-entry-get nil "DEADLINE"))
+                  (due   (when (and dl (string-match
+                                        "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" dl))
+                           (match-string 1 dl))))
+             (my/apple-reminders-add title list due nil)
+             (org-entry-put nil "REMINDERS_LIST" list)
+             (push title pushed))))
+       "TODO={TODO\\|NEXT}" nil)
+      ;; 3: Open reminders missing from the sync file → pull as new headings
+      (let* ((existing (let (ts)
+                         (org-map-entries
+                          (lambda () (push (org-get-heading t t t t) ts)) nil nil)
+                         ts))
+             (to-pull (cl-remove-if (lambda (i) (member (car i) existing)) open)))
+        (when to-pull
+          (goto-char (point-max))
+          (dolist (item to-pull)
+            (unless (bolp) (insert "\n"))
+            (insert (if (cdr item)
+                        (format "* TODO %s\nDEADLINE: <%s>\n:PROPERTIES:\n:REMINDERS_LIST: %s\n:END:\n"
+                                (car item) (cdr item) list)
+                      (format "* TODO %s\n:PROPERTIES:\n:REMINDERS_LIST: %s\n:END:\n"
+                              (car item) list)))))
+        (save-buffer)
+        (message "Sync: %d completed elsewhere, %d pushed, %d pulled."
+                 (length done-markers) (length pushed) (length to-pull))))))
+#+end_src
+
 * Key Bindings
 
 Under =C-c r= prefix so it doesn't collide with built-in org bindings.
@@ -176,7 +295,8 @@ Under =C-c r= prefix so it doesn't collide with built-in org bindings.
   (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
   (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
   (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
-  (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders))
+  (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders)
+  (define-key org-mode-map (kbd "C-c r R") #'my/apple-reminders-sync))
 
 (if (featurep 'org)
     (my/apple-reminders--setup-keys)
@@ -189,7 +309,3 @@ Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 - Display open Apple Reminders inline in =org-agenda= via a virtual agenda
   source (similar to the calendar/diary block).
-- Bidirectional sync (mark reminder complete in Apple → mark org TODO DONE).
-- Pull reminders created on iPhone back into =inbox.org=.
-
-These require deciding on a sync strategy — see discussion notes in chat.
