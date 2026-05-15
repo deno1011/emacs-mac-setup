@@ -302,16 +302,10 @@ echo "======================================================================"
 echo "Bootstrap complete!"
 echo "======================================================================"
 echo ""
-echo "  Run a setup script when ready:"
-echo "    bash $DEST/setup-emacs-native-plus-mac.sh      # recommended (LSP, native comp)"
+echo "  Other variants — run anytime, no config changes needed:"
 echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad"
-echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
+echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker + XQuartz"
 echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
-echo ""
-  echo "  On a new Mac, just run bootstrap — GitHub user is detected automatically:"
-  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)"
-  echo ""
-echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
 echo ""
 echo "----------------------------------------------------------------------"
 echo "  Activate brew in this terminal (no restart needed):"
@@ -322,3 +316,9 @@ else
 fi
 echo "----------------------------------------------------------------------"
 echo ""
+for _i in 5 4 3 2 1; do
+  printf "\r  Starting emacs-plus setup in %d s — Ctrl-C to cancel..." "$_i"
+  sleep 1
+done
+printf "\r  Starting emacs-plus setup...                              \n\n"
+exec bash "$DEST/setup-emacs-native-plus-mac.sh"
