@@ -1,4 +1,4 @@
-;; Entry point — loads config from ~/emacs-data/config/config.org
+;; Entry point — loads config from ~/GH_REPO/config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
@@ -27,9 +27,9 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Hardcoded by setup script at install time. GH_REPO=emacs-data
-;; Re-running setup with a different GH_REPO overwrites this file.
-(defvar my/data-dir (expand-file-name "~/emacs-data/")
+;; Hardcoded by setup script at install time. Repo: GH_REPO
+;; Re-running setup with a different repo overwrites this file.
+(defvar my/data-dir (expand-file-name "~/GH_REPO/")
   "Root of the personal data repo symlink.")
 
 ;; Locate config directory: prefer live iCloud repo, fall back to local copy.

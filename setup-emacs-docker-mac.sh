@@ -351,7 +351,7 @@ echo "==> Installing init.el..."
 docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
 if [ -f "$SCRIPT_DIR/init.el" ]; then
   _INIT_TMP=$(mktemp)
-  sed "s|emacs-data|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$_INIT_TMP"
+  sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$_INIT_TMP"
   docker cp "$_INIT_TMP" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
   rm -f "$_INIT_TMP"
   docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el

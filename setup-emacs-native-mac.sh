@@ -347,7 +347,7 @@ echo "    config-readonly/ updated."
 # --- init.el — always update (managed by setup, not user-customized) ---
 if [ -f "$SCRIPT_DIR/init.el" ]; then
   mkdir -p "$HOME/.emacs.d"
-  sed "s|emacs-data|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$EMACS_INIT"
+  sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$EMACS_INIT"
   echo "==> init.el updated."
 else
   echo "ERROR: init.el not found — re-run bootstrap.sh."

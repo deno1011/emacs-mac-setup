@@ -352,7 +352,7 @@ if [ ! -f "$SCRIPT_DIR/init.el" ]; then
   echo "ERROR: init.el not found in $SCRIPT_DIR — run bootstrap.sh first."
   exit 1
 fi
-sed "s|emacs-data|${GH_REPO}|g" "$SCRIPT_DIR/init.el" | root tee /home/$EUSER/.emacs.d/init.el > /dev/null
+sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" | root tee /home/$EUSER/.emacs.d/init.el > /dev/null
 root chown $EUSER:$EUSER /home/$EUSER/.emacs.d/init.el
 
 # ── 16. unlock-git-crypt helper ───────────────────────────────────────────────
