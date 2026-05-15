@@ -161,7 +161,7 @@ elif [ -n "$_BS_GH_USER" ]; then
   _DATA_REPO_NAME=""
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     echo "    Scanning your repos for newest setup-emacs-mac.conf..."
-    _REPOS=$(gh api "user/repos?sort=pushed&direction=desc&per_page=30" \
+    _REPOS=$(gh api "user/repos?sort=pushed&direction=desc" --paginate \
       --jq '.[].name' 2>/dev/null) || true
     _BEST_DATE=""
     for _SCAN_REPO in $_REPOS; do
