@@ -186,8 +186,9 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (add-hook 'org-mode-hook
           (lambda ()
             (when (and buffer-file-name
-                       (or (string-match-p "/emacs-data/config/" buffer-file-name)
-                           (string-match-p "/emacs-data/data/org/" buffer-file-name))
+                       my/data-dir
+                       (or (string-match-p (regexp-quote (expand-file-name "config/" my/data-dir)) buffer-file-name)
+                           (string-match-p (regexp-quote (expand-file-name "data/org/" my/data-dir)) buffer-file-name))
                        (not (string-match-p "config\\.org$" buffer-file-name)))
               (git-auto-commit-mode 1))))
 #+end_src

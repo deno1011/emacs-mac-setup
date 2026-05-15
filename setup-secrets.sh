@@ -36,9 +36,9 @@ else
   fi
   source "$HOME/bw-unlock.sh"
   bw_ensure_session || exit 1
-  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_ANTHROPIC_FIELD")
+  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD")
   if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "ERROR: Key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM, field: $BW_ANTHROPIC_FIELD)."
+    echo "ERROR: Key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM, field: $BW_FIELD)."
     echo "       Create the entry and run again."
     exit 1
   fi

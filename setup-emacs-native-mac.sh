@@ -69,7 +69,7 @@ if [ -n "$GH_USER" ]; then
   ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
   EMACS_CONFIG_DIR="$HOME/$GH_REPO"
 else
-  EMACS_CONFIG_DIR="$HOME/emacs-data"
+  EMACS_CONFIG_DIR="$HOME/${GH_REPO:-emacs-data}"
   echo "==> GitHub not configured — using local config."
 fi
 
@@ -259,13 +259,13 @@ HOOKEOF
   fi
 
   if [ -L "$EMACS_CONFIG_DIR" ] && [ "$(readlink "$EMACS_CONFIG_DIR")" = "$ICLOUD_REPO_PATH" ]; then
-    skip "Symlink ~/emacs-data"
+    skip "Symlink ~/${GH_REPO}"
   else
-    echo "==> Symlink ~/emacs-data → iCloud erstellen..."
+    echo "==> Symlink ~/${GH_REPO} → iCloud erstellen..."
     ln -sfn "$ICLOUD_REPO_PATH" "$EMACS_CONFIG_DIR"
   fi
 
-  echo "==> Saving setup-emacs-mac.conf to ~/emacs-data/config/..."
+  echo "==> Saving setup-emacs-mac.conf to ~/${GH_REPO}/config/..."
   cp "$CONFIG_FILE" "$ICLOUD_REPO_PATH/config/setup-emacs-mac.conf"
   git -C "$ICLOUD_REPO_PATH" add "config/setup-emacs-mac.conf"
   git -C "$ICLOUD_REPO_PATH" commit -m "chore: update setup-emacs-mac.conf" \
@@ -275,14 +275,14 @@ HOOKEOF
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
     mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
-    echo "==> ~/emacs-data/ created."
+    echo "==> ~/${GH_REPO}/ created."
   fi
   if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
     cp "$SCRIPT_DIR/config.org"      "$EMACS_CONFIG_DIR/config/config.org"
     cp "$SCRIPT_DIR/core.org"        "$EMACS_CONFIG_DIR/config/core.org"        2>/dev/null || true
     cp "$SCRIPT_DIR/org-setup.org"   "$EMACS_CONFIG_DIR/config/org-setup.org"   2>/dev/null || true
     cp "$SCRIPT_DIR/gptel-setup.org" "$EMACS_CONFIG_DIR/config/gptel-setup.org" 2>/dev/null || true
-    echo "==> Config files copied to ~/emacs-data/config/."
+    echo "==> Config files copied to ~/${GH_REPO}/config/."
   elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
     skip "config.org (already present)"
   else
@@ -345,10 +345,10 @@ echo ""
 echo "Start Emacs:  open \"/Applications/$_EMACS_APP_NAME\""
 echo ""
 if [ -n "$GH_USER" ]; then
-  echo "Your config:  ~/emacs-data/config/  (synced via iCloud + GitHub)"
-  echo "Your org files: ~/emacs-data/data/org/"
+  echo "Your config:  ~/${GH_REPO}/config/  (synced via iCloud + GitHub)"
+  echo "Your org files: ~/${GH_REPO}/data/org/"
 else
-  echo "Your config:  ~/emacs-data/config/  (local)"
+  echo "Your config:  ~/${GH_REPO}/config/  (local)"
   echo "To enable GitHub sync: set GH_USER in ~/setup-emacs-mac.conf and re-run."
 fi
 echo "======================================================================"
