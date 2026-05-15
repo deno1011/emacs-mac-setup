@@ -8,14 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 skip() { echo "==> Already done: $1 — skipping."; }
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   echo "Please create it (template: setup-emacs-mac.conf)"
   exit 1
 fi
 source "$CONFIG_FILE"
-source "$HOME/bw-unlock.sh"
+source "$SCRIPT_DIR/bw-unlock.sh"
 
 # --- Check required fields ---
 MISSING=()
@@ -26,7 +26,7 @@ MISSING=()
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "ERROR: The following required fields are missing or empty in $CONFIG_FILE:"
   for F in "${MISSING[@]}"; do echo "  $F"; done
-  echo "Template: ~/setup-emacs-mac.conf.template"
+  echo "Template: ~/emacs-mac-setup/setup-emacs-mac.conf.template"
   exit 1
 fi
 
@@ -208,6 +208,7 @@ RUN apt-get update && apt-get install -y \
     texlive-latex-extra \
     texlive-fonts-recommended \
     texlive-science \
+    rsync \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -346,19 +347,18 @@ if ! docker ps -aq -f name="$DOCKER_CONTAINER" 2>/dev/null | grep -q .; then
     "$DOCKER_IMAGE" sleep infinity
 fi
 
-# --- init.el ---
-if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.emacs.d/init.el 2>/dev/null; then
-  skip "init.el (already present)"
+# --- init.el — always update (managed by setup, not user-customized) ---
+echo "==> Installing init.el..."
+docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
+if [ -f "$SCRIPT_DIR/init.el" ]; then
+  _INIT_TMP=$(mktemp)
+  sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$_INIT_TMP"
+  docker cp "$_INIT_TMP" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
+  rm -f "$_INIT_TMP"
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
 else
-  echo "==> Installing init.el..."
-  docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
-  if [ -f "$SCRIPT_DIR/init.el" ]; then
-    docker cp "$SCRIPT_DIR/init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/init.el"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/init.el
-  else
-    echo "ERROR: init.el not found — run bootstrap.sh first."
-    exit 1
-  fi
+  echo "ERROR: init.el not found — run bootstrap.sh first."
+  exit 1
 fi
 
 # --- Git identity ---
@@ -406,7 +406,7 @@ fi
 
 HOOK="\$REPO/.git/hooks/post-commit"
 if [ ! -f "\$HOOK" ]; then
-  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
+  printf '#!/bin/bash\nREPO="\$(git rev-parse --show-toplevel)"\nrsync -a --delete "\$REPO/data/org/" /beorg/ 2>/dev/null || true\ngit push origin main 2>/dev/null || true &\n' > "\$HOOK"
   chmod +x "\$HOOK"
 fi
 
@@ -415,7 +415,7 @@ if [ -f "\$KEY" ] && [ -d "\$REPO/.git" ]; then
   git -C "\$REPO" crypt unlock "\$KEY" 2>/dev/null || true
 fi
 
-[ -d "\$BEORG" ] && [ -d "\$REPO/org" ] && rsync -a --delete "\$REPO/org/" "\$BEORG/" 2>/dev/null || true
+[ -d "\$BEORG" ] && [ -d "\$REPO/data/org" ] && rsync -a --delete "\$REPO/data/org/" "\$BEORG/" 2>/dev/null || true
 EOF
   docker cp "$_SYNC_TMP" "$DOCKER_CONTAINER:/home/emacs/bin/startup-sync.sh"
   docker exec --user root "$DOCKER_CONTAINER" chmod +x /home/emacs/bin/startup-sync.sh
@@ -431,19 +431,50 @@ else
   docker exec "$DOCKER_CONTAINER" /home/emacs/bin/startup-sync.sh || true
 fi
 
-# --- config.org fallback (only if repo didn't provide one) ---
-if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config.org" 2>/dev/null; then
-  skip "config.org (already present from cloned repo)"
+# --- Detect GH_REPO rename inside container ---
+_OLD_REPO=$(docker exec "$DOCKER_CONTAINER" bash -c "
+  for d in /home/emacs/*/; do
+    name=\$(basename \"\${d%/}\")
+    [ \"\$name\" = '${GH_REPO}' ] && continue
+    if [ -d \"\${d%/}/.git\" ]; then
+      remote=\$(git -C \"\${d%/}\" remote get-url origin 2>/dev/null) || true
+      if echo \"\$remote\" | grep -q 'github.com/${GH_USER}/'; then
+        echo \"\$name\"; break
+      fi
+    fi
+  done
+" 2>/dev/null) || true
+
+if [ -n "$_OLD_REPO" ]; then
+  echo "==> GH_REPO renamed in container: $_OLD_REPO → $GH_REPO"
+  docker exec "$DOCKER_CONTAINER" bash -c "mv /home/emacs/$_OLD_REPO /home/emacs/$GH_REPO 2>/dev/null || true"
+  docker exec "$DOCKER_CONTAINER" bash -c "git -C /home/emacs/$GH_REPO remote set-url origin 'https://github.com/$GH_USER/$GH_REPO.git' 2>/dev/null || true"
+  echo "    Container repo folder renamed and remote updated."
+fi
+unset _OLD_REPO
+
+# --- config.org: only copy if missing (user-managed) ---
+if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config/config.org" 2>/dev/null; then
+  skip "config.org (user-managed — not overwritten)"
 else
   echo "==> Copying starter config.org into container..."
-  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}"
+  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
   if [ -f "$SCRIPT_DIR/config.org" ]; then
-    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config.org"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config.org"
+    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config/config.org"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config/config.org"
   else
     echo "WARN: config.org not found in script dir — Emacs will use built-in defaults."
   fi
 fi
+# Modular config files are setup-managed — always update from SCRIPT_DIR
+for _CF in core.org org-setup.org gptel-setup.org; do
+  if [ -f "$SCRIPT_DIR/$_CF" ]; then
+    docker cp "$SCRIPT_DIR/$_CF" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config/$_CF"
+    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config/$_CF"
+    echo "==> $_CF updated in container."
+  fi
+done
+unset _CF
 
 echo "==> Verifying container..."
 docker exec "$DOCKER_CONTAINER" emacs --version

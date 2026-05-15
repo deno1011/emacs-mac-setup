@@ -40,16 +40,14 @@ if brew list 2>/dev/null | grep -q "^${_EMACS_PKG}"; then
 fi
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
-  echo "Template: ~/setup-emacs-mac.conf.template"
+  echo "Template: ~/emacs-mac-setup/setup-emacs-mac.conf.template"
   exit 1
 fi
 source "$CONFIG_FILE"
-# Normalise CONF_REPO: strip any leading "user/" prefix in case the config contains the full form
-CONF_REPO="${CONF_REPO##*/}"
-source "$HOME/bw-unlock.sh"
+source "$SCRIPT_DIR/bw-unlock.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
@@ -71,7 +69,7 @@ if [ -n "$GH_USER" ]; then
   ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
   EMACS_CONFIG_DIR="$HOME/$GH_REPO"
 else
-  EMACS_CONFIG_DIR="$HOME/emacs-config"
+  EMACS_CONFIG_DIR="$HOME/${GH_REPO:-emacs-data}"
   echo "==> GitHub not configured — using local config."
 fi
 
@@ -88,13 +86,11 @@ done
 
 # --- Unlock Bitwarden upfront (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
-  if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ ! -f "$EMACS_SECRETS" ]; then
-    if ! command -v bw &>/dev/null; then
-      echo "==> Installing Bitwarden CLI..."
-      brew install bitwarden-cli
-    fi
-    bw_ensure_session || exit 1
+  if ! command -v bw &>/dev/null; then
+    echo "==> Installing Bitwarden CLI..."
+    brew install bitwarden-cli
   fi
+  bw_ensure_session || exit 1
 fi
 
 # --- Tools (GitHub mode only) ---
@@ -173,28 +169,66 @@ if [ -n "$GH_USER" ]; then
     fi
   fi
 
-  # --- Pull conf from private repo (if configured) ---
-  if [ -n "$CONF_REPO" ]; then
-    CONF_URL="https://github.com/${GH_USER}/${CONF_REPO}.git"
-    CONF_TMP=$(mktemp -d)
-    if git clone "$CONF_URL" "$CONF_TMP" &>/dev/null 2>&1; then
-      if [ -f "$CONF_TMP/setup-emacs-mac.conf" ]; then
-        cp "$CONF_TMP/setup-emacs-mac.conf" "$CONFIG_FILE"
-        source "$CONFIG_FILE"
-        echo "==> setup-emacs-mac.conf updated from private repo."
-      fi
-    else
-      echo "WARN: Private conf repo not reachable ($CONF_REPO) — using local config."
-    fi
-    rm -rf "$CONF_TMP"
-    ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
-    EMACS_CONFIG_DIR="$HOME/$GH_REPO"
+  # --- Use conf from emacs-data if already present (subsequent installs) ---
+  _EMACS_DATA_CONF="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO/config/setup-emacs-mac.conf"
+  if [ -f "$_EMACS_DATA_CONF" ]; then
+    cp "$_EMACS_DATA_CONF" "$CONFIG_FILE"
+    source "$CONFIG_FILE"
+    echo "==> setup-emacs-mac.conf loaded from emacs-data/config/."
   fi
+
+  # Detect GH_REPO rename — find iCloud symlink from same GitHub user with different name
+  _OLD_REPO=""
+  while IFS= read -r -d '' _LINK; do
+    _CNAME=$(basename "$_LINK")
+    [ "$_CNAME" = "$GH_REPO" ] && continue
+    _TARGET=$(readlink "$_LINK")
+    if [[ "$_TARGET" == *"CloudDocs"* ]] && [ -d "$_LINK/.git" ]; then
+      _REMOTE=$(git -C "$_LINK" remote get-url origin 2>/dev/null) || true
+      if [[ "$_REMOTE" == *"github.com/$GH_USER/"* ]]; then
+        _OLD_REPO="$_CNAME"; break
+      fi
+    fi
+  done < <(find "$HOME" -maxdepth 1 -type l -print0 2>/dev/null)
+
+  if [ -n "$_OLD_REPO" ]; then
+    echo "==> GH_REPO renamed: $_OLD_REPO → $GH_REPO"
+    _OLD_ICLOUD="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$_OLD_REPO"
+    gh api "repos/$GH_USER/$_OLD_REPO" -X PATCH -f name="$GH_REPO" &>/dev/null \
+      && echo "    GitHub repo renamed." || echo "    WARN: GitHub rename failed — do it manually in repo settings."
+    if [ -d "$_OLD_ICLOUD" ] && [ ! -d "$ICLOUD_REPO_PATH" ]; then
+      mv "$_OLD_ICLOUD" "$ICLOUD_REPO_PATH" && echo "    iCloud folder renamed."
+    fi
+    [ -d "$ICLOUD_REPO_PATH/.git" ] && \
+      git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/$GH_USER/$GH_REPO.git"
+    rm -f "$HOME/$_OLD_REPO"
+    ln -sfn "$ICLOUD_REPO_PATH" "$HOME/$GH_REPO"
+    echo "    Symlink updated: ~/$_OLD_REPO → ~/$GH_REPO"
+  fi
+  unset _OLD_REPO _LINK _CNAME _TARGET _REMOTE _OLD_ICLOUD
 
   if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
+    # Modular config files are setup-managed — always overwrite from SCRIPT_DIR
+    _CF_CHANGED=false
+    for _CF in core.org org-setup.org gptel-setup.org; do
+      if [ -f "$SCRIPT_DIR/$_CF" ]; then
+        if ! diff -q "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF" &>/dev/null; then
+          cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
+          git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
+          echo "==> $_CF updated in repo."
+          _CF_CHANGED=true
+        fi
+      fi
+    done
+    if [ "$_CF_CHANGED" = true ]; then
+      git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
+        commit -m "chore: update modular config files" 2>/dev/null || true
+      git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
+    fi
+    unset _CF _CF_CHANGED
   else
     echo "==> Cloning repo to iCloud..."
     if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
@@ -204,9 +238,13 @@ if [ -n "$GH_USER" ]; then
     fi
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
-    if [ ! -f "$ICLOUD_REPO_PATH/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-      cp "$SCRIPT_DIR/config.org" "$ICLOUD_REPO_PATH/config.org"
-      echo "    config.org copied from local fallback."
+    mkdir -p "$ICLOUD_REPO_PATH/config" "$ICLOUD_REPO_PATH/data/org"
+    if [ ! -f "$ICLOUD_REPO_PATH/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+      cp "$SCRIPT_DIR/config.org"      "$ICLOUD_REPO_PATH/config/config.org"
+      cp "$SCRIPT_DIR/core.org"        "$ICLOUD_REPO_PATH/config/core.org"        2>/dev/null || true
+      cp "$SCRIPT_DIR/org-setup.org"   "$ICLOUD_REPO_PATH/config/org-setup.org"   2>/dev/null || true
+      cp "$SCRIPT_DIR/gptel-setup.org" "$ICLOUD_REPO_PATH/config/gptel-setup.org" 2>/dev/null || true
+      echo "    Config files copied to config/ subfolder."
     fi
 
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
@@ -214,7 +252,7 @@ if [ -n "$GH_USER" ]; then
 
     cat > "$ICLOUD_REPO_PATH/.git/hooks/post-commit" << 'HOOKEOF'
 #!/bin/sh
-REPO_ORG="$(git rev-parse --show-toplevel)/org"
+REPO_ORG="$(git rev-parse --show-toplevel)/data/org"
 BEORG="$HOME/Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
 [ -d "$BEORG" ] && rsync -a --delete "$REPO_ORG/" "$BEORG/" 2>/dev/null || true
 git push origin main &
@@ -227,7 +265,7 @@ HOOKEOF
   _GC_INITIALIZED=false
   [ -d "$ICLOUD_REPO_PATH/.git/git-crypt" ] && _GC_INITIALIZED=true
 
-  _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/org" -name "*.org" 2>/dev/null | head -1)
+  _FIRST_ORG=$(find "$ICLOUD_REPO_PATH/data/org" -name "*.org" 2>/dev/null | head -1)
   _FILES_ENCRYPTED=false
   [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
 
@@ -240,16 +278,16 @@ HOOKEOF
           (cd "$ICLOUD_REPO_PATH" && git crypt init) 2>/dev/null
           cp /tmp/gckey "$ICLOUD_REPO_PATH/.git/git-crypt/keys/default"
           if [ ! -f "$ICLOUD_REPO_PATH/.gitattributes" ]; then
-            echo "org/** filter=git-crypt diff=git-crypt" > "$ICLOUD_REPO_PATH/.gitattributes"
+            echo "data/org/** filter=git-crypt diff=git-crypt" > "$ICLOUD_REPO_PATH/.gitattributes"
             git -C "$ICLOUD_REPO_PATH" add .gitattributes
             git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
-              commit -m "Add git-crypt for org/ directory" 2>/dev/null || true
+              commit -m "Add git-crypt for data/org/ directory" 2>/dev/null || true
             git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
           fi
           echo "    git-crypt initialised."
         else
           if git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey 2>/dev/null; then
-            git -C "$ICLOUD_REPO_PATH" checkout HEAD -- org/ 2>/dev/null || true
+            git -C "$ICLOUD_REPO_PATH" checkout HEAD -- data/org/ 2>/dev/null || true
             echo "    git-crypt unlocked and org/ checked out."
           else
             echo "WARN: git-crypt unlock failed — org/ files still encrypted."
@@ -263,44 +301,57 @@ HOOKEOF
       echo "WARN: git-crypt key not found in Bitwarden."
     fi
   else
-    skip "git-crypt (org/ already decrypted)"
+    skip "git-crypt (data/org/ already decrypted)"
   fi
 
   if [ -L "$EMACS_CONFIG_DIR" ] && [ "$(readlink "$EMACS_CONFIG_DIR")" = "$ICLOUD_REPO_PATH" ]; then
-    skip "Symlink ~/emacs-config"
+    skip "Symlink ~/${GH_REPO}"
   else
-    echo "==> Symlink ~/emacs-config → iCloud erstellen..."
+    echo "==> Symlink ~/${GH_REPO} → iCloud erstellen..."
     ln -sfn "$ICLOUD_REPO_PATH" "$EMACS_CONFIG_DIR"
   fi
+
+  echo "==> Saving setup-emacs-mac.conf to ~/${GH_REPO}/config/..."
+  cp "$CONFIG_FILE" "$ICLOUD_REPO_PATH/config/setup-emacs-mac.conf"
+  git -C "$ICLOUD_REPO_PATH" add "config/setup-emacs-mac.conf"
+  git -C "$ICLOUD_REPO_PATH" commit -m "chore: update setup-emacs-mac.conf" \
+    -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" 2>/dev/null || true
 
 # --- Local mode: config.org from scripts folder ---
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
-    mkdir -p "$EMACS_CONFIG_DIR"
-    echo "==> ~/emacs-config/ created."
+    mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
+    echo "==> ~/${GH_REPO}/ created."
   fi
-  if [ ! -f "$EMACS_CONFIG_DIR/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config.org"
-    echo "==> config.org copied to ~/emacs-config/."
-  elif [ -f "$EMACS_CONFIG_DIR/config.org" ]; then
-    skip "config.org (already present)"
+  if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
+    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
+    echo "==> config.org copied to ~/${GH_REPO}/config/."
+  elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
+    skip "config.org (user-managed — not overwritten)"
   else
     echo "WARN: No config.org found — Emacs will start with basic setup."
   fi
+  # Modular files are setup-managed — always update like init.el
+  for _CF in core.org org-setup.org gptel-setup.org; do
+    [ -f "$SCRIPT_DIR/$_CF" ] && cp "$SCRIPT_DIR/$_CF" "$EMACS_CONFIG_DIR/config/$_CF" \
+      && echo "==> $_CF updated."
+  done
+  unset _CF
 fi
 
-# --- init.el ---
-if [ -f "$EMACS_INIT" ]; then
-  skip "init.el"
-else
+echo "==> Populating ~/.emacs.d/config-readonly/..."
+mkdir -p "$HOME/.emacs.d/config-readonly"
+rsync -a --delete "$EMACS_CONFIG_DIR/config/" "$HOME/.emacs.d/config-readonly/"
+echo "    config-readonly/ updated."
+
+# --- init.el — always update (managed by setup, not user-customized) ---
+if [ -f "$SCRIPT_DIR/init.el" ]; then
   mkdir -p "$HOME/.emacs.d"
-  if [ -f "$SCRIPT_DIR/init.el" ]; then
-    cp "$SCRIPT_DIR/init.el" "$EMACS_INIT"
-    echo "==> init.el installiert."
-  else
-    echo "ERROR: init.el not found — re-run bootstrap.sh."
-    exit 1
-  fi
+  sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" > "$EMACS_INIT"
+  echo "==> init.el updated."
+else
+  echo "ERROR: init.el not found — re-run bootstrap.sh."
+  exit 1
 fi
 
 # --- secrets.el ---
@@ -343,10 +394,10 @@ echo ""
 echo "Start Emacs:  open \"/Applications/$_EMACS_APP_NAME\""
 echo ""
 if [ -n "$GH_USER" ]; then
-  echo "Your config:  ~/emacs-config/config.org  (synced via iCloud + GitHub)"
-  echo "Your org files: ~/emacs-config/org/"
+  echo "Your config:  ~/${GH_REPO}/config/  (synced via iCloud + GitHub)"
+  echo "Your org files: ~/${GH_REPO}/data/org/"
 else
-  echo "Your config:  ~/emacs-config/config.org  (local)"
-  echo "To enable GitHub sync: set GH_USER in ~/setup-emacs-mac.conf and re-run."
+  echo "Your config:  ~/${GH_REPO}/config/  (local)"
+  echo "To enable GitHub sync: set GH_USER in ~/emacs-mac-setup/setup-emacs-mac.conf and re-run."
 fi
 echo "======================================================================"

@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: $CONFIG_FILE not found. Run bootstrap.sh first."
   exit 1
@@ -31,14 +32,14 @@ if [ -f "$SECRETS_REPO" ] && grep -q "setenv" "$SECRETS_REPO" 2>/dev/null; then
 else
   echo "==> Repo file missing or still encrypted — fetching key from Bitwarden..."
   if ! command -v bw &>/dev/null; then
-    echo "ERROR: Bitwarden CLI not installed. Run ~/setup-bitwarden.sh first."
+    echo "ERROR: Bitwarden CLI not installed. Run $SCRIPT_DIR/setup-bitwarden.sh first."
     exit 1
   fi
-  source "$HOME/bw-unlock.sh"
+  source "$SCRIPT_DIR/bw-unlock.sh"
   bw_ensure_session || exit 1
-  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_ANTHROPIC_FIELD")
+  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD")
   if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "ERROR: Key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM, field: $BW_ANTHROPIC_FIELD)."
+    echo "ERROR: Key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM, field: $BW_FIELD)."
     echo "       Create the entry and run again."
     exit 1
   fi

@@ -1,4 +1,4 @@
-;; Entry point → ~/emacs-config/config.org
+;; Entry point — loads config from ~/GH_REPO/config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
@@ -27,26 +27,24 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Locate config directory: prefer the fixed symlink (native setup always creates
-;; ~/emacs-config → iCloud repo), fall back to ~/GH_REPO for Docker/OrbStack installs
-;; where GH_REPO is injected as an environment variable by the setup script
-;; (docker run -e GH_REPO=... / OrbStack VM shell profile).
+;; Hardcoded by setup script at install time. Repo: GH_REPO
+;; Re-running setup with a different repo overwrites this file.
+(defvar my/data-dir (expand-file-name "~/GH_REPO/")
+  "Root of the personal data repo symlink.")
+
+;; Locate config directory: prefer live iCloud repo, fall back to local copy.
 (defvar my/config-dir
-  (let ((symlink  (expand-file-name "~/emacs-config/"))
-        (from-env (when (getenv "GH_REPO")
-                    (expand-file-name (concat "~/" (getenv "GH_REPO") "/")))))
+  (let ((primary  (expand-file-name "config/" my/data-dir))
+        (fallback (expand-file-name "~/.emacs.d/config-readonly/")))
     (cond
-     ((file-directory-p symlink)                 symlink)
-     ((and from-env (file-directory-p from-env)) from-env)
+     ((file-directory-p primary)  primary)
+     ((file-directory-p fallback) fallback)
      (t nil)))
   "Directory containing the Emacs config org files.")
 
-;; Warn after init if org files look encrypted (git-crypt not unlocked).
 (add-hook 'after-init-hook
           (lambda ()
-            (let* ((repo-dir (or my/config-dir
-                                 (expand-file-name "~/emacs-config/")))
-                   (org-dir (expand-file-name "org/" repo-dir))
+            (let* ((org-dir   (expand-file-name "data/org/" my/data-dir))
                    (first-org (car (and (file-directory-p org-dir)
                                         (directory-files org-dir t "\\.org$")))))
               (when (and first-org
@@ -55,21 +53,8 @@
                            (string-match-p "\x00" (buffer-string))))
                 (display-warning
                  'emacs-setup
-                 "Org files appear encrypted (git-crypt not unlocked).\nRun: bash ~/unlock-git-crypt.sh"
+                 (format "Org files appear encrypted (git-crypt not unlocked).\nRun: bash ~/unlock-git-crypt.sh")
                  :warning)))))
-
-(custom-set-variables
- ;; custom-set-variables was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- '(package-selected-packages nil))
-(custom-set-faces
- ;; custom-set-faces was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- )
 
 ;; Load config last — config.org bootstraps and loads the split files.
 (if my/config-dir
@@ -79,4 +64,5 @@
               (org-babel-load-file path)
             (error (message "CONFIG LOAD ERROR: %s" err)))
         (message "CONFIG NOT FOUND: %s" path)))
-  (message "CONFIG DIR NOT FOUND: ~/emacs-config/ not found and GH_REPO env var not set"))
+  (message "CONFIG DIR NOT FOUND: %s not found and ~/.emacs.d/config-readonly/ not found"
+           (expand-file-name "config/" my/data-dir)))

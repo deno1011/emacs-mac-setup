@@ -7,7 +7,7 @@
 #   VALUE=$(bw_get_field "item-name" "field-name")
 
 bw_ensure_session() {
-  local _CFG="$HOME/setup-emacs-mac.conf"
+  local _CFG="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
   [ -f "$_CFG" ] && source "$_CFG"
   local _KC_ACC="${BW_KEYCHAIN_ACCOUNT:-$USER}"
   local _KC_SVC="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
@@ -44,7 +44,7 @@ bw_ensure_session() {
 
   if [ -z "$BW_SESSION" ]; then
     echo "ERROR: Bitwarden unlock failed. To reset:" >&2
-    echo "  bash ~/remove-bitwarden-keychain.sh" >&2
+    echo "  bash ~/emacs-mac-setup/remove-bitwarden-keychain.sh" >&2
     return 1
   fi
   export BW_SESSION

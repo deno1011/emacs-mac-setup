@@ -52,11 +52,8 @@ if [[ "$_ASK" == true ]]; then
     [[ "$_REPLY" == "yes" ]] || { echo "Aborted."; exit 0; }
 fi
 
-step "Stopping machine '$MACHINE'..."
-orb stop "$MACHINE" 2>/dev/null || warn "Machine was not running."
-
 step "Deleting machine '$MACHINE'..."
-orb delete "$MACHINE" 2>/dev/null || warn "Machine not found — already deleted?"
+orb delete --force "$MACHINE" 2>/dev/null || warn "Machine not found — already deleted?"
 
 # ── remove app bundles ────────────────────────────────────────────────────────
 step "Removing app bundles..."
@@ -93,7 +90,7 @@ if [[ "$_ASK" == true ]]; then
 fi
 
 # ── load config and remove shared resources if last variant ───────────────────
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 if ! _other_emacs_installed; then

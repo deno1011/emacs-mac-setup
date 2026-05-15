@@ -1,6 +1,6 @@
 #!/bin/bash
 
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1

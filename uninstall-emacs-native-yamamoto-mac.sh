@@ -39,7 +39,7 @@ _other_emacs_installed() {
 }
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1
@@ -58,11 +58,12 @@ if ! _other_emacs_installed; then
   echo "==> Removing ~/.emacs.d (init.el, secrets.el, packages)..."
   rm -rf "$HOME/.emacs.d" && echo "    ~/.emacs.d removed." || echo "    ~/.emacs.d not found."
 
-  echo "==> Removing symlink ~/emacs-config..."
+  echo "==> Removing symlink ~/emacs-data..."
   rm -f "$SYMLINK" && echo "    Symlink removed." || echo "    Symlink not found."
 
-  echo "==> Removing iCloud repo..."
-  rm -rf "$ICLOUD_REPO_PATH" && echo "    iCloud repo removed." || echo "    iCloud repo not found."
+  echo "==> Preserving data repo — your org files and config are safe."
+  echo "    Location: $ICLOUD_REPO_PATH"
+  echo "    To fully remove later: rm -rf \"$ICLOUD_REPO_PATH\""
 
   echo "    Bitwarden keychain entry preserved — to remove: ~/remove-bitwarden-keychain.sh"
 

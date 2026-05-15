@@ -139,7 +139,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 
 #+begin_src emacs-lisp :tangle yes
 (defvar my/gptel-protected-files
-  (list (expand-file-name "~/emacs-config/config.org")
+  (list (expand-file-name "config/config.org" my/data-dir)
         (expand-file-name "~/.emacs.d/init.el")
         (expand-file-name "~/.emacs.d/config.el"))
   "Files that gptel write tools may never overwrite.")
@@ -186,7 +186,9 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (add-hook 'org-mode-hook
           (lambda ()
             (when (and buffer-file-name
-                       (string-match-p "/org/" buffer-file-name)
+                       my/data-dir
+                       (or (string-match-p (regexp-quote (expand-file-name "config/" my/data-dir)) buffer-file-name)
+                           (string-match-p (regexp-quote (expand-file-name "data/org/" my/data-dir)) buffer-file-name))
                        (not (string-match-p "config\\.org$" buffer-file-name)))
               (git-auto-commit-mode 1))))
 #+end_src
@@ -223,12 +225,14 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
                    org-d (file-name-as-directory beorg))))
 
 (defun my/startup-sync ()
-  "Pull emacs-config from origin on startup; unlock git-crypt if needed; sync org/ to beorg."
-  (let* ((repo  (file-truename (expand-file-name "~/emacs-config")))
-         (org-d (file-name-as-directory (expand-file-name "org" repo)))
-         (beorg (expand-file-name
-                 "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
-                 (getenv "HOME"))))
+  "Pull emacs-data from origin on startup; unlock git-crypt if needed; sync config-readonly/ and beorg."
+  (let* ((repo     (file-truename my/data-dir))
+         (config-d (file-name-as-directory (expand-file-name "config" repo)))
+         (org-d    (file-name-as-directory (expand-file-name "data/org" repo)))
+         (readonly (expand-file-name "~/.emacs.d/config-readonly/"))
+         (beorg    (expand-file-name
+                    "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
+                    (getenv "HOME"))))
     (when (and (file-directory-p repo)
                (file-directory-p (expand-file-name ".git" repo)))
       (let ((proc (let ((default-directory repo))
@@ -239,17 +243,17 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
          (lambda (p _)
            (when (= (process-exit-status p) 0)
              (message "Startup sync: pull complete.")
+             (when (file-directory-p config-d)
+               (make-directory readonly t)
+               (start-process "config-readonly-sync" " *config-readonly-sync*"
+                              "rsync" "-a" "--delete"
+                              config-d readonly))
              (if (not (my/org-encrypted-p org-d))
                  (progn (my/revert-org-buffers)
                         (my/beorg-sync org-d beorg))
-               ;; Org files are encrypted — git-crypt refuses to unlock when
-               ;; the working tree is dirty. Surgically reset only the
-               ;; encrypted paths (org/, emacs.d/secrets.el) and the
-               ;; auto-generated config.el. Real edits (config.org) are
-               ;; left untouched; if they still block unlock, warn the user.
                (when (my/repo-dirty-p repo)
                  (call-process "git" nil nil nil "-C" repo
-                               "checkout" "--" "org/" "emacs.d/secrets.el" "config.el")
+                               "checkout" "--" "data/org/" "emacs.d/secrets.el" "config.el")
                  (if (my/repo-dirty-p repo)
                      (display-warning 'emacs-setup
                       (concat "Uncommitted changes block git-crypt unlock.\n"
