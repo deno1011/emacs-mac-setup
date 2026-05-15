@@ -44,7 +44,7 @@ bw_ensure_session() {
 
   if [ -z "$BW_SESSION" ]; then
     echo "ERROR: Bitwarden unlock failed. To reset:" >&2
-    echo "  bash ~/remove-bitwarden-keychain.sh" >&2
+    echo "  bash ~/emacs-mac-setup/remove-bitwarden-keychain.sh" >&2
     return 1
   fi
   export BW_SESSION

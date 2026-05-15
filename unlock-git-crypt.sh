@@ -21,8 +21,14 @@ fi
 
 echo "==> Unlocking git-crypt repo..."
 echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey
+_STASHED=false
+if ! git -C "$ICLOUD_REPO_PATH" diff --quiet || ! git -C "$ICLOUD_REPO_PATH" diff --cached --quiet; then
+  echo "    Stashing uncommitted changes..."
+  git -C "$ICLOUD_REPO_PATH" stash push -m "unlock-git-crypt auto-stash" && _STASHED=true
+fi
 git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey
 rm -f /tmp/gckey
+[ "$_STASHED" = true ] && git -C "$ICLOUD_REPO_PATH" stash pop
 
 echo ""
 echo "==> Result:"
