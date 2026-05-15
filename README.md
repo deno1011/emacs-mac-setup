@@ -26,19 +26,19 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 **Run in Terminal:**
 
 ```bash
-# 1. Download all scripts (pulls personal config automatically if accessible)
+# 1. Download all scripts — always lands in ~/emacs-mac-setup/
 bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
 
 # 2. Only needed if GitHub was not yet authenticated during bootstrap:
-bash ./fill-config.sh        # interactive guided config fill
+bash ~/emacs-mac-setup/fill-config.sh   # interactive guided config fill
 # or manually:
-open ~/setup-emacs-mac.conf  # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
+open ~/setup-emacs-mac.conf             # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
 
-# 3. Install — pick one variant
-bash ./setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
-bash ./setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
-bash ./setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
-bash ./setup-emacs-orbstack-mac.sh              # isolated in OrbStack, no XQuartz needed
+# 3. Install — pick one variant (all scripts are in ~/emacs-mac-setup/)
+bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
+bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
+bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
+bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh          # isolated in OrbStack, no XQuartz needed
 
 # 4. Start Emacs
 open "/Applications/Plus Emacs.app"                # Plus
@@ -57,19 +57,18 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 |---|---|---|
 | `deno1011/emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
 
-**Your repos** (created under your own GitHub account during bootstrap):
+**Your repo** (created under your own GitHub account during bootstrap):
 
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
-| `emacs-data` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
+| `GH_REPO` (default: `emacs-data`) | private | Config files (`core.org`, `org-setup.org`, `gptel-setup.org`, `config.org`); org files; `emacs.d/secrets.el`. Encrypted with git-crypt. Cloned to iCloud Drive, synced to iPhone via beorg. `setup-emacs-mac.conf` is also stored here for bootstrap auto-pull. |
 
 ---
 
 ## Scripts
 
-Scripts download to whatever folder you run `bootstrap.sh` from.
-`setup-emacs-mac.conf` always lives in `~/`.
+All scripts are downloaded to `~/emacs-mac-setup/` by bootstrap.
+`setup-emacs-mac.conf` lives in `~/`.
 
 ### Config & Secrets
 
