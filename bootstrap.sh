@@ -217,7 +217,7 @@ if [ -n "$GH_USER" ]; then
   bash "$DEST/setup-bitwarden.sh"
 else
   echo "  GH_USER not set — local mode, Bitwarden not required."
-  echo "  Run ~/emacs-mac-setup/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
+  echo "  Run $DEST/setup-bitwarden.sh after setting GH_USER if you want GitHub sync."
 fi
 
 # --- GitHub auth (with token from Bitwarden) ---
@@ -281,10 +281,10 @@ echo "Bootstrap complete!"
 echo "======================================================================"
 echo ""
 echo "  Run a setup script when ready:"
-echo "    bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh      # recommended (LSP, native comp)"
-echo "    bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad"
-echo "    bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh           # isolated in Docker"
-echo "    bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
+echo "    bash $DEST/setup-emacs-native-plus-mac.sh      # recommended (LSP, native comp)"
+echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad"
+echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
+echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
 echo ""
   echo "  On a new Mac, just run bootstrap — GitHub user is detected automatically:"
   echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)"
