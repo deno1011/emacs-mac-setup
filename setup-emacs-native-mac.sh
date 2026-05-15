@@ -181,19 +181,21 @@ if [ -n "$GH_USER" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
-    # Add modular config files if missing (migration from monolithic config.org)
+    # Modular config files are setup-managed — always overwrite from SCRIPT_DIR
     _CF_CHANGED=false
     for _CF in core.org org-setup.org gptel-setup.org; do
-      if [ ! -f "$ICLOUD_REPO_PATH/config/$_CF" ] && [ -f "$SCRIPT_DIR/$_CF" ]; then
-        cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
-        git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
-        echo "==> $_CF added to repo."
-        _CF_CHANGED=true
+      if [ -f "$SCRIPT_DIR/$_CF" ]; then
+        if ! diff -q "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF" &>/dev/null; then
+          cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
+          git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
+          echo "==> $_CF updated in repo."
+          _CF_CHANGED=true
+        fi
       fi
     done
     if [ "$_CF_CHANGED" = true ]; then
       git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
-        commit -m "chore: add modular config files" 2>/dev/null || true
+        commit -m "chore: update modular config files" 2>/dev/null || true
       git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
     fi
     unset _CF _CF_CHANGED
