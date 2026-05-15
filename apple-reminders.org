@@ -425,10 +425,10 @@ CALLBACK receives the stdout string when the process exits."
 ;;; Edit commands — prompt instantly, update + refresh async
 
 (defun my/apple-reminders--update-then-refresh (script)
-  "Run JXA update SCRIPT async, then trigger a dashboard refresh."
+  "Run JXA update SCRIPT async, then trigger a dashboard refresh after a short delay."
   (message "Apple Reminders: updating…")
   (my/apple-reminders--jxa-async script
-    (lambda (_) (my/apple-reminders-dashboard-refresh))))
+    (lambda (_) (run-with-timer 1.0 nil #'my/apple-reminders-dashboard-refresh))))
 
 (defun my/apple-reminders-dashboard-complete ()
   "Complete the reminder at point."
