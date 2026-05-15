@@ -156,7 +156,30 @@ if [ -n "$_BS_GH_USER" ] && [ -f "$CONFIG_FILE" ]; then
   echo "    Local config already exists — skipping pull (local takes precedence)."
   CONF_PULLED=true
 elif [ -n "$_BS_GH_USER" ]; then
-  DATA_REPO="${_BS_GH_USER}/emacs-data"
+  # Find the repo with the newest setup-emacs-mac.conf via code search
+  _DATA_REPO_NAME=""
+  if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+    echo "    Searching your repos for setup-emacs-mac.conf..."
+    _HITS=$(gh api "search/code?q=filename:setup-emacs-mac.conf+user:$_BS_GH_USER" \
+      --jq '.items[].repository.name' 2>/dev/null) || true
+    _BEST_DATE=""
+    for _HIT_REPO in $_HITS; do
+      _HIT_DATE=$(gh api "repos/$_BS_GH_USER/$_HIT_REPO/commits?path=config/setup-emacs-mac.conf&per_page=1" \
+        --jq '.[0].commit.committer.date' 2>/dev/null) || true
+      [ -z "$_HIT_DATE" ] && _HIT_DATE=$(gh api "repos/$_BS_GH_USER/$_HIT_REPO/commits?path=setup-emacs-mac.conf&per_page=1" \
+        --jq '.[0].commit.committer.date' 2>/dev/null) || true
+      if [ -n "$_HIT_DATE" ] && { [ -z "$_BEST_DATE" ] || [[ "$_HIT_DATE" > "$_BEST_DATE" ]]; }; then
+        _BEST_DATE="$_HIT_DATE"
+        _DATA_REPO_NAME="$_HIT_REPO"
+      fi
+    done
+    unset _HITS _BEST_DATE _HIT_DATE _HIT_REPO
+  fi
+  # Fallback if search found nothing
+  [ -z "$_DATA_REPO_NAME" ] && _DATA_REPO_NAME="emacs-data"
+
+  DATA_REPO="${_BS_GH_USER}/${_DATA_REPO_NAME}"
+  unset _DATA_REPO_NAME
   echo "    Trying to pull config from github.com/${DATA_REPO}..."
   CONF_TMP=$(mktemp -d)
   mkdir -p "$CONF_TMP/conf"
