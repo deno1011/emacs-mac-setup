@@ -416,11 +416,11 @@ CALLBACK receives the stdout string when the process exits."
        (error (message "Apple Reminders fetch error: %s" err))))))
 
 (defun my/apple-reminders-dashboard ()
-  "Open *Apple Reminders* dashboard. Renders from cache instantly, then refreshes."
+  "Open *Apple Reminders* dashboard. Uses cache; press g to fetch fresh data."
   (interactive)
-  (when my/apple-reminders--cache
-    (my/apple-reminders-dashboard--render my/apple-reminders--cache))
-  (my/apple-reminders-dashboard-refresh))
+  (if my/apple-reminders--cache
+      (my/apple-reminders-dashboard--render my/apple-reminders--cache)
+    (my/apple-reminders-dashboard-refresh)))
 
 ;;; Edit commands — prompt instantly, update + refresh async
 
