@@ -66,8 +66,8 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 
 ## Scripts
 
-All scripts are downloaded to `~/emacs-mac-setup/` by bootstrap.
-`setup-emacs-mac.conf` lives in `~/emacs-mac-setup/`.
+All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is the default location when installed via the one-liner above. If you cloned the repo manually to a different path (e.g. `/tmp/emacs-mac-setup`), substitute that path in all commands below.
+`setup-emacs-mac.conf` lives in `~/emacs-mac-setup/` after bootstrap.
 
 ### Config & Secrets
 
