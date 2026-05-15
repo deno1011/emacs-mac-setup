@@ -96,7 +96,7 @@ INDEX matches the number shown by `my/apple-reminders-show'."
            (end   (save-excursion (org-end-of-subtree t) (point)))
            (raw   (buffer-substring-no-properties start end)))
       (string-trim
-       (replace-regexp-in-string ":LOGBOOK:[\s\S]*?:END:\n?" "" raw)))))
+       (replace-regexp-in-string ":LOGBOOK:\\(?:.\\|\n\\)*?:END:\n?" "" raw)))))
 
 (defun my/apple-reminders--org-item-values ()
   "Return alist of org heading values that map to Apple Reminders fields."
