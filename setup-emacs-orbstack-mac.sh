@@ -163,6 +163,20 @@ orbu bash -c "
         mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org
     fi
 "
+# Modular config files are setup-managed — always update from SCRIPT_DIR
+_CF_CHANGED=false
+for _CF in core.org org-setup.org gptel-setup.org; do
+    if [ -f "$SCRIPT_DIR/$_CF" ]; then
+        orbu tee "/home/$EUSER/${GH_REPO}/config/$_CF" > /dev/null < "$SCRIPT_DIR/$_CF"
+        orbu bash -c "git -C ~/${GH_REPO} diff --quiet config/$_CF 2>/dev/null || git -C ~/${GH_REPO} add config/$_CF" && _CF_CHANGED=true
+        echo "    $_CF updated."
+    fi
+done
+if [ "$_CF_CHANGED" = true ]; then
+    orbu bash -c "git -C ~/${GH_REPO} diff --cached --quiet || git -C ~/${GH_REPO} commit -m 'chore: update modular config files' 2>/dev/null || true"
+    orbu bash -c "git -C ~/${GH_REPO} push origin main 2>/dev/null || true"
+fi
+unset _CF _CF_CHANGED
 
 # ── 9. Git credentials (persistent push/pull) ────────────────────────────────
 step "Configuring git credentials in machine..."
