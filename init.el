@@ -1,4 +1,4 @@
-;; Entry point — loads config from ~/GH_REPO/config/config.org
+;; Entry point — loads config from ~/emacs-data/config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
