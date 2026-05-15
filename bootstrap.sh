@@ -1,10 +1,8 @@
 #!/bin/bash
 # Bootstrap: Downloads all Emacs setup scripts from GitHub.
-# Usage: bash bootstrap.sh [gh_user_or_user/repo] [branch]
-# Examples:
-#   bash bootstrap.sh janedoe              # pulls from janedoe/emacs-data (default repo)
-#   bash bootstrap.sh janedoe/my-repo      # pulls from janedoe/my-repo
-#   bash bootstrap.sh janedoe stable       # pulls from janedoe/emacs-data on stable branch
+# Usage: bash bootstrap.sh [branch]
+# Example: bash bootstrap.sh stable
+# GitHub user is detected automatically (gh session → Bitwarden → interactive prompt).
 
 set -e
 
@@ -38,14 +36,7 @@ for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
 done
 unset _BREW_SHELLENV_LINE _PROFILE
 
-# Accept "janedoe" or "janedoe/my-repo"; default repo is emacs-data
-_ARG1="${1:-}"
-case "$_ARG1" in
-  */*) DATA_REPO="$_ARG1" ;;
-  "")  DATA_REPO="" ;;
-  *)   DATA_REPO="${_ARG1}/emacs-data" ;;
-esac
-_BS_BRANCH="${2:-stable}"
+_BS_BRANCH="${1:-stable}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
@@ -71,68 +62,68 @@ if [ -z "${_BOOTSTRAP_UPDATED:-}" ] && [ -f "$DEST/bootstrap.sh" ]; then
   exec bash "$DEST/bootstrap.sh" "$@"
 fi
 
-# --- Pull personal config from emacs-data repo ---
+# --- Auto-detect GitHub user and pull personal config ---
 CONF_PULLED=false
-if [ -n "$DATA_REPO" ]; then
-  echo ""
-  echo "==> Trying to pull personal config from github.com/${DATA_REPO} (emacs-data repo)..."
-  CONF_TMP=$(mktemp -d)
+echo ""
+echo "==> Detecting GitHub user..."
 
-  # Install gh if missing — needed for private repo access
-  if ! command -v gh &>/dev/null; then
-    echo "    Installing GitHub CLI..."
-    brew install gh &>/dev/null
+# Install gh if missing
+if ! command -v gh &>/dev/null; then
+  echo "    Installing GitHub CLI..."
+  brew install gh &>/dev/null
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+fi
+
+_BS_GH_USER=""
+
+# 1. Already authenticated — get username from existing session
+if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+  _BS_GH_USER=$(gh api user --jq '.login' 2>/dev/null) || true
+  [ -n "$_BS_GH_USER" ] && echo "    GitHub user: $_BS_GH_USER (existing gh session)"
+fi
+
+# 2. Not authenticated — try Bitwarden → GitHub token → authenticate → get username
+if [ -z "$_BS_GH_USER" ]; then
+  _BS_BW_KC_SVC="bitwarden-master"
+  _BS_BW_KC_ACC="$USER"
+  _BS_BW_GH_ITEM="github-cli-token"
+  _BS_BW_FIELD="Key"
+
+  if ! command -v bw &>/dev/null; then
+    echo "    Installing Bitwarden CLI..."
+    brew install bitwarden-cli &>/dev/null
+    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
   fi
 
-  # Authenticate gh — fetch token from Bitwarden automatically
-  if ! gh auth status &>/dev/null 2>&1; then
-    echo "    Authenticating GitHub CLI..."
+  _BS_GH_TOKEN=""
+  if command -v bw &>/dev/null; then
+    _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
+    if [ -z "$_BS_BW_MASTER" ]; then
+      printf "    Bitwarden master password: "
+      read -rs _BS_BW_MASTER < /dev/tty
+      echo ""
+    fi
+    export __BS_BW_MASTER="$_BS_BW_MASTER"
 
-    # Defaults matching setup-emacs-mac.conf.template
-    _BS_BW_KC_SVC="bitwarden-master"
-    _BS_BW_KC_ACC="$USER"
-    _BS_BW_GH_ITEM="github-cli-token"
-    _BS_BW_FIELD="Key"
+    _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
+    _BS_BW_SESSION=""
 
-    if ! command -v bw &>/dev/null; then
-      echo "    Installing Bitwarden CLI..."
-      brew install bitwarden-cli &>/dev/null
-      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
+      printf "    Bitwarden email: "
+      read -r _BS_BW_EMAIL < /dev/tty
+      _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw < /dev/tty) || true
     fi
 
-    _BS_GH_TOKEN=""
-    if command -v bw &>/dev/null; then
-      # Get master password from keychain, or prompt once
-      _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
-      if [ -z "$_BS_BW_MASTER" ]; then
-        printf "    Bitwarden master password: "
-        read -rs _BS_BW_MASTER < /dev/tty
-        echo ""
-      fi
-      export __BS_BW_MASTER="$_BS_BW_MASTER"
+    if [ -z "$_BS_BW_SESSION" ]; then
+      _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
+    fi
+    unset __BS_BW_MASTER
 
-      _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
-      echo "    Bitwarden: $_BS_BW_STATUS"
-      _BS_BW_SESSION=""
-
-      if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
-        printf "    Bitwarden email: "
-        read -r _BS_BW_EMAIL < /dev/tty
-        # stdin connected to /dev/tty so 2FA prompt works interactively
-        _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw < /dev/tty) || true
-      fi
-
-      # If still no session (locked state or login returned no session), try unlock
-      if [ -z "$_BS_BW_SESSION" ]; then
-        _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-      fi
-      unset __BS_BW_MASTER
-
-      if [ -n "$_BS_BW_SESSION" ]; then
-        echo "    Bitwarden unlocked — fetching GitHub token..."
-        bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
-        _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
-          | python3 -c "
+    if [ -n "$_BS_BW_SESSION" ]; then
+      echo "    Bitwarden unlocked — fetching GitHub token..."
+      bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
+      _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
+        | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
 f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']
@@ -141,26 +132,34 @@ if f:
 else:
     print((d.get('login',{}).get('password') or '').strip())
 " 2>/dev/null) || true
-      else
-        echo "    WARN: Bitwarden unlock failed — falling back to manual token."
-      fi
-    fi
-
-    if [ -n "$_BS_GH_TOKEN" ]; then
-      echo "$_BS_GH_TOKEN" | gh auth login --with-token
-      echo "    GitHub CLI authenticated via Bitwarden."
     else
-      echo "    Enter GitHub PAT (Settings → Developer settings → Personal access tokens → Classic, scope: repo):"
-      printf "    Token: "
-      read -rs _BS_GH_TOKEN < /dev/tty
-      echo ""
-      [ -n "$_BS_GH_TOKEN" ] && echo "$_BS_GH_TOKEN" | gh auth login --with-token
+      echo "    WARN: Bitwarden unlock failed."
     fi
-    unset _BS_GH_TOKEN _BS_BW_SESSION _BS_BW_MASTER _BS_BW_EMAIL _BS_BW_STATUS \
-          _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
   fi
+
+  if [ -n "$_BS_GH_TOKEN" ]; then
+    echo "$_BS_GH_TOKEN" | gh auth login --with-token
+    _BS_GH_USER=$(gh api user --jq '.login' 2>/dev/null) || true
+    [ -n "$_BS_GH_USER" ] && echo "    GitHub user: $_BS_GH_USER (authenticated via Bitwarden)"
+  fi
+  unset _BS_GH_TOKEN _BS_BW_SESSION _BS_BW_MASTER _BS_BW_EMAIL _BS_BW_STATUS \
+        _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
+fi
+
+# 3. Still unknown — ask (one question only)
+if [ -z "$_BS_GH_USER" ]; then
+  printf "  GitHub username (leave blank to skip): "
+  read -r _BS_GH_USER < /dev/tty
+fi
+
+# Pull config if user known
+if [ -n "$_BS_GH_USER" ]; then
+  DATA_REPO="${_BS_GH_USER}/emacs-data"
+  echo "    Trying to pull config from github.com/${DATA_REPO}..."
+  CONF_TMP=$(mktemp -d)
+  mkdir -p "$CONF_TMP/conf"
+
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-    mkdir -p "$CONF_TMP/conf"
     _CONF_CONTENT=$(gh api "repos/$DATA_REPO/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null) || true
     if [ -n "$_CONF_CONTENT" ]; then
       echo "$_CONF_CONTENT" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" \
@@ -168,7 +167,8 @@ else:
     fi
     unset _CONF_CONTENT
   fi
-  # Fallback: try unauthenticated (works if repo is public, fails silently if private)
+
+  # Fallback: unauthenticated clone (public repos)
   if [ "$CONF_PULLED" = false ]; then
     if GIT_TERMINAL_PROMPT=0 git clone "https://github.com/${DATA_REPO}.git" "$CONF_TMP/conf" &>/dev/null 2>&1; then
       [ -f "$CONF_TMP/conf/config/setup-emacs-mac.conf" ] && CONF_PULLED=true
@@ -182,18 +182,21 @@ else:
     _PULLED_NAME="${_PULLED_NAME#*=}"; _PULLED_NAME="${_PULLED_NAME%\"}"; _PULLED_NAME="${_PULLED_NAME#\"}"
     if [ -n "$_PULLED_NAME" ]; then
       cp "$_CONF_FILE" "$CONFIG_FILE"
-      echo "    setup-emacs-mac.conf pulled from emacs-data repo — config ready."
+      echo "    setup-emacs-mac.conf pulled — config ready."
     else
-      echo "    Pulled config is empty — keeping local config."
+      echo "    Pulled config is empty — will configure interactively."
       CONF_PULLED=false
     fi
     unset _PULLED_NAME
   else
-    echo "    emacs-data repo not accessible — falling back to template."
+    echo "    Config not found in repo — will configure interactively."
     CONF_PULLED=false
   fi
   rm -rf "$CONF_TMP"
+else
+  echo "    Skipping config pull — will configure interactively."
 fi
+unset _BS_GH_USER
 
 # --- Ensure config exists (copy template only if not yet present) ---
 if [ "$CONF_PULLED" = false ] && [ ! -f "$CONFIG_FILE" ]; then
@@ -283,11 +286,9 @@ echo "    bash $DEST/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, tra
 echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
 echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
 echo ""
-if [ -n "${GH_USER:-}" ]; then
-  echo "  On a new Mac, skip config questions by passing your GitHub username:"
-  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER"
+  echo "  On a new Mac, just run bootstrap — GitHub user is detected automatically:"
+  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)"
   echo ""
-fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
 echo ""
 echo "----------------------------------------------------------------------"
