@@ -18,7 +18,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 |---|---|
 | Homebrew | Installed by `bootstrap.sh` if missing |
 | GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
-| `emacs-config` repo | Created by `bootstrap.sh` if it does not exist |
+| `emacs-data` repo | Created by `bootstrap.sh` if it does not exist |
 | `mac-setup-conf` repo | Created by `bootstrap.sh` if `CONF_REPO` is set |
 | Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
@@ -62,7 +62,7 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 | Repo | Visibility | Purpose |
 |---|---|---|
 | `mac-setup-conf` | private | Only `setup-emacs-mac.conf` with personal details. Pulled automatically on bootstrap. No encryption needed — contains no actual secrets. |
-| `emacs-config` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
+| `emacs-data` | private | Emacs config split into `core.org`, `org-setup.org`, `gptel-setup.org`; `org/` files; `emacs.d/secrets.el` (all encrypted with git-crypt). Cloned to iCloud Drive. Synced to iPhone via beorg. |
 
 ---
 
@@ -229,7 +229,7 @@ emacs -nw   # TUI mode
 ## What Not To Do
 
 **Two native instances at the same time:**  
-emacs-plus and emacs-mac@30exp share `~/.emacs.d/` and `~/emacs-config/`. Running both simultaneously causes lock file collisions and git-auto-commit-mode writing to the same repo concurrently.
+emacs-plus and emacs-mac@30exp share `~/.emacs.d/` and `~/emacs-data/`. Running both simultaneously causes lock file collisions and git-auto-commit-mode writing to the same repo concurrently.
 
 **Native and Docker at the same time:**  
 Both use the same GitHub repo. Concurrent edits lead to git conflicts on the next sync.
@@ -301,7 +301,7 @@ A post-commit hook inside the container repeats the rsync and pushes after each 
 ## Docker Specifics
 
 - **Volume `emacs-home`:** persistent Emacs packages (`~/.emacs.d/`) survive container restarts without living on the Mac
-- **Config:** via `git clone/pull` to fixed path `~/emacs-config/` inside the container — not a bind-mount
+- **Config:** via `git clone/pull` to fixed path `~/emacs-data/` inside the container — not a bind-mount
 - **Only one bind-mount:** the beorg folder for iPhone sync
 
 **Container management:**
@@ -327,7 +327,7 @@ When uninstalling one variant while the other is still installed, shared resourc
 
 ## Fresh Repo (for friends / first-time setup)
 
-Starting with an empty `emacs-config` repo is fine:
+Starting with an empty `emacs-data` repo is fine:
 
 | Situation | Result |
 |---|---|
