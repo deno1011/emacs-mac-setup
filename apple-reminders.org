@@ -76,6 +76,13 @@ an error if the CLI is missing or the command fails.
   "Return a list of Apple Reminders list names."
   (split-string (my/apple-reminders--run "show-lists") "\n" t))
 
+(defun my/apple-reminders-show-lists ()
+  "Display all Apple Reminders lists in the echo area."
+  (interactive)
+  (message "Reminders lists:\n%s"
+           (mapconcat (lambda (l) (concat "  • " l))
+                      (my/apple-reminders-lists) "\n")))
+
 (defun my/apple-reminders-show (&optional list-name)
   "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
   (interactive)
@@ -165,6 +172,7 @@ Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/apple-reminders--setup-keys ()
+  (define-key org-mode-map (kbd "C-c r l") #'my/apple-reminders-show-lists)
   (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
   (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
   (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
