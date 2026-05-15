@@ -15,9 +15,8 @@
   "Integration between Emacs/Org and macOS Apple Reminders."
   :group 'org)
 
-(defcustom my/apple-reminders-default-list "Emacs"
-  "Name of the Apple Reminders list used for Org-synced items.
-Created on first use if it does not exist."
+(defcustom my/apple-reminders-default-list "Erinnerungen"
+  "Name of the Apple Reminders list used for Org-synced items."
   :type 'string
   :group 'my/apple-reminders)
 
@@ -49,8 +48,10 @@ Created on first use if it does not exist."
 
 
 (defun my/apple-reminders-show (&optional list-name)
-  "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
-  (interactive)
+  "Show open reminders from LIST-NAME, prompting if not given."
+  (interactive
+   (list (completing-read "List: " (my/apple-reminders-lists) nil nil
+                          my/apple-reminders-default-list)))
   (let ((list (or list-name my/apple-reminders-default-list)))
     (message "%s" (my/apple-reminders--run "show" list))))
 
