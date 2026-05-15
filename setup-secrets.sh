@@ -32,7 +32,7 @@ if [ -f "$SECRETS_REPO" ] && grep -q "setenv" "$SECRETS_REPO" 2>/dev/null; then
 else
   echo "==> Repo file missing or still encrypted — fetching key from Bitwarden..."
   if ! command -v bw &>/dev/null; then
-    echo "ERROR: Bitwarden CLI not installed. Run ~/emacs-mac-setup/setup-bitwarden.sh first."
+    echo "ERROR: Bitwarden CLI not installed. Run $SCRIPT_DIR/setup-bitwarden.sh first."
     exit 1
   fi
   source "$SCRIPT_DIR/bw-unlock.sh"
