@@ -34,7 +34,7 @@ else
     echo "ERROR: Bitwarden CLI not installed. Run ~/setup-bitwarden.sh first."
     exit 1
   fi
-  source "$HOME/bw-unlock.sh"
+  source "$HOME/emacs-mac-setup/bw-unlock.sh"
   bw_ensure_session || exit 1
   ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD")
   if [ -z "$ANTHROPIC_API_KEY" ]; then
