@@ -1,13 +1,14 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 source "$CONFIG_FILE"
 
 ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 
 echo "==> Unlocking Bitwarden..."
-source "$HOME/bw-unlock.sh"
+source "$SCRIPT_DIR/bw-unlock.sh"
 bw_ensure_session || exit 1
 
 echo "==> Fetching git-crypt key from Bitwarden (field: $BW_FIELD)..."
