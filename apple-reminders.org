@@ -296,12 +296,13 @@ field is available: title, notes, priority, due date, flagged status.
 
 Keys in the =*Apple Reminders*= buffer:
 
-| g   | refresh                        |
-| q   | quit                           |
-| t   | complete reminder at point     |
-| e t | edit title                     |
-| e n | edit notes                     |
-| e d | edit due date (YYYY-MM-DD)     |
+| g   | refresh (clears session DONE items)    |
+| q   | quit                                   |
+| t   | complete reminder at point             |
+| h   | toggle show/hide session-done items    |
+| e t | edit title                             |
+| e n | edit notes                             |
+| e d | edit due date (YYYY-MM-DD)             |
 | e p | change priority (None/High/Medium/Low) |
 
 #+begin_src emacs-lisp :tangle yes
@@ -309,6 +310,19 @@ Keys in the =*Apple Reminders*= buffer:
 
 (defvar my/apple-reminders--cache nil
   "Last fetched Reminders data; used for instant re-renders.")
+
+(defvar my/apple-reminders--done-items nil
+  "Alist of (list-name . (item ...)) for reminders completed this session.")
+
+(defvar my/apple-reminders--show-done nil
+  "When non-nil, show session-completed reminders at the bottom of each list.")
+
+(defcustom my/apple-reminders-agenda-file
+  (expand-file-name "~/org/reminders-agenda.org")
+  "Org file written on each dashboard refresh for org-agenda integration.
+Set to nil to disable."
+  :type '(choice file (const nil))
+  :group 'my/apple-reminders)
 
 (defconst my/apple-reminders--fetch-script
   "var app=Application('Reminders'),out=[];
@@ -358,6 +372,27 @@ CALLBACK receives the stdout string when the process exits."
             (list (org-entry-get nil "REMINDER_LIST")))
         (when (and id list) (cons list id))))))
 
+(defun my/apple-reminders--insert-item (item lname state)
+  "Insert an org heading for ITEM in list LNAME with todo STATE."
+  (let* ((id      (alist-get 'id       item))
+         (title   (alist-get 'title    item))
+         (notes   (alist-get 'notes    item))
+         (due     (alist-get 'due      item))
+         (prio    (alist-get 'priority item))
+         (flagged (alist-get 'flagged  item)))
+    (insert (format "** %s %s%s%s\n"
+                    state
+                    (my/apple-reminders--prio-label prio)
+                    (if (eq flagged t) "★ " "")
+                    title))
+    (when (and due (not (eq due :null)))
+      (insert (format "   DEADLINE: <%s>\n" due)))
+    (insert (format "   :PROPERTIES:\n   :REMINDER_ID:   %s\n   :REMINDER_LIST: %s\n   :END:\n"
+                    id lname))
+    (when (and (stringp notes) (not (string-empty-p notes)))
+      (dolist (line (split-string notes "\n"))
+        (insert (format "   %s\n" line))))))
+
 (defun my/apple-reminders-dashboard--render (data)
   "Render DATA into *Apple Reminders* without any network call."
   (let ((buf (get-buffer-create "*Apple Reminders*")))
@@ -368,47 +403,74 @@ CALLBACK receives the stdout string when the process exits."
         (org-mode)
         (insert "#+TITLE: Apple Reminders\n\n")
         (dolist (entry data)
-          (let ((lname (alist-get 'list  entry))
-                (items (alist-get 'items entry)))
+          (let* ((lname (alist-get 'list  entry))
+                 (items (alist-get 'items entry))
+                 (done  (cdr (cl-assoc lname my/apple-reminders--done-items :test #'string=))))
             (insert (format "* %s\n" lname))
-            (if (null items)
-                (insert "  /No open reminders./\n\n")
+            (cond
+             ((and (null items) (or (null done) (not my/apple-reminders--show-done)))
+              (insert "  /No open reminders./\n\n"))
+             (t
               (dolist (item items)
-                (let* ((id      (alist-get 'id       item))
-                       (title   (alist-get 'title    item))
-                       (notes   (alist-get 'notes    item))
-                       (due     (alist-get 'due      item))
-                       (prio    (alist-get 'priority item))
-                       (flagged (alist-get 'flagged  item)))
-                  (insert (format "** TODO %s%s%s\n"
-                                  (my/apple-reminders--prio-label prio)
-                                  (if (eq flagged t) "★ " "")
-                                  title))
-                  (when (and due (not (eq due :null)))
-                    (insert (format "   DEADLINE: <%s>\n" due)))
-                  (insert (format "   :PROPERTIES:\n   :REMINDER_ID:   %s\n   :REMINDER_LIST: %s\n   :END:\n"
-                                  id lname))
-                  (when (and (stringp notes) (not (string-empty-p notes)))
-                    (dolist (line (split-string notes "\n"))
-                      (insert (format "   %s\n" line)))))))))
+                (my/apple-reminders--insert-item item lname "TODO"))
+              (when (and done my/apple-reminders--show-done)
+                (dolist (item done)
+                  (my/apple-reminders--insert-item item lname "DONE")))))))
+        (org-content)
         (goto-char (min saved-pos (point-max))))
       (setq buffer-read-only t)
       (let ((map (make-sparse-keymap)))
         (set-keymap-parent map org-mode-map)
-        (define-key map (kbd "g")   #'my/apple-reminders-dashboard-refresh)
-        (define-key map (kbd "q")   #'quit-window)
+        (define-key map (kbd "g")       #'my/apple-reminders-dashboard-refresh)
+        (define-key map (kbd "q")       #'quit-window)
         (define-key map (kbd "t")       #'my/apple-reminders-dashboard-complete)
         (define-key map (kbd "C-c C-t") #'my/apple-reminders-dashboard-complete)
-        (define-key map (kbd "e t") #'my/apple-reminders-dashboard-edit-title)
-        (define-key map (kbd "e n") #'my/apple-reminders-dashboard-edit-notes)
-        (define-key map (kbd "e d") #'my/apple-reminders-dashboard-edit-due)
-        (define-key map (kbd "e p") #'my/apple-reminders-dashboard-edit-priority)
+        (define-key map (kbd "h")       #'my/apple-reminders-toggle-done)
+        (define-key map (kbd "e t")     #'my/apple-reminders-dashboard-edit-title)
+        (define-key map (kbd "e n")     #'my/apple-reminders-dashboard-edit-notes)
+        (define-key map (kbd "e d")     #'my/apple-reminders-dashboard-edit-due)
+        (define-key map (kbd "e p")     #'my/apple-reminders-dashboard-edit-priority)
         (use-local-map map)))
     (unless (get-buffer-window buf) (switch-to-buffer buf))))
 
-(defun my/apple-reminders-dashboard-refresh ()
-  "Fetch all reminders asynchronously and re-render the dashboard."
+(defun my/apple-reminders--write-agenda-file (data)
+  "Write open reminders from DATA to `my/apple-reminders-agenda-file'."
+  (when my/apple-reminders-agenda-file
+    (let ((file (expand-file-name my/apple-reminders-agenda-file)))
+      (with-temp-file file
+        (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
+        (insert "#+STARTUP: overview\n\n")
+        (dolist (entry data)
+          (let ((lname (alist-get 'list  entry))
+                (items (alist-get 'items entry)))
+            (dolist (item items)
+              (let* ((title   (alist-get 'title    item))
+                     (due     (alist-get 'due      item))
+                     (prio    (alist-get 'priority item))
+                     (flagged (alist-get 'flagged  item))
+                     (id      (alist-get 'id       item)))
+                (insert (format "* TODO %s%s%s\n"
+                                (my/apple-reminders--prio-label prio)
+                                (if (eq flagged t) "★ " "")
+                                title))
+                (when (and due (not (eq due :null)))
+                  (insert (format "  DEADLINE: <%s>\n" due)))
+                (insert (format "  :PROPERTIES:\n  :REMINDER_LIST: %s\n  :REMINDER_ID: %s\n  :END:\n"
+                                lname id)))))))
+      (add-to-list 'org-agenda-files file))))
+
+(defun my/apple-reminders-toggle-done ()
+  "Toggle visibility of session-completed reminders at the bottom of each list."
   (interactive)
+  (setq my/apple-reminders--show-done (not my/apple-reminders--show-done))
+  (when my/apple-reminders--cache
+    (my/apple-reminders-dashboard--render my/apple-reminders--cache))
+  (message "Done items: %s" (if my/apple-reminders--show-done "shown" "hidden")))
+
+(defun my/apple-reminders-dashboard-refresh ()
+  "Fetch all reminders asynchronously, reset session-done list, re-render."
+  (interactive)
+  (setq my/apple-reminders--done-items nil)
   (message "Apple Reminders: refreshing…")
   (my/apple-reminders--jxa-async
    my/apple-reminders--fetch-script
@@ -416,6 +478,7 @@ CALLBACK receives the stdout string when the process exits."
      (condition-case err
          (let ((data (json-parse-string raw :object-type 'alist :array-type 'list)))
            (setq my/apple-reminders--cache data)
+           (my/apple-reminders--write-agenda-file data)
            (my/apple-reminders-dashboard--render data)
            (message "Apple Reminders: ready."))
        (error (message "Apple Reminders fetch error: %s" err))))))
@@ -427,6 +490,19 @@ CALLBACK receives the stdout string when the process exits."
       (my/apple-reminders-dashboard--render my/apple-reminders--cache)
     (my/apple-reminders-dashboard-refresh)))
 
+(defun my/apple-reminders--prefetch ()
+  "Silently populate cache and write agenda file without opening the dashboard."
+  (my/apple-reminders--jxa-async
+   my/apple-reminders--fetch-script
+   (lambda (raw)
+     (condition-case nil
+         (let ((data (json-parse-string raw :object-type 'alist :array-type 'list)))
+           (setq my/apple-reminders--cache data)
+           (my/apple-reminders--write-agenda-file data))
+       (error nil)))))
+
+(run-with-idle-timer 3 nil #'my/apple-reminders--prefetch)
+
 ;;; Edit commands — prompt instantly, update + refresh async
 
 (defun my/apple-reminders--update-then-refresh (script)
@@ -436,10 +512,32 @@ CALLBACK receives the stdout string when the process exits."
     (lambda (_) (run-with-timer 1.0 nil #'my/apple-reminders-dashboard-refresh))))
 
 (defun my/apple-reminders-dashboard-complete ()
-  "Complete the reminder at point. Shows DONE immediately; press g to refresh."
+  "Complete the reminder at point. Shows DONE immediately; h to toggle visibility."
   (interactive)
   (let ((loc (my/apple-reminders--loc-at-point)))
     (unless loc (user-error "No reminder at point"))
+    (let* ((lname (car loc))
+           (id    (cdr loc))
+           (list-entry (cl-find lname my/apple-reminders--cache
+                                :key (lambda (e) (alist-get 'list e))
+                                :test #'string=))
+           (item (when list-entry
+                   (cl-find id (alist-get 'items list-entry)
+                             :key (lambda (e) (alist-get 'id e))
+                             :test #'string=))))
+      (when item
+        ;; Move item from cache to done-items
+        (let ((done-cell (cl-assoc lname my/apple-reminders--done-items :test #'string=)))
+          (if done-cell
+              (setcdr done-cell (cons item (cdr done-cell)))
+            (push (cons lname (list item)) my/apple-reminders--done-items)))
+        ;; Remove from cache so re-renders don't re-show it as TODO
+        (let ((items-cell (assq 'items list-entry)))
+          (when items-cell
+            (setcdr items-cell
+                    (cl-remove id (cdr items-cell)
+                               :key (lambda (e) (alist-get 'id e))
+                               :test #'string=))))))
     (save-excursion
       (org-back-to-heading t)
       (let ((inhibit-read-only t))
@@ -447,7 +545,7 @@ CALLBACK receives the stdout string when the process exits."
     (my/apple-reminders--jxa-async
      (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).completed=true;"
              (json-encode (car loc)) (json-encode (cdr loc)))
-     (lambda (_) (message "Apple Reminders: completed.")))))
+     (lambda (_) (message "Apple Reminders: completed. Press h to show done items.")))))
 
 (defun my/apple-reminders-dashboard-edit-title ()
   "Edit the title of the reminder at point."
