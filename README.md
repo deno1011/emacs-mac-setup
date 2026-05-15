@@ -18,8 +18,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 |---|---|
 | Homebrew | Installed by `bootstrap.sh` if missing |
 | GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
-| `emacs-data` repo | Created by `bootstrap.sh` if it does not exist |
-| `mac-setup-conf` repo | Created by `bootstrap.sh` if `CONF_REPO` is set |
+| `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
 | Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
@@ -32,7 +31,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/sta
 # 2. Only needed if GitHub was not yet authenticated during bootstrap:
 bash ~/emacs-mac-setup/fill-config.sh   # interactive guided config fill
 # or manually:
-open ~/setup-emacs-mac.conf             # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
+open ~/emacs-mac-setup/setup-emacs-mac.conf   # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
 
 # 3. Install — pick one variant (all scripts are in ~/emacs-mac-setup/)
 bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
@@ -142,7 +141,7 @@ Safe to store in a private GitHub repo without encryption.
 - **GitHub already authenticated** (e.g. second Mac): pulls `setup-emacs-mac.conf` from private repo → ready immediately
 - **Brand new Mac**: copies the template → `fill-config.sh` guides you through each field → setup re-pulls latest conf after GitHub auth is established
 
-`CONF_REPO` in the conf file is the repo name only (e.g. `mac-setup-conf`). `GH_USER` is prepended automatically. Leave empty to disable auto-pull.
+Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf`. No manual `CONF_REPO` configuration needed.
 
 ---
 
@@ -156,7 +155,7 @@ Safe to store in a private GitHub repo without encryption.
 - Install time: ~15–20 minutes
 
 ```bash
-bash ./setup-emacs-native-plus-mac.sh
+bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh
 ```
 
 Starts as: `/Applications/Plus Emacs.app`
@@ -168,7 +167,7 @@ Starts as: `/Applications/Plus Emacs.app`
 - Install time: ~15–25 minutes
 
 ```bash
-bash ./setup-emacs-native-yamamoto-mac.sh
+bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh
 ```
 
 Starts as: `/Applications/Yamamoto Emacs.app`
@@ -180,7 +179,7 @@ Starts as: `/Applications/Yamamoto Emacs.app`
 - Only the beorg iCloud folder is mounted — no Mac filesystem exposure
 
 ```bash
-bash ./setup-emacs-docker-mac.sh
+bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh
 ```
 
 App bundles in `~/Applications/`:
@@ -197,7 +196,7 @@ App bundles in `~/Applications/`:
 - Requires OrbStack (`brew install --cask orbstack`)
 
 ```bash
-bash ./setup-emacs-orbstack-mac.sh
+bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh
 ```
 
 App bundles in `~/Applications/`:
@@ -228,7 +227,7 @@ emacs -nw   # TUI mode
 ## What Not To Do
 
 **Two native instances at the same time:**  
-emacs-plus and emacs-mac@30exp share `~/.emacs.d/` and `~/emacs-data/`. Running both simultaneously causes lock file collisions and git-auto-commit-mode writing to the same repo concurrently.
+emacs-plus and emacs-mac@30exp share `~/.emacs.d/` and the same iCloud repo (`~/Library/Mobile Documents/com~apple~CloudDocs/<GH_REPO>/`). Running both simultaneously causes lock file collisions and git-auto-commit-mode writing to the same repo concurrently.
 
 **Native and Docker at the same time:**  
 Both use the same GitHub repo. Concurrent edits lead to git conflicts on the next sync.
@@ -300,7 +299,7 @@ A post-commit hook inside the container repeats the rsync and pushes after each 
 ## Docker Specifics
 
 - **Volume `emacs-home`:** persistent Emacs packages (`~/.emacs.d/`) survive container restarts without living on the Mac
-- **Config:** via `git clone/pull` to fixed path `~/emacs-data/` inside the container — not a bind-mount
+- **Config:** via `git clone/pull` to `~/<GH_REPO>/` inside the container — not a bind-mount
 - **Only one bind-mount:** the beorg folder for iPhone sync
 
 **Container management:**
@@ -326,7 +325,7 @@ When uninstalling one variant while the other is still installed, shared resourc
 
 ## Fresh Repo (for friends / first-time setup)
 
-Starting with an empty `emacs-data` repo is fine:
+Starting with an empty private repo is fine:
 
 | Situation | Result |
 |---|---|
@@ -536,12 +535,12 @@ LM Studio (or any OpenAI-compatible local server) can be selected as backend. Th
 ## Uninstall
 
 ```bash
-bash ./uninstall-emacs-native-plus-mac.sh       # remove emacs-plus
-bash ./uninstall-emacs-native-yamamoto-mac.sh   # remove emacs-mac@30exp
-bash ./uninstall-emacs-docker-mac.sh            # remove Docker variant
-bash ./uninstall-emacs-orbstack-mac.sh              # remove OrbStack variant
+bash ~/emacs-mac-setup/uninstall-emacs-native-plus-mac.sh       # remove emacs-plus
+bash ~/emacs-mac-setup/uninstall-emacs-native-yamamoto-mac.sh   # remove emacs-mac@30exp
+bash ~/emacs-mac-setup/uninstall-emacs-docker-mac.sh            # remove Docker variant
+bash ~/emacs-mac-setup/uninstall-emacs-orbstack-mac.sh          # remove OrbStack variant
 
-bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master password from Keychain
+bash ~/emacs-mac-setup/remove-bitwarden-keychain.sh             # remove Bitwarden master password from Keychain
 ```
 
 > The Bitwarden Keychain entry is **not** deleted by the uninstall scripts (it is shared). Remove it explicitly with the script above after all variants have been uninstalled.
@@ -551,9 +550,9 @@ bash ./remove-bitwarden-keychain.sh             # remove Bitwarden master passwo
 Pass `--ask` to be prompted before each brew package is removed. Useful when a package (e.g. `ripgrep`) is also used outside Emacs and you want to keep it:
 
 ```bash
-bash ./uninstall-emacs-native-plus-mac.sh --ask
-bash ./uninstall-emacs-native-yamamoto-mac.sh --ask
-bash ./uninstall-emacs-docker-mac.sh --ask
+bash ~/emacs-mac-setup/uninstall-emacs-native-plus-mac.sh --ask
+bash ~/emacs-mac-setup/uninstall-emacs-native-yamamoto-mac.sh --ask
+bash ~/emacs-mac-setup/uninstall-emacs-docker-mac.sh --ask
 ```
 
 Without `--ask`, all packages installed by the setup are removed automatically.
@@ -569,7 +568,7 @@ After `git-crypt unlock`, setup scripts automatically symlink `~/.emacs.d/secret
 **Manual unlock:**
 
 ```bash
-bash ./unlock-git-crypt.sh
+bash ~/emacs-mac-setup/unlock-git-crypt.sh
 ```
 
 Setup scripts unlock automatically — on first clone and on every subsequent run if the org files are found encrypted.
