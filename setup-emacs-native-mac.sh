@@ -181,13 +181,10 @@ if [ -n "$GH_USER" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
-    # Migrate root-level config.org → config/ if new location is missing
-    if [ -f "$ICLOUD_REPO_PATH/config.org" ] && [ ! -f "$ICLOUD_REPO_PATH/config/config.org" ]; then
-      mkdir -p "$ICLOUD_REPO_PATH/config"
-      git -C "$ICLOUD_REPO_PATH" mv config.org config/config.org 2>/dev/null \
-        || mv "$ICLOUD_REPO_PATH/config.org" "$ICLOUD_REPO_PATH/config/config.org"
-      git -C "$ICLOUD_REPO_PATH" add "config/config.org"
-      echo "==> config.org migrated from root to config/ subfolder."
+    # Remove stale root-level config.org left over from pre-refactor structure
+    if [ -f "$ICLOUD_REPO_PATH/config.org" ]; then
+      git -C "$ICLOUD_REPO_PATH" rm -f config.org 2>/dev/null || rm -f "$ICLOUD_REPO_PATH/config.org"
+      echo "==> Removed stale root-level config.org (now lives in config/)."
     fi
     # Modular config files are setup-managed — always overwrite from SCRIPT_DIR
     _CF_CHANGED=false
@@ -301,12 +298,9 @@ else
     mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
     echo "==> ~/${GH_REPO}/ created."
   fi
-  # Migrate root-level config.org → config/ if new location is missing
-  if [ -f "$EMACS_CONFIG_DIR/config.org" ] && [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
-    mkdir -p "$EMACS_CONFIG_DIR/config"
-    mv "$EMACS_CONFIG_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
-    echo "==> config.org migrated from root to config/ subfolder."
-  fi
+  # Remove stale root-level config.org left over from pre-refactor structure
+  [ -f "$EMACS_CONFIG_DIR/config.org" ] && rm -f "$EMACS_CONFIG_DIR/config.org" \
+    && echo "==> Removed stale root-level config.org (now lives in config/)."
   if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
     cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
     echo "==> config.org copied to ~/${GH_REPO}/config/."
