@@ -313,17 +313,21 @@ Keys in the =*Apple Reminders*= buffer:
 (defconst my/apple-reminders--fetch-script
   "var app=Application('Reminders'),out=[];
 app.lists().forEach(function(l){
+  var rs=l.reminders;
+  var names=rs.name(),ids=rs.id(),bodies=rs.body(),
+      dates=rs.dueDate(),prios=rs.priority(),flags=rs.flagged(),compl=rs.completed();
   var items=[];
-  l.reminders.whose({completed:false})().forEach(function(r){
-    var d=r.dueDate();
-    items.push({id:r.id(),title:r.name(),notes:r.body()||'',
+  for(var i=0;i<names.length;i++){
+    if(compl[i]) continue;
+    var d=dates[i];
+    items.push({id:ids[i],title:names[i],notes:bodies[i]||'',
                 due:d?d.toISOString().slice(0,10):null,
-                priority:r.priority(),flagged:r.flagged()});
-  });
+                priority:prios[i],flagged:flags[i]});
+  }
   out.push({list:l.name(),items:items});
 });
 JSON.stringify(out);"
-  "JXA script returning all open Reminders as JSON.")
+  "JXA script returning all open Reminders as JSON. Uses batch property fetch for speed.")
 
 (defun my/apple-reminders--jxa-async (script &optional callback)
   "Run JXA SCRIPT via osascript asynchronously.
