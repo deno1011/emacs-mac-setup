@@ -181,6 +181,22 @@ if [ -n "$GH_USER" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
+    # Add modular config files if missing (migration from monolithic config.org)
+    _CF_CHANGED=false
+    for _CF in core.org org-setup.org gptel-setup.org; do
+      if [ ! -f "$ICLOUD_REPO_PATH/config/$_CF" ] && [ -f "$SCRIPT_DIR/$_CF" ]; then
+        cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
+        git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
+        echo "==> $_CF added to repo."
+        _CF_CHANGED=true
+      fi
+    done
+    if [ "$_CF_CHANGED" = true ]; then
+      git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
+        commit -m "chore: add modular config files" 2>/dev/null || true
+      git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
+    fi
+    unset _CF _CF_CHANGED
   else
     echo "==> Cloning repo to iCloud..."
     if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
@@ -276,16 +292,19 @@ else
     echo "==> ~/${GH_REPO}/ created."
   fi
   if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-    cp "$SCRIPT_DIR/config.org"      "$EMACS_CONFIG_DIR/config/config.org"
-    cp "$SCRIPT_DIR/core.org"        "$EMACS_CONFIG_DIR/config/core.org"        2>/dev/null || true
-    cp "$SCRIPT_DIR/org-setup.org"   "$EMACS_CONFIG_DIR/config/org-setup.org"   2>/dev/null || true
-    cp "$SCRIPT_DIR/gptel-setup.org" "$EMACS_CONFIG_DIR/config/gptel-setup.org" 2>/dev/null || true
-    echo "==> Config files copied to ~/${GH_REPO}/config/."
+    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
+    echo "==> config.org copied to ~/${GH_REPO}/config/."
   elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
-    skip "config.org (already present)"
+    skip "config.org (user-managed — not overwritten)"
   else
     echo "WARN: No config.org found — Emacs will start with basic setup."
   fi
+  # Modular files are setup-managed — always update like init.el
+  for _CF in core.org org-setup.org gptel-setup.org; do
+    [ -f "$SCRIPT_DIR/$_CF" ] && cp "$SCRIPT_DIR/$_CF" "$EMACS_CONFIG_DIR/config/$_CF" \
+      && echo "==> $_CF updated."
+  done
+  unset _CF
 fi
 
 echo "==> Populating ~/.emacs.d/config-readonly/..."
