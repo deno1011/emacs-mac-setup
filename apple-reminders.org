@@ -83,6 +83,34 @@ an error if the CLI is missing or the command fails.
            (mapconcat (lambda (l) (concat "  • " l))
                       (my/apple-reminders-lists) "\n")))
 
+(defun my/apple-reminders-dashboard ()
+  "Show all Reminders lists and their open items in a refreshable org buffer.
+Press g to refresh, q to quit."
+  (interactive)
+  (let ((buf (get-buffer-create "*Apple Reminders*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (org-mode)
+        (insert "#+TITLE: Apple Reminders\n\n")
+        (dolist (list-name (my/apple-reminders-lists))
+          (insert (format "* %s\n" list-name))
+          (condition-case nil
+              (let ((items (my/apple-reminders--parse-items
+                            (my/apple-reminders--run "show" list-name))))
+                (if items
+                    (dolist (item items)
+                      (insert (format "** TODO %s\n" (car item)))
+                      (when (cdr item)
+                        (insert (format "   DEADLINE: <%s>\n" (cdr item)))))
+                  (insert "   /No open reminders./\n")))
+            (error (insert "   /Could not fetch/\n"))))
+        (goto-char (point-min)))
+      (setq buffer-read-only t)
+      (local-set-key (kbd "g") #'my/apple-reminders-dashboard)
+      (local-set-key (kbd "q") #'quit-window))
+    (switch-to-buffer buf)))
+
 (defun my/apple-reminders-show (&optional list-name)
   "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
   (interactive)
@@ -291,6 +319,7 @@ Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/apple-reminders--setup-keys ()
+  (define-key org-mode-map (kbd "C-c r d") #'my/apple-reminders-dashboard)
   (define-key org-mode-map (kbd "C-c r l") #'my/apple-reminders-show-lists)
   (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
   (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
