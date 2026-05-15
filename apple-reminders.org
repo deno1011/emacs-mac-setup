@@ -1,5 +1,6 @@
 #+TITLE: Apple Reminders Integration
 #+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :comments no
 
 Integrates macOS Apple Reminders with Emacs/Org. Uses the
 [[https://github.com/keith/reminders-cli][reminders-cli]] Swift tool by Keith Smiley as a clean, scriptable backend.
@@ -25,6 +26,8 @@ Reuses =my/brew-install-and-log= from [[file:core.org][core.org]]. The CLI is a 
 formula from the =keith/formulae= tap, so we need both the tap and the formula.
 
 #+begin_src emacs-lisp :tangle yes
+;;; -*- lexical-binding: t -*-
+
 (defun my/apple-reminders--ensure-cli ()
   "Ensure the reminders-cli tool is installed via Homebrew."
   (unless (executable-find "reminders")
@@ -75,6 +78,14 @@ an error if the CLI is missing or the command fails.
 (defun my/apple-reminders-lists ()
   "Return a list of Apple Reminders list names."
   (split-string (my/apple-reminders--run "show-lists") "\n" t))
+
+(defun my/apple-reminders-show-lists ()
+  "Display all Apple Reminders lists in the echo area."
+  (interactive)
+  (message "Reminders lists:\n%s"
+           (mapconcat (lambda (l) (concat "  • " l))
+                      (my/apple-reminders-lists) "\n")))
+
 
 (defun my/apple-reminders-show (&optional list-name)
   "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
@@ -159,16 +170,353 @@ tag after pushing."
     (message "Pushed %d reminder(s) to Apple Reminders." count)))
 #+end_src
 
+* Bidirectional Sync
+
+A dedicated org file (=my/apple-reminders-sync-file=, default =~/org/reminders.org=)
+acts as the two-way bridge to one Reminders list (=my/apple-reminders-sync-list=).
+
+=C-c r R= runs a full sync — three passes in one shot:
+
+1. *Org → Reminders*: any TODO in the sync file without a =:REMINDERS_LIST:=
+   property is pushed; the property is then stamped to prevent re-pushing.
+2. *Reminders → Org*: any open reminder not found by title in the sync file
+   gets a new =TODO= heading (items added on iPhone / via Siri appear here).
+3. *Completed elsewhere → DONE*: a linked org TODO whose reminder is no longer
+   open gets marked DONE automatically.
+
+A hook fires immediately on every state change: marking a heading DONE in
+Emacs completes its reminder right away, no full sync needed.
+
+#+begin_src emacs-lisp :tangle yes
+(defcustom my/apple-reminders-sync-list my/apple-reminders-default-list
+  "Apple Reminders list used for bidirectional sync."
+  :type 'string :group 'my/apple-reminders)
+
+(defcustom my/apple-reminders-sync-file "~/org/reminders.org"
+  "Org file that mirrors `my/apple-reminders-sync-list' bidirectionally."
+  :type 'string :group 'my/apple-reminders)
+
+(defun my/apple-reminders--parse-items (output)
+  "Parse `reminders show' OUTPUT into an alist of (title . due-or-nil)."
+  (let (result)
+    (dolist (line (split-string output "\n" t))
+      (when (string-match "^[0-9]+: \\(.*?\\)\\(?:  (\\([0-9-]+\\)[^)]*)?\\)?$" line)
+        (push (cons (string-trim (match-string 1 line))
+                    (match-string 2 line))
+              result)))
+    (nreverse result)))
+
+(defun my/apple-reminders--complete-by-title (list-name title)
+  "Complete the first open reminder in LIST-NAME whose title equals TITLE."
+  (condition-case nil
+      (let* ((items (my/apple-reminders--parse-items
+                     (my/apple-reminders--run "show" list-name)))
+             (idx (cl-position title items :key #'car :test #'string=)))
+        (when idx
+          (my/apple-reminders--run "complete" list-name (number-to-string idx))))
+    (error nil)))
+
+(defun my/apple-reminders--on-todo-state-change ()
+  "Complete a reminder in Apple when its linked org heading moves to DONE."
+  (when (string= org-state "DONE")
+    (let ((rlist (org-entry-get nil "REMINDERS_LIST")))
+      (when rlist
+        (my/apple-reminders--complete-by-title
+         rlist (org-get-heading t t t t))))))
+
+(add-hook 'org-after-todo-state-change-hook
+          #'my/apple-reminders--on-todo-state-change)
+
+(defun my/apple-reminders-sync ()
+  "Bidirectional sync between `my/apple-reminders-sync-file' and Apple Reminders.
+
+Org TODO with no REMINDERS_LIST  → pushed to Reminders.
+Open reminder not in org         → new TODO heading added to sync file.
+Org TODO linked but not in open  → marked DONE (completed on other device)."
+  (interactive)
+  (let* ((list  my/apple-reminders-sync-list)
+         (file  (expand-file-name my/apple-reminders-sync-file))
+         (open  (condition-case err
+                    (my/apple-reminders--parse-items
+                     (my/apple-reminders--run "show" list))
+                  (error (user-error "Cannot fetch Reminders list %s: %s" list err))))
+         (open-titles (mapcar #'car open))
+         done-markers pushed)
+    (unless (file-exists-p file)
+      (with-temp-file file
+        (insert (format "#+TITLE: Reminders — %s\n#+STARTUP: overview\n\n" list))))
+    (with-current-buffer (find-file-noselect file)
+      ;; 1: Linked TODOs no longer open in Reminders → completed on another device
+      (org-map-entries
+       (lambda ()
+         (when (and (org-entry-get nil "REMINDERS_LIST")
+                    (member (org-get-todo-state) '("TODO" "NEXT"))
+                    (not (member (org-get-heading t t t t) open-titles)))
+           (push (point-marker) done-markers)))
+       nil nil)
+      (dolist (m (nreverse done-markers))
+        (goto-char m) (org-todo "DONE") (set-marker m nil))
+      ;; 2: Unlinked org TODOs → push to Reminders and stamp property
+      (org-map-entries
+       (lambda ()
+         (when (not (org-entry-get nil "REMINDERS_LIST"))
+           (let* ((title (org-get-heading t t t t))
+                  (dl    (org-entry-get nil "DEADLINE"))
+                  (due   (when (and dl (string-match
+                                        "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" dl))
+                           (match-string 1 dl))))
+             (my/apple-reminders-add title list due nil)
+             (org-entry-put nil "REMINDERS_LIST" list)
+             (push title pushed))))
+       "TODO={TODO\\|NEXT}" nil)
+      ;; 3: Open reminders missing from the sync file → pull as new headings
+      (let* ((existing (let (ts)
+                         (org-map-entries
+                          (lambda () (push (org-get-heading t t t t) ts)) nil nil)
+                         ts))
+             (to-pull (cl-remove-if (lambda (i) (member (car i) existing)) open)))
+        (when to-pull
+          (goto-char (point-max))
+          (dolist (item to-pull)
+            (unless (bolp) (insert "\n"))
+            (insert (if (cdr item)
+                        (format "* TODO %s\nDEADLINE: <%s>\n:PROPERTIES:\n:REMINDERS_LIST: %s\n:END:\n"
+                                (car item) (cdr item) list)
+                      (format "* TODO %s\n:PROPERTIES:\n:REMINDERS_LIST: %s\n:END:\n"
+                              (car item) list)))))
+        (save-buffer)
+        (message "Sync: %d completed elsewhere, %d pushed, %d pulled."
+                 (length done-markers) (length pushed) (length to-pull))))))
+#+end_src
+
+* Dashboard
+
+Full read/write dashboard via JXA (osascript) — bypasses reminders-cli so every
+field is available: title, notes, priority, due date, flagged status.
+
+Keys in the =*Apple Reminders*= buffer:
+
+| g   | refresh                        |
+| q   | quit                           |
+| t   | complete reminder at point     |
+| e t | edit title                     |
+| e n | edit notes                     |
+| e d | edit due date (YYYY-MM-DD)     |
+| e p | change priority (None/High/Medium/Low) |
+
+#+begin_src emacs-lisp :tangle yes
+;;; Async JXA core
+
+(defvar my/apple-reminders--cache nil
+  "Last fetched Reminders data; used for instant re-renders.")
+
+(defconst my/apple-reminders--fetch-script
+  "var app=Application('Reminders'),out=[];
+app.lists().forEach(function(l){
+  var items=[];
+  l.reminders.whose({completed:false})().forEach(function(r){
+    var d=r.dueDate();
+    items.push({id:r.id(),title:r.name(),notes:r.body()||'',
+                due:d?d.toISOString().slice(0,10):null,
+                priority:r.priority(),flagged:r.flagged()});
+  });
+  out.push({list:l.name(),items:items});
+});
+JSON.stringify(out);"
+  "JXA script returning all open Reminders as JSON.")
+
+(defun my/apple-reminders--jxa-async (script &optional callback)
+  "Run JXA SCRIPT via osascript asynchronously.
+CALLBACK receives the stdout string when the process exits."
+  (let ((buf (generate-new-buffer " *ar-jxa*")))
+    (make-process
+     :name "ar-jxa"
+     :buffer buf
+     :command (list "osascript" "-l" "JavaScript" "-e" script)
+     :sentinel (lambda (proc _event)
+                 (unless (process-live-p proc)
+                   (let ((out (with-current-buffer buf
+                                (string-trim (buffer-string)))))
+                     (kill-buffer buf)
+                     (when callback (funcall callback out))))))))
+
+;;; Render (sync, uses cache)
+
+(defun my/apple-reminders--prio-label (p)
+  (cond ((eql p 1) "[#A] ") ((eql p 5) "[#B] ") ((eql p 9) "[#C] ") (t "")))
+
+(defun my/apple-reminders--loc-at-point ()
+  "Return (list-name . reminder-id) for reminder heading at point, or nil."
+  (ignore-errors
+    (save-excursion
+      (org-back-to-heading t)
+      (let ((id   (org-entry-get nil "REMINDER_ID"))
+            (list (org-entry-get nil "REMINDER_LIST")))
+        (when (and id list) (cons list id))))))
+
+(defun my/apple-reminders-dashboard--render (data)
+  "Render DATA into *Apple Reminders* without any network call."
+  (let ((buf (get-buffer-create "*Apple Reminders*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)
+            (saved-pos (point)))
+        (erase-buffer)
+        (org-mode)
+        (insert "#+TITLE: Apple Reminders\n\n")
+        (dolist (entry data)
+          (let ((lname (alist-get 'list  entry))
+                (items (alist-get 'items entry)))
+            (insert (format "* %s\n" lname))
+            (if (null items)
+                (insert "  /No open reminders./\n\n")
+              (dolist (item items)
+                (let* ((id      (alist-get 'id       item))
+                       (title   (alist-get 'title    item))
+                       (notes   (alist-get 'notes    item))
+                       (due     (alist-get 'due      item))
+                       (prio    (alist-get 'priority item))
+                       (flagged (alist-get 'flagged  item)))
+                  (insert (format "** TODO %s%s%s\n"
+                                  (my/apple-reminders--prio-label prio)
+                                  (if (eq flagged t) "★ " "")
+                                  title))
+                  (when (and due (not (eq due :null)))
+                    (insert (format "   DEADLINE: <%s>\n" due)))
+                  (insert (format "   :PROPERTIES:\n   :REMINDER_ID:   %s\n   :REMINDER_LIST: %s\n   :END:\n"
+                                  id lname))
+                  (when (and (stringp notes) (not (string-empty-p notes)))
+                    (dolist (line (split-string notes "\n"))
+                      (insert (format "   %s\n" line)))))))))
+        (goto-char (min saved-pos (point-max))))
+      (setq buffer-read-only t)
+      (let ((map (make-sparse-keymap)))
+        (set-keymap-parent map org-mode-map)
+        (define-key map (kbd "g")   #'my/apple-reminders-dashboard-refresh)
+        (define-key map (kbd "q")   #'quit-window)
+        (define-key map (kbd "t")       #'my/apple-reminders-dashboard-complete)
+        (define-key map (kbd "C-c C-t") #'my/apple-reminders-dashboard-complete)
+        (define-key map (kbd "e t") #'my/apple-reminders-dashboard-edit-title)
+        (define-key map (kbd "e n") #'my/apple-reminders-dashboard-edit-notes)
+        (define-key map (kbd "e d") #'my/apple-reminders-dashboard-edit-due)
+        (define-key map (kbd "e p") #'my/apple-reminders-dashboard-edit-priority)
+        (use-local-map map)))
+    (unless (get-buffer-window buf) (switch-to-buffer buf))))
+
+(defun my/apple-reminders-dashboard-refresh ()
+  "Fetch all reminders asynchronously and re-render the dashboard."
+  (interactive)
+  (message "Apple Reminders: refreshing…")
+  (my/apple-reminders--jxa-async
+   my/apple-reminders--fetch-script
+   (lambda (raw)
+     (condition-case err
+         (let ((data (json-parse-string raw :object-type 'alist :array-type 'list)))
+           (setq my/apple-reminders--cache data)
+           (my/apple-reminders-dashboard--render data)
+           (message "Apple Reminders: ready."))
+       (error (message "Apple Reminders fetch error: %s" err))))))
+
+(defun my/apple-reminders-dashboard ()
+  "Open *Apple Reminders* dashboard. Uses cache; press g to fetch fresh data."
+  (interactive)
+  (if my/apple-reminders--cache
+      (my/apple-reminders-dashboard--render my/apple-reminders--cache)
+    (my/apple-reminders-dashboard-refresh)))
+
+;;; Edit commands — prompt instantly, update + refresh async
+
+(defun my/apple-reminders--update-then-refresh (script)
+  "Run JXA update SCRIPT async, then trigger a dashboard refresh after a short delay."
+  (message "Apple Reminders: updating…")
+  (my/apple-reminders--jxa-async script
+    (lambda (_) (run-with-timer 1.0 nil #'my/apple-reminders-dashboard-refresh))))
+
+(defun my/apple-reminders-dashboard-complete ()
+  "Complete the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (my/apple-reminders--update-then-refresh
+     (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).completed=true;"
+             (json-encode (car loc)) (json-encode (cdr loc))))))
+
+(defun my/apple-reminders-dashboard-edit-title ()
+  "Edit the title of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let ((new (read-string "Title: "
+                            (save-excursion (org-back-to-heading t)
+                                            (org-get-heading t t t t)))))
+      (my/apple-reminders--update-then-refresh
+       (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).name=%s;"
+               (json-encode (car loc)) (json-encode (cdr loc)) (json-encode new))))))
+
+(defun my/apple-reminders-dashboard-edit-notes ()
+  "Edit the notes of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let* ((current (save-excursion
+                      (org-back-to-heading t)
+                      (string-trim
+                       (buffer-substring-no-properties
+                        (save-excursion (org-end-of-meta-data t) (point))
+                        (save-excursion (org-end-of-subtree t)   (point))))))
+           (new (read-string "Notes: " current)))
+      (my/apple-reminders--update-then-refresh
+       (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).body=%s;"
+               (json-encode (car loc)) (json-encode (cdr loc)) (json-encode new))))))
+
+(defun my/apple-reminders-dashboard-edit-due ()
+  "Edit the due date of the reminder at point (YYYY-MM-DD, empty to clear)."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let ((new (read-string "Due date (YYYY-MM-DD, empty to clear): ")))
+      (my/apple-reminders--update-then-refresh
+       (if (string-empty-p new)
+           (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).dueDate=null;"
+                   (json-encode (car loc)) (json-encode (cdr loc)))
+         (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).dueDate=new Date(%s);"
+                 (json-encode (car loc)) (json-encode (cdr loc))
+                 (json-encode (concat new "T00:00:00"))))))))
+
+(defun my/apple-reminders-dashboard-edit-priority ()
+  "Change the priority of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let* ((choice (completing-read "Priority: " '("None" "High" "Medium" "Low") nil t))
+           (prio   (cond ((string= choice "High")   1)
+                         ((string= choice "Medium")  5)
+                         ((string= choice "Low")     9)
+                         (t 0))))
+      (my/apple-reminders--update-then-refresh
+       (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).priority=%d;"
+               (json-encode (car loc)) (json-encode (cdr loc)) prio)))))
+#+end_src
+
 * Key Bindings
 
 Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 #+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'org
-  (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
-  (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
+;;; Global bindings — work from any buffer
+(global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
+(global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
+(global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
+(global-set-key (kbd "C-c r s") #'my/apple-reminders-show)
+
+;;; Org-specific bindings — only meaningful in org buffers
+(defun my/apple-reminders--setup-org-keys ()
   (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
-  (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders))
+  (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders)
+  (define-key org-mode-map (kbd "C-c r R") #'my/apple-reminders-sync))
+
+(if (featurep 'org)
+    (my/apple-reminders--setup-org-keys)
+  (with-eval-after-load 'org (my/apple-reminders--setup-org-keys)))
 #+end_src
 
 * Future: Agenda Visualization
@@ -177,7 +525,3 @@ Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 - Display open Apple Reminders inline in =org-agenda= via a virtual agenda
   source (similar to the calendar/diary block).
-- Bidirectional sync (mark reminder complete in Apple → mark org TODO DONE).
-- Pull reminders created on iPhone back into =inbox.org=.
-
-These require deciding on a sync strategy — see discussion notes in chat.
