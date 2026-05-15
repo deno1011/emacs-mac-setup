@@ -143,6 +143,29 @@ orbu git config --global user.email "$GIT_EMAIL"
 orbu git config --global pull.rebase false
 
 # ── 8. Clone config repo ──────────────────────────────────────────────────────
+# Detect GH_REPO rename — find repo in machine with remote from same GitHub user
+step "Checking for repo rename..."
+_OLD_REPO=$(orbu bash -c "
+  for d in \$HOME/*/; do
+    name=\$(basename \"\${d%/}\")
+    [ \"\$name\" = '${GH_REPO}' ] && continue
+    if [ -d \"\${d%/}/.git\" ]; then
+      remote=\$(git -C \"\${d%/}\" remote get-url origin 2>/dev/null) || true
+      if echo \"\$remote\" | grep -q 'github.com/${GH_USER}/'; then
+        echo \"\$name\"; break
+      fi
+    fi
+  done
+" 2>/dev/null) || true
+
+if [ -n "$_OLD_REPO" ]; then
+  echo "==> GH_REPO renamed in machine: $_OLD_REPO → $GH_REPO"
+  orbu bash -c "mv ~/$_OLD_REPO ~/$GH_REPO 2>/dev/null || true"
+  orbu bash -c "git -C ~/$GH_REPO remote set-url origin 'https://github.com/$GH_USER/$GH_REPO.git' 2>/dev/null || true"
+  echo "    Machine repo folder renamed and remote updated."
+fi
+unset _OLD_REPO
+
 step "Cloning emacs-data repo..."
 if [[ -n "$GH_TOKEN" ]]; then
     CLONE_URL="https://${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"

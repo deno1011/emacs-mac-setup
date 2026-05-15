@@ -177,6 +177,36 @@ if [ -n "$GH_USER" ]; then
     echo "==> setup-emacs-mac.conf loaded from emacs-data/config/."
   fi
 
+  # Detect GH_REPO rename — find iCloud symlink from same GitHub user with different name
+  _OLD_REPO=""
+  while IFS= read -r -d '' _LINK; do
+    _CNAME=$(basename "$_LINK")
+    [ "$_CNAME" = "$GH_REPO" ] && continue
+    _TARGET=$(readlink "$_LINK")
+    if [[ "$_TARGET" == *"CloudDocs"* ]] && [ -d "$_LINK/.git" ]; then
+      _REMOTE=$(git -C "$_LINK" remote get-url origin 2>/dev/null) || true
+      if [[ "$_REMOTE" == *"github.com/$GH_USER/"* ]]; then
+        _OLD_REPO="$_CNAME"; break
+      fi
+    fi
+  done < <(find "$HOME" -maxdepth 1 -type l -print0 2>/dev/null)
+
+  if [ -n "$_OLD_REPO" ]; then
+    echo "==> GH_REPO renamed: $_OLD_REPO → $GH_REPO"
+    _OLD_ICLOUD="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$_OLD_REPO"
+    gh api "repos/$GH_USER/$_OLD_REPO" -X PATCH -f name="$GH_REPO" &>/dev/null \
+      && echo "    GitHub repo renamed." || echo "    WARN: GitHub rename failed — do it manually in repo settings."
+    if [ -d "$_OLD_ICLOUD" ] && [ ! -d "$ICLOUD_REPO_PATH" ]; then
+      mv "$_OLD_ICLOUD" "$ICLOUD_REPO_PATH" && echo "    iCloud folder renamed."
+    fi
+    [ -d "$ICLOUD_REPO_PATH/.git" ] && \
+      git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/$GH_USER/$GH_REPO.git"
+    rm -f "$HOME/$_OLD_REPO"
+    ln -sfn "$ICLOUD_REPO_PATH" "$HOME/$GH_REPO"
+    echo "    Symlink updated: ~/$_OLD_REPO → ~/$GH_REPO"
+  fi
+  unset _OLD_REPO _LINK _CNAME _TARGET _REMOTE _OLD_ICLOUD
+
   if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"

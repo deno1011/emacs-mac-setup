@@ -431,6 +431,28 @@ else
   docker exec "$DOCKER_CONTAINER" /home/emacs/bin/startup-sync.sh || true
 fi
 
+# --- Detect GH_REPO rename inside container ---
+_OLD_REPO=$(docker exec "$DOCKER_CONTAINER" bash -c "
+  for d in /home/emacs/*/; do
+    name=\$(basename \"\${d%/}\")
+    [ \"\$name\" = '${GH_REPO}' ] && continue
+    if [ -d \"\${d%/}/.git\" ]; then
+      remote=\$(git -C \"\${d%/}\" remote get-url origin 2>/dev/null) || true
+      if echo \"\$remote\" | grep -q 'github.com/${GH_USER}/'; then
+        echo \"\$name\"; break
+      fi
+    fi
+  done
+" 2>/dev/null) || true
+
+if [ -n "$_OLD_REPO" ]; then
+  echo "==> GH_REPO renamed in container: $_OLD_REPO → $GH_REPO"
+  docker exec "$DOCKER_CONTAINER" bash -c "mv /home/emacs/$_OLD_REPO /home/emacs/$GH_REPO 2>/dev/null || true"
+  docker exec "$DOCKER_CONTAINER" bash -c "git -C /home/emacs/$GH_REPO remote set-url origin 'https://github.com/$GH_USER/$GH_REPO.git' 2>/dev/null || true"
+  echo "    Container repo folder renamed and remote updated."
+fi
+unset _OLD_REPO
+
 # --- config.org: only copy if missing (user-managed) ---
 if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config/config.org" 2>/dev/null; then
   skip "config.org (user-managed — not overwritten)"
