@@ -359,7 +359,6 @@ else
   echo "ERROR: init.el not found — run bootstrap.sh first."
   exit 1
 fi
-fi
 
 # --- Git identity ---
 if docker exec "$DOCKER_CONTAINER" git config --global user.email 2>/dev/null | grep -q "@"; then
