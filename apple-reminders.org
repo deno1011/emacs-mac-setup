@@ -1,5 +1,6 @@
 #+TITLE: Apple Reminders Integration
 #+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :comments no
 
 Integrates macOS Apple Reminders with Emacs/Org. Uses the
 [[https://github.com/keith/reminders-cli][reminders-cli]] Swift tool by Keith Smiley as a clean, scriptable backend.
@@ -501,18 +502,21 @@ CALLBACK receives the stdout string when the process exits."
 Under =C-c r= prefix so it doesn't collide with built-in org bindings.
 
 #+begin_src emacs-lisp :tangle yes
-(defun my/apple-reminders--setup-keys ()
-  (define-key org-mode-map (kbd "C-c r d") #'my/apple-reminders-dashboard)
-  (define-key org-mode-map (kbd "C-c r l") #'my/apple-reminders-show-lists)
-  (define-key org-mode-map (kbd "C-c r a") #'my/apple-reminders-add)
-  (define-key org-mode-map (kbd "C-c r s") #'my/apple-reminders-show)
+;;; Global bindings — work from any buffer
+(global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
+(global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
+(global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
+(global-set-key (kbd "C-c r s") #'my/apple-reminders-show)
+
+;;; Org-specific bindings — only meaningful in org buffers
+(defun my/apple-reminders--setup-org-keys ()
   (define-key org-mode-map (kbd "C-c r p") #'my/org-heading-to-reminder)
   (define-key org-mode-map (kbd "C-c r S") #'my/org-sync-deadlines-to-reminders)
   (define-key org-mode-map (kbd "C-c r R") #'my/apple-reminders-sync))
 
 (if (featurep 'org)
-    (my/apple-reminders--setup-keys)
-  (with-eval-after-load 'org (my/apple-reminders--setup-keys)))
+    (my/apple-reminders--setup-org-keys)
+  (with-eval-after-load 'org (my/apple-reminders--setup-org-keys)))
 #+end_src
 
 * Future: Agenda Visualization
