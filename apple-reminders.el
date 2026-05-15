@@ -491,6 +491,7 @@ CALLBACK receives the stdout string when the process exits."
   "Write open reminders from DATA to `my/apple-reminders-agenda-file'."
   (when my/apple-reminders-agenda-file
     (let ((file (expand-file-name my/apple-reminders-agenda-file)))
+      (make-directory (file-name-directory file) t)
       (with-temp-file file
         (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
         (insert "#+STARTUP: overview\n")
