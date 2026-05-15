@@ -436,13 +436,18 @@ CALLBACK receives the stdout string when the process exits."
     (lambda (_) (run-with-timer 1.0 nil #'my/apple-reminders-dashboard-refresh))))
 
 (defun my/apple-reminders-dashboard-complete ()
-  "Complete the reminder at point."
+  "Complete the reminder at point. Shows DONE immediately; press g to refresh."
   (interactive)
   (let ((loc (my/apple-reminders--loc-at-point)))
     (unless loc (user-error "No reminder at point"))
-    (my/apple-reminders--update-then-refresh
+    (save-excursion
+      (org-back-to-heading t)
+      (let ((inhibit-read-only t))
+        (org-todo "DONE")))
+    (my/apple-reminders--jxa-async
      (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).completed=true;"
-             (json-encode (car loc)) (json-encode (cdr loc))))))
+             (json-encode (car loc)) (json-encode (cdr loc)))
+     (lambda (_) (message "Apple Reminders: completed.")))))
 
 (defun my/apple-reminders-dashboard-edit-title ()
   "Edit the title of the reminder at point."
