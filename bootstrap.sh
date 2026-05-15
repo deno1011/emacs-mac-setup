@@ -163,11 +163,13 @@ else:
     fi
   fi
 
-  if [ "$CONF_PULLED" = true ] && [ -f "$CONF_TMP/conf/setup-emacs-mac.conf" ]; then
-    _PULLED_NAME=$(grep '^GIT_NAME=' "$CONF_TMP/conf/setup-emacs-mac.conf" | head -1)
+  _CONF_FILE="$CONF_TMP/conf/config/setup-emacs-mac.conf"
+  [ ! -f "$_CONF_FILE" ] && _CONF_FILE="$CONF_TMP/conf/setup-emacs-mac.conf"
+  if [ "$CONF_PULLED" = true ] && [ -f "$_CONF_FILE" ]; then
+    _PULLED_NAME=$(grep '^GIT_NAME=' "$_CONF_FILE" | head -1)
     _PULLED_NAME="${_PULLED_NAME#*=}"; _PULLED_NAME="${_PULLED_NAME%\"}"; _PULLED_NAME="${_PULLED_NAME#\"}"
     if [ -n "$_PULLED_NAME" ]; then
-      cp "$CONF_TMP/conf/setup-emacs-mac.conf" "$CONFIG_FILE"
+      cp "$_CONF_FILE" "$CONFIG_FILE"
       echo "    setup-emacs-mac.conf pulled from emacs-data repo — config ready."
     else
       echo "    Pulled config is empty — keeping local config."
