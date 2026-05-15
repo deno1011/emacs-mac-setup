@@ -166,6 +166,19 @@ if [ -n "$_OLD_REPO" ]; then
 fi
 unset _OLD_REPO
 
+# ── Git credentials (must be before any git push) ────────────────────────────
+step "Configuring git credentials in machine..."
+if [[ -n "$GH_TOKEN" ]]; then
+    orbu bash -c "
+        git config --global credential.helper store
+        printf 'https://${GH_USER}:%s@github.com\n' '${GH_TOKEN}' > ~/.git-credentials
+        chmod 600 ~/.git-credentials
+    "
+    echo "Git credentials stored."
+else
+    warn "No GitHub token — git push inside machine may require manual auth."
+fi
+
 step "Cloning emacs-data repo..."
 if [[ -n "$GH_TOKEN" ]]; then
     CLONE_URL="https://${GH_TOKEN}@github.com/${GH_USER}/${GH_REPO}.git"
@@ -200,19 +213,6 @@ if [ "$_CF_CHANGED" = true ]; then
     orbu bash -c "git -C ~/${GH_REPO} push origin main 2>/dev/null || true"
 fi
 unset _CF _CF_CHANGED
-
-# ── 9. Git credentials (persistent push/pull) ────────────────────────────────
-step "Configuring git credentials in machine..."
-if [[ -n "$GH_TOKEN" ]]; then
-    orbu bash -c "
-        git config --global credential.helper store
-        printf 'https://${GH_USER}:%s@github.com\n' '${GH_TOKEN}' > ~/.git-credentials
-        chmod 600 ~/.git-credentials
-    "
-    echo "Git credentials stored."
-else
-    warn "No GitHub token — git push inside machine may require manual auth."
-fi
 
 # ── 10. git-crypt key ─────────────────────────────────────────────────────────
 step "Setting up git-crypt..."
