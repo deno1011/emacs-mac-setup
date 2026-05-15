@@ -83,33 +83,6 @@ an error if the CLI is missing or the command fails.
            (mapconcat (lambda (l) (concat "  • " l))
                       (my/apple-reminders-lists) "\n")))
 
-(defun my/apple-reminders-dashboard ()
-  "Show all Reminders lists and their open items in a refreshable org buffer.
-Press g to refresh, q to quit."
-  (interactive)
-  (let ((buf (get-buffer-create "*Apple Reminders*")))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (org-mode)
-        (insert "#+TITLE: Apple Reminders\n\n")
-        (dolist (list-name (my/apple-reminders-lists))
-          (insert (format "* %s\n" list-name))
-          (condition-case nil
-              (let ((items (my/apple-reminders--parse-items
-                            (my/apple-reminders--run "show" list-name))))
-                (if items
-                    (dolist (item items)
-                      (insert (format "** TODO %s\n" (car item)))
-                      (when (cdr item)
-                        (insert (format "   DEADLINE: <%s>\n" (cdr item)))))
-                  (insert "   /No open reminders./\n")))
-            (error (insert "   /Could not fetch/\n"))))
-        (goto-char (point-min)))
-      (setq buffer-read-only t)
-      (local-set-key (kbd "g") #'my/apple-reminders-dashboard)
-      (local-set-key (kbd "q") #'quit-window))
-    (switch-to-buffer buf)))
 
 (defun my/apple-reminders-show (&optional list-name)
   "Show open reminders from LIST-NAME (default: `my/apple-reminders-default-list')."
@@ -311,6 +284,196 @@ Org TODO linked but not in open  → marked DONE (completed on other device)."
         (save-buffer)
         (message "Sync: %d completed elsewhere, %d pushed, %d pulled."
                  (length done-markers) (length pushed) (length to-pull))))))
+#+end_src
+
+* Dashboard
+
+Full read/write dashboard via JXA (osascript) — bypasses reminders-cli so every
+field is available: title, notes, priority, due date, flagged status.
+
+Keys in the =*Apple Reminders*= buffer:
+
+| g   | refresh                        |
+| q   | quit                           |
+| t   | complete reminder at point     |
+| e t | edit title                     |
+| e n | edit notes                     |
+| e d | edit due date (YYYY-MM-DD)     |
+| e p | change priority (None/High/Medium/Low) |
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/apple-reminders--jxa (script)
+  "Run JXA SCRIPT via osascript and return its stdout."
+  (with-temp-buffer
+    (let ((exit (call-process "osascript" nil t nil "-l" "JavaScript" "-e" script)))
+      (unless (zerop exit)
+        (error "osascript: %s" (string-trim (buffer-string))))
+      (string-trim (buffer-string)))))
+
+(defun my/apple-reminders--fetch-all ()
+  "Return all lists with their open reminders as a parsed alist via JXA."
+  (json-parse-string
+   (my/apple-reminders--jxa "
+var app = Application('Reminders');
+var out = [];
+app.lists().forEach(function(list) {
+  var items = [];
+  list.reminders.whose({completed: false})().forEach(function(r) {
+    var d = r.dueDate();
+    items.push({ id:       r.id(),
+                 title:    r.name(),
+                 notes:    r.body() || '',
+                 due:      d ? d.toISOString().slice(0,10) : null,
+                 priority: r.priority(),
+                 flagged:  r.flagged() });
+  });
+  out.push({ list: list.name(), items: items });
+});
+JSON.stringify(out);
+")
+   :object-type 'alist :array-type 'list))
+
+(defun my/apple-reminders--prio-label (p)
+  (cond ((eql p 1) "[#A] ") ((eql p 5) "[#B] ") ((eql p 9) "[#C] ") (t "")))
+
+(defun my/apple-reminders--update-by-id (list-name id &rest kv)
+  "Update reminder ID in LIST-NAME. KV plist: :title :notes :due :priority."
+  (let ((sets ""))
+    (let ((v (plist-get kv :title)))
+      (when v (setq sets (concat sets (format "r.name=%s;\n" (json-encode v))))))
+    (let ((v (plist-get kv :notes)))
+      (when v (setq sets (concat sets (format "r.body=%s;\n" (json-encode v))))))
+    (when (plist-member kv :due)
+      (let ((v (plist-get kv :due)))
+        (setq sets (concat sets (if v
+                                    (format "r.dueDate=new Date(%s);\n"
+                                            (json-encode (concat v "T00:00:00")))
+                                  "r.dueDate=null;\n")))))
+    (let ((v (plist-get kv :priority)))
+      (when v (setq sets (concat sets (format "r.priority=%d;\n" v)))))
+    (my/apple-reminders--jxa
+     (format "var app=Application('Reminders');var r=app.lists.byName(%s).reminders.byId(%s);\n%s"
+             (json-encode list-name) (json-encode id) sets))))
+
+(defun my/apple-reminders--complete-by-id (list-name id)
+  "Mark reminder ID in LIST-NAME completed via JXA."
+  (my/apple-reminders--jxa
+   (format "var app=Application('Reminders');app.lists.byName(%s).reminders.byId(%s).completed=true;"
+           (json-encode list-name) (json-encode id))))
+
+(defun my/apple-reminders--loc-at-point ()
+  "Return (list-name . reminder-id) for the reminder heading at point, or nil."
+  (ignore-errors
+    (save-excursion
+      (org-back-to-heading t)
+      (let ((id   (org-entry-get nil "REMINDER_ID"))
+            (list (org-entry-get nil "REMINDER_LIST")))
+        (when (and id list) (cons list id))))))
+
+(defun my/apple-reminders-dashboard ()
+  "Open *Apple Reminders* — all lists, notes, priorities, due dates.
+g=refresh  q=quit  t=complete  e t/n/d/p = edit title/notes/due/priority"
+  (interactive)
+  (let ((buf (get-buffer-create "*Apple Reminders*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)
+            (data (my/apple-reminders--fetch-all)))
+        (erase-buffer)
+        (org-mode)
+        (insert "#+TITLE: Apple Reminders\n\n")
+        (dolist (entry data)
+          (let ((lname (alist-get 'list  entry))
+                (items (alist-get 'items entry)))
+            (insert (format "* %s\n" lname))
+            (if (null items)
+                (insert "  /No open reminders./\n\n")
+              (dolist (item items)
+                (let* ((id      (alist-get 'id       item))
+                       (title   (alist-get 'title    item))
+                       (notes   (alist-get 'notes    item))
+                       (due     (alist-get 'due      item))
+                       (prio    (alist-get 'priority item))
+                       (flagged (alist-get 'flagged  item)))
+                  (insert (format "** TODO %s%s%s\n"
+                                  (my/apple-reminders--prio-label prio)
+                                  (if (eq flagged t) "★ " "")
+                                  title))
+                  (when (and due (not (eq due :null)))
+                    (insert (format "   DEADLINE: <%s>\n" due)))
+                  (insert (format "   :PROPERTIES:\n   :REMINDER_ID:   %s\n   :REMINDER_LIST: %s\n   :END:\n"
+                                  id lname))
+                  (when (and (stringp notes) (not (string-empty-p notes)))
+                    (dolist (line (split-string notes "\n"))
+                      (insert (format "   %s\n" line)))))))))
+        (goto-char (point-min)))
+      (setq buffer-read-only t)
+      (let ((map (make-sparse-keymap)))
+        (set-keymap-parent map org-mode-map)
+        (define-key map (kbd "g")   #'my/apple-reminders-dashboard)
+        (define-key map (kbd "q")   #'quit-window)
+        (define-key map (kbd "t")   #'my/apple-reminders-dashboard-complete)
+        (define-key map (kbd "e t") #'my/apple-reminders-dashboard-edit-title)
+        (define-key map (kbd "e n") #'my/apple-reminders-dashboard-edit-notes)
+        (define-key map (kbd "e d") #'my/apple-reminders-dashboard-edit-due)
+        (define-key map (kbd "e p") #'my/apple-reminders-dashboard-edit-priority)
+        (use-local-map map)))
+    (switch-to-buffer buf)))
+
+(defun my/apple-reminders-dashboard-complete ()
+  "Complete the reminder at point and refresh the dashboard."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (my/apple-reminders--complete-by-id (car loc) (cdr loc))
+    (my/apple-reminders-dashboard)))
+
+(defun my/apple-reminders-dashboard-edit-title ()
+  "Edit the title of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let ((new (read-string "Title: "
+                            (save-excursion (org-back-to-heading t)
+                                            (org-get-heading t t t t)))))
+      (my/apple-reminders--update-by-id (car loc) (cdr loc) :title new)
+      (my/apple-reminders-dashboard))))
+
+(defun my/apple-reminders-dashboard-edit-notes ()
+  "Edit the notes of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let* ((current (save-excursion
+                      (org-back-to-heading t)
+                      (let ((start (save-excursion (org-end-of-meta-data t) (point)))
+                            (end   (save-excursion (org-end-of-subtree t)   (point))))
+                        (string-trim (buffer-substring-no-properties start end)))))
+           (new (read-string "Notes: " current)))
+      (my/apple-reminders--update-by-id (car loc) (cdr loc) :notes new)
+      (my/apple-reminders-dashboard))))
+
+(defun my/apple-reminders-dashboard-edit-due ()
+  "Edit the due date of the reminder at point (YYYY-MM-DD, empty to clear)."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let ((new (read-string "Due date (YYYY-MM-DD, empty to clear): ")))
+      (apply #'my/apple-reminders--update-by-id (car loc) (cdr loc)
+             (list :due (if (string-empty-p new) nil new)))
+      (my/apple-reminders-dashboard))))
+
+(defun my/apple-reminders-dashboard-edit-priority ()
+  "Change the priority of the reminder at point."
+  (interactive)
+  (let ((loc (my/apple-reminders--loc-at-point)))
+    (unless loc (user-error "No reminder at point"))
+    (let* ((choice (completing-read "Priority: " '("None" "High" "Medium" "Low") nil t))
+           (prio   (cond ((string= choice "High")   1)
+                         ((string= choice "Medium")  5)
+                         ((string= choice "Low")     9)
+                         (t 0))))
+      (my/apple-reminders--update-by-id (car loc) (cdr loc) :priority prio)
+      (my/apple-reminders-dashboard))))
 #+end_src
 
 * Key Bindings
