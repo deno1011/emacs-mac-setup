@@ -15,10 +15,16 @@
   "Integration between Emacs/Org and macOS Apple Reminders."
   :group 'org)
 
-(defcustom my/apple-reminders-default-list "Erinnerungen"
-  "Name of the Apple Reminders list used for Org-synced items."
-  :type 'string
+(defcustom my/apple-reminders-default-list nil
+  "Name of the Apple Reminders list used for Org-synced items.
+nil means use the first list returned by Apple Reminders."
+  :type '(choice (const :tag "Auto-detect first list" nil) string)
   :group 'my/apple-reminders)
+
+(defun my/apple-reminders--default-list ()
+  "Return `my/apple-reminders-default-list', auto-detecting if nil."
+  (or my/apple-reminders-default-list
+      (car (ignore-errors (my/apple-reminders-lists)))))
 
 (defcustom my/apple-reminders-cli (or (executable-find "reminders") "reminders")
   "Path to the reminders-cli binary."
@@ -47,25 +53,15 @@
                       (my/apple-reminders-lists) "\n")))
 
 
-(defun my/apple-reminders-show (&optional list-name)
-  "Show open reminders from LIST-NAME, prompting if not given."
-  (interactive
-   (list (completing-read "List: " (my/apple-reminders-lists) nil nil
-                          my/apple-reminders-default-list)))
-  (let ((list (or list-name my/apple-reminders-default-list)))
-    (message "%s" (my/apple-reminders--run "show" list))))
-
 (defun my/apple-reminders-add (title &optional list-name due-date notes)
-  "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES.
-DUE-DATE is an ISO date string like \"2025-12-31\" or natural language
-like \"tomorrow 9am\" — reminders-cli parses both."
+  "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES."
   (interactive
    (list (read-string "Reminder: ")
          (completing-read "List: " (my/apple-reminders-lists) nil nil
-                          my/apple-reminders-default-list)
+                          (my/apple-reminders--default-list))
          (read-string "Due (optional, e.g. 2025-12-31 or 'tomorrow 9am'): ")
          nil))
-  (let* ((list (or list-name my/apple-reminders-default-list))
+  (let* ((list (or list-name (my/apple-reminders--default-list)))
          (args (append (list "add" list title)
                        (when (and due-date (not (string-empty-p due-date)))
                          (list "--due-date" due-date))
@@ -75,17 +71,6 @@ like \"tomorrow 9am\" — reminders-cli parses both."
     (message "Added to Apple Reminders [%s]: %s%s" list title
              (if (and due-date (not (string-empty-p due-date)))
                  (format " (due %s)" due-date) ""))))
-
-(defun my/apple-reminders-complete (list-name index)
-  "Mark reminder at INDEX in LIST-NAME as completed.
-INDEX matches the number shown by `my/apple-reminders-show'."
-  (interactive
-   (let* ((list (completing-read "List: " (my/apple-reminders-lists) nil t
-                                 my/apple-reminders-default-list))
-          (idx (read-number "Index: ")))
-     (list list idx)))
-  (my/apple-reminders--run "complete" list-name (number-to-string index))
-  (message "Completed [%s] #%d" list-name index))
 
 (defun my/apple-reminders--extract-notes ()
   "Extract body text from org heading, stripping LOGBOOK and org metadata."
@@ -124,10 +109,10 @@ With prefix arg, prompt for list name."
   (interactive
    (when current-prefix-arg
      (list (completing-read "List: " (my/apple-reminders-lists) nil nil
-                            my/apple-reminders-default-list))))
+                            (my/apple-reminders--default-list)))))
   (unless (derived-mode-p 'org-mode)
     (user-error "Not in an org-mode buffer"))
-  (let* ((list (or list-name my/apple-reminders-default-list))
+  (let* ((list (or list-name (my/apple-reminders--default-list)))
          (vals (my/apple-reminders--org-item-values))
          (new-id (my/apple-reminders--create-in-apple list vals)))
     (when new-id
@@ -168,9 +153,11 @@ DONE/CANCELLED → completed=true. TODO/NEXT/WAITING → completed=false (reopen
 (advice-add 'org-deadline         :after #'my/apple-reminders--maybe-push-heading)
 (advice-add 'org-set-tags-command :after #'my/apple-reminders--maybe-push-heading)
 
-(defcustom my/apple-reminders-sync-list my/apple-reminders-default-list
-  "Apple Reminders list used for bidirectional sync with `my/apple-reminders-sync-file'."
-  :type 'string :group 'my/apple-reminders)
+(defcustom my/apple-reminders-sync-list nil
+  "Apple Reminders list used for bidirectional sync with `my/apple-reminders-sync-file'.
+nil means use the first list returned by Apple Reminders."
+  :type '(choice (const :tag "Auto-detect first list" nil) string)
+  :group 'my/apple-reminders)
 
 (defcustom my/apple-reminders-sync-file "~/org/reminders.org"
   "Org file mirrored bidirectionally with `my/apple-reminders-sync-list'."
@@ -259,7 +246,7 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
 
 (defun my/apple-reminders--push-to-apple ()
   "Push org → Apple only. No fetch. New items get REMINDER_ID stamped back."
-  (let* ((list-name my/apple-reminders-sync-list)
+  (let* ((list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
          (n-new 0) (n-updated 0)
          new-pts)
     (org-map-entries
@@ -298,7 +285,7 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
 - Open in Apple, missing from org → pulled as new TODO heading."
   (interactive)
   (message "Reminders: syncing…")
-  (let* ((list-name my/apple-reminders-sync-list)
+  (let* ((list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
          (file      (expand-file-name my/apple-reminders-sync-file))
          (fetch-script
           (format
@@ -628,7 +615,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
      (lambda (raw)
        (condition-case nil
            (let* ((data      (json-parse-string raw :object-type 'alist :array-type 'list))
-                  (list-name my/apple-reminders-sync-list)
+                  (list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
                   (file      (expand-file-name my/apple-reminders-sync-file))
                   (sync-entry (cl-find list-name data
                                        :key (lambda (e) (alist-get 'list e))
@@ -702,7 +689,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                  (file ,(expand-file-name my/apple-reminders-sync-file))
                  ,(concat "* TODO %?\n"
                           "  :PROPERTIES:\n"
-                          "  :REMINDER_LIST: " my/apple-reminders-sync-list "\n"
+                          "  :REMINDER_LIST: " (or my/apple-reminders-sync-list "") "\n"
                           "  :END:\n")
                  :empty-lines 1)))
 
@@ -748,7 +735,6 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
 (global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
 (global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
 (global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
-(global-set-key (kbd "C-c r s") #'my/apple-reminders-show)
 
 ;;; Org-specific bindings — only meaningful in org buffers
 (defun my/apple-reminders--setup-org-keys ()
