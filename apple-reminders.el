@@ -728,11 +728,11 @@ CALLBACK receives the stdout string when the process exits."
 
 (add-hook 'after-save-hook #'my/apple-reminders--on-save)
 
-;;; Org-capture: C-c c r from any buffer
+;;; Org-capture: C-c c A from any buffer (key "A" avoids conflict with existing templates)
 
 (defun my/apple-reminders--setup-capture ()
   (add-to-list 'org-capture-templates
-               `("r" "Apple Reminder" entry
+               `("A" "Apple Reminder" entry
                  (file ,(expand-file-name my/apple-reminders-sync-file))
                  ,(concat "* TODO %?\n"
                           "  :PROPERTIES:\n"
@@ -744,17 +744,15 @@ CALLBACK receives the stdout string when the process exits."
     (my/apple-reminders--setup-capture)
   (with-eval-after-load 'org-capture (my/apple-reminders--setup-capture)))
 
-;;; Org-agenda: add both files so all reminders appear in M-x org-agenda
+;;; Org-agenda: register files and add dedicated "A" command
 
 (defun my/apple-reminders--ensure-agenda-files ()
-  "Register reminder files in org-agenda-files; create agenda stub if needed."
+  "Create agenda file stub if needed, register in org-agenda-files, add custom command."
   (let ((sync   (expand-file-name my/apple-reminders-sync-file))
         (agenda (and my/apple-reminders-agenda-file
                      (expand-file-name my/apple-reminders-agenda-file))))
-    ;; reminders.org: only add when it exists (created by C-c r R).
     (when (file-exists-p sync) (add-to-list 'org-agenda-files sync))
     (when agenda
-      ;; reminders-agenda.org: auto-generated, create stub so agenda doesn't warn.
       (unless (file-exists-p agenda)
         (condition-case nil
             (progn
@@ -768,8 +766,15 @@ CALLBACK receives the stdout string when the process exits."
                 (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull)))
           (error nil)))
       (when (file-exists-p agenda)
-        (add-to-list 'org-agenda-files agenda)))))
+        (add-to-list 'org-agenda-files agenda)
+        ;; Dedicated agenda command: f12 A  shows all open Apple Reminders
+        (add-to-list 'org-agenda-custom-commands
+                     `("A" "Apple Reminders" todo "TODO"
+                       ((org-agenda-files (list ,agenda))
+                        (org-agenda-overriding-header "Apple Reminders"))))))))
 
+(with-eval-after-load 'org-agenda
+  (my/apple-reminders--ensure-agenda-files))
 (my/apple-reminders--ensure-agenda-files)
 (add-hook 'org-agenda-mode-hook #'my/apple-reminders--ensure-agenda-files)
 
