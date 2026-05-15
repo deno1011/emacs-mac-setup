@@ -845,14 +845,19 @@ file are added to =org-agenda-files= so all reminders appear in =M-x org-agenda=
     (when agenda
       ;; reminders-agenda.org: auto-generated, create stub so agenda doesn't warn.
       (unless (file-exists-p agenda)
-        (if my/apple-reminders--cache
-            (my/apple-reminders--write-agenda-file my/apple-reminders--cache)
-          (with-temp-file agenda
-            (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
-            (insert "#+STARTUP: overview\n")
-            (insert "#+TODO: TODO | DONE\n\n"))
-          (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull)))
-      (add-to-list 'org-agenda-files agenda))))
+        (condition-case nil
+            (progn
+              (make-directory (file-name-directory agenda) t)
+              (if my/apple-reminders--cache
+                  (my/apple-reminders--write-agenda-file my/apple-reminders--cache)
+                (with-temp-file agenda
+                  (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
+                  (insert "#+STARTUP: overview\n")
+                  (insert "#+TODO: TODO | DONE\n\n"))
+                (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull)))
+          (error nil)))
+      (when (file-exists-p agenda)
+        (add-to-list 'org-agenda-files agenda)))))
 
 (my/apple-reminders--ensure-agenda-files)
 (add-hook 'org-agenda-mode-hook #'my/apple-reminders--ensure-agenda-files)
