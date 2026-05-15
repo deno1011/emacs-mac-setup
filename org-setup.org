@@ -524,6 +524,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 
 * Clocking
 #+begin_src emacs-lisp
+(require 'org-clock)
 (unless (file-exists-p org-clock-persist-file)
   (make-directory (file-name-directory org-clock-persist-file) t)
   (write-region "" nil org-clock-persist-file))
