@@ -1,4 +1,4 @@
-;; Entry point → ~/emacs-data/config/config.org
+;; Entry point — loads config from ~/GH_REPO/config/config.org
 
 ;; Suppress byte-compile warnings at startup
 (setq warning-minimum-level :error)
@@ -27,10 +27,22 @@
 ;; modus-vivendi is built into Emacs 28+ and requires no packages.
 (load-theme 'modus-vivendi t)
 
-;; Locate config directory: prefer ~/emacs-data/config/ (iCloud repo, config subfolder).
-;; Falls back to ~/.emacs.d/config-readonly/ (local copy kept by startup-sync).
+;; Read GH_REPO from ~/setup-emacs-mac.conf to locate the data repo.
+;; Falls back to "emacs-data" if conf is missing or GH_REPO is unset.
+(defvar my/data-dir
+  (let* ((conf (expand-file-name "~/setup-emacs-mac.conf"))
+         (repo (when (file-exists-p conf)
+                 (with-temp-buffer
+                   (insert-file-contents conf)
+                   (goto-char (point-min))
+                   (when (re-search-forward "^GH_REPO=[\"']?\\([^\"'\n]+\\)[\"']?" nil t)
+                     (string-trim (match-string 1)))))))
+    (expand-file-name (concat "~/" (or repo "emacs-data") "/")))
+  "Root of the personal data repo symlink (e.g. ~/emacs-data/).")
+
+;; Locate config directory: prefer live iCloud repo, fall back to local copy.
 (defvar my/config-dir
-  (let ((primary  (expand-file-name "~/emacs-data/config/"))
+  (let ((primary  (expand-file-name "config/" my/data-dir))
         (fallback (expand-file-name "~/.emacs.d/config-readonly/")))
     (cond
      ((file-directory-p primary)  primary)
@@ -40,7 +52,7 @@
 
 (add-hook 'after-init-hook
           (lambda ()
-            (let* ((org-dir  (expand-file-name "~/emacs-data/data/org/"))
+            (let* ((org-dir   (expand-file-name "data/org/" my/data-dir))
                    (first-org (car (and (file-directory-p org-dir)
                                         (directory-files org-dir t "\\.org$")))))
               (when (and first-org
@@ -49,21 +61,8 @@
                            (string-match-p "\x00" (buffer-string))))
                 (display-warning
                  'emacs-setup
-                 "Org files appear encrypted (git-crypt not unlocked).\nRun: bash ~/unlock-git-crypt.sh"
+                 (format "Org files appear encrypted (git-crypt not unlocked).\nRun: bash ~/unlock-git-crypt.sh")
                  :warning)))))
-
-(custom-set-variables
- ;; custom-set-variables was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- '(package-selected-packages nil))
-(custom-set-faces
- ;; custom-set-faces was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- )
 
 ;; Load config last — config.org bootstraps and loads the split files.
 (if my/config-dir
@@ -73,4 +72,5 @@
               (org-babel-load-file path)
             (error (message "CONFIG LOAD ERROR: %s" err)))
         (message "CONFIG NOT FOUND: %s" path)))
-  (message "CONFIG DIR NOT FOUND: ~/emacs-data/config/ not found and ~/.emacs.d/config-readonly/ not found"))
+  (message "CONFIG DIR NOT FOUND: %s not found and ~/.emacs.d/config-readonly/ not found"
+           (expand-file-name "config/" my/data-dir)))

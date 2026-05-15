@@ -58,12 +58,14 @@ if [ "$_HAD_MISSING" = true ]; then
   grep -E "^(GIT_NAME|GIT_EMAIL|GH_USER|GH_REPO)=" "$CONFIG_FILE"
   echo ""
 
-  # Sync conf to emacs-data/config/ if available
-  _EMACS_DATA_CONF="$HOME/emacs-data/config/setup-emacs-mac.conf"
-  if [ -d "$HOME/emacs-data/config" ]; then
-    cp "$CONFIG_FILE" "$_EMACS_DATA_CONF"
-    git -C "$HOME/emacs-data" add "config/setup-emacs-mac.conf" 2>/dev/null || true
-    git -C "$HOME/emacs-data" commit -m "chore: update setup-emacs-mac.conf" 2>/dev/null || true
-    echo "  Synced to ~/emacs-data/config/setup-emacs-mac.conf"
+  # Sync conf to the data repo's config/ subfolder if available
+  _GH_REPO=$(_get_value "GH_REPO"); _GH_REPO="${_GH_REPO:-emacs-data}"
+  _DATA_DIR="$HOME/$_GH_REPO"
+  if [ -d "$_DATA_DIR/config" ]; then
+    cp "$CONFIG_FILE" "$_DATA_DIR/config/setup-emacs-mac.conf"
+    git -C "$_DATA_DIR" add "config/setup-emacs-mac.conf" 2>/dev/null || true
+    git -C "$_DATA_DIR" commit -m "chore: update setup-emacs-mac.conf" 2>/dev/null || true
+    echo "  Synced to ~/$_GH_REPO/config/setup-emacs-mac.conf"
   fi
+  unset _GH_REPO _DATA_DIR
 fi
