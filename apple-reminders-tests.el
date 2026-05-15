@@ -560,6 +560,7 @@
   "Writes one * TODO heading per open reminder."
   (let* ((tmpfile (make-temp-file "ar-test-agenda" nil ".org"))
          (my/apple-reminders-agenda-file tmpfile)
+         (org-agenda-files nil)           ; prevent leaking into global state
          (test-data '(((list . "Work")
                        (items . (((id . "1") (title . "Send report")
                                   (due . "2025-12-31") (priority . 1)
@@ -604,7 +605,54 @@
 
 
 ;;;; ──────────────────────────────────────────────────────────────────
-;;;; 8. Push-to-Apple sync scenarios
+;;;; 8. create-in-apple JXA script
+;;;; ──────────────────────────────────────────────────────────────────
+
+(ert-deftest ar/create-in-apple-uses-before-after-id-diff ()
+  "JXA script captures IDs before and after push instead of using whose().
+whose() has timing bugs that cause duplicates — this is the guard."
+  (let (sent-script)
+    (cl-letf (((symbol-function 'my/apple-reminders--jxa-run)
+               (lambda (script) (setq sent-script script) "null")))
+      (my/apple-reminders--create-in-apple
+       "Inbox" '((title . "Test") (notes . "") (priority . 0)
+                 (due . nil) (flagged . nil))))
+    (should (string-match-p "prev=list\\.reminders\\.id()" sent-script))
+    (should (string-match-p "next=list\\.reminders\\.id()" sent-script))
+    (should-not (string-match-p "whose" sent-script))))
+
+(ert-deftest ar/create-in-apple-returns-nil-on-jxa-error ()
+  "Returns nil gracefully when JXA fails — does not signal an error."
+  (cl-letf (((symbol-function 'my/apple-reminders--jxa-run)
+             (lambda (_) (error "osascript error"))))
+    (should (null (my/apple-reminders--create-in-apple
+                   "Inbox" '((title . "X") (notes . "") (priority . 0)
+                              (due . nil) (flagged . nil)))))))
+
+(ert-deftest ar/create-in-apple-includes-due-date-when-set ()
+  "JXA script includes dueDate when due is non-nil."
+  (let (sent-script)
+    (cl-letf (((symbol-function 'my/apple-reminders--jxa-run)
+               (lambda (script) (setq sent-script script) "null")))
+      (my/apple-reminders--create-in-apple
+       "Inbox" '((title . "Task") (notes . "") (priority . 0)
+                 (due . "2025-12-31") (flagged . nil))))
+    (should (string-match-p "dueDate" sent-script))
+    (should (string-match-p "2025-12-31" sent-script))))
+
+(ert-deftest ar/create-in-apple-omits-due-date-when-nil ()
+  "JXA script has no dueDate when due is nil."
+  (let (sent-script)
+    (cl-letf (((symbol-function 'my/apple-reminders--jxa-run)
+               (lambda (script) (setq sent-script script) "null")))
+      (my/apple-reminders--create-in-apple
+       "Inbox" '((title . "Task") (notes . "") (priority . 0)
+                 (due . nil) (flagged . nil))))
+    (should-not (string-match-p "dueDate" sent-script))))
+
+
+;;;; ──────────────────────────────────────────────────────────────────
+;;;; 9. Push-to-Apple sync scenarios
 ;;;; ──────────────────────────────────────────────────────────────────
 
 (ert-deftest ar/push-creates-new-item-and-stamps-id ()
@@ -702,7 +750,7 @@
 
 
 ;;;; ──────────────────────────────────────────────────────────────────
-;;;; 9. Agenda file registration
+;;;; 10. Agenda file registration
 ;;;; ──────────────────────────────────────────────────────────────────
 
 (ert-deftest ar/ensure-agenda-adds-existing-sync-file ()
@@ -732,7 +780,8 @@
          (my/apple-reminders-agenda-file agenda-path)
          (my/apple-reminders-sync-file "/tmp/nonexistent-99999.org")
          (my/apple-reminders--cache nil)
-         (org-agenda-files nil))
+         (org-agenda-files nil)
+         (org-agenda-custom-commands nil)) ; prevent leaking stale path into custom commands
     (unwind-protect
         (progn
           (my/apple-reminders--ensure-agenda-files)

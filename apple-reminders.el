@@ -54,7 +54,9 @@ nil means use the first list returned by Apple Reminders."
 
 
 (defun my/apple-reminders-add (title &optional list-name due-date notes)
-  "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES."
+  "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES.
+DUE-DATE is an ISO date string like \"2025-12-31\" or natural language
+like \"tomorrow 9am\" — reminders-cli parses both."
   (interactive
    (list (read-string "Reminder: ")
          (completing-read "List: " (my/apple-reminders-lists) nil nil
@@ -181,7 +183,9 @@ nil means use the first list returned by Apple Reminders."
            (json-encode list-name) (json-encode id))))
 
 (defun my/apple-reminders--create-in-apple (list-name vals)
-  "Create Apple reminder in LIST-NAME from VALS alist. Returns new ID string or nil."
+  "Create Apple reminder in LIST-NAME from VALS alist. Returns new ID string or nil.
+Captures all IDs before and after push to find the new one without relying on
+whose(), which can fail due to timing and cause duplicate entries."
   (let* ((title   (alist-get 'title    vals ""))
          (notes   (alist-get 'notes    vals ""))
          (prio    (alist-get 'priority vals 0))
@@ -190,14 +194,15 @@ nil means use the first list returned by Apple Reminders."
          (script
           (format
            "var app=Application('Reminders'),list=app.lists.byName(%s);
+var prev=list.reminders.id();
 list.reminders.push(app.Reminder({name:%s,body:%s,priority:%d,flagged:%s%s}));
-var f=list.reminders.whose({name:%s,completed:false})();
-JSON.stringify(f[f.length-1].id());"
+var next=list.reminders.id(),newId=null;
+for(var i=0;i<next.length;i++){if(prev.indexOf(next[i])<0){newId=next[i];break;}}
+JSON.stringify(newId);"
            (json-encode list-name)
            (json-encode title) (json-encode notes) prio
            (if flagged "true" "false")
-           (if due (format ",dueDate:new Date(%s)" (json-encode (concat due "T00:00:00"))) "")
-           (json-encode title))))
+           (if due (format ",dueDate:new Date(%s)" (json-encode (concat due "T00:00:00"))) ""))))
     (condition-case nil
         (json-parse-string (my/apple-reminders--jxa-run script))
       (error nil))))
@@ -723,7 +728,8 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
         ;; Dedicated agenda command: f12 A  shows all open Apple Reminders
         (add-to-list 'org-agenda-custom-commands
                      `("A" "Apple Reminders" todo "TODO"
-                       ((org-agenda-files (list ,agenda))
+                       ((org-agenda-files
+                         (cl-remove-if-not #'file-exists-p (list ,agenda)))
                         (org-agenda-overriding-header "Apple Reminders"))))))))
 
 (with-eval-after-load 'org-agenda
