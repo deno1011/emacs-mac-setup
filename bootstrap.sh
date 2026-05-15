@@ -1,7 +1,7 @@
 #!/bin/bash
 # Bootstrap: Downloads all Emacs setup scripts from GitHub.
-# Usage: bash bootstrap.sh [user/emacs-data]
-# Example: bash bootstrap.sh janedoe/emacs-data
+# Usage: bash bootstrap.sh [user/emacs-data] [branch]
+# Example: bash bootstrap.sh janedoe/emacs-data stable
 # (user/repo required here since GH_USER is not yet known at bootstrap time)
 
 set -e
@@ -37,12 +37,12 @@ done
 unset _BREW_SHELLENV_LINE _PROFILE
 
 DATA_REPO="${1:-}"
+_BS_BRANCH="${2:-stable}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
 
-echo "==> Downloading all scripts to $DEST/..."
+echo "==> Downloading all scripts to $DEST/... (branch: ${_BS_BRANCH})"
 _DL_TMP=$(mktemp -d)
-_BS_BRANCH="refactor/emacs-data-layout"  # change to "stable" when merging
 curl -fsSL "https://github.com/deno1011/emacs-mac-setup/archive/refs/heads/${_BS_BRANCH}.tar.gz" \
   | tar -xz -C "$_DL_TMP" --strip-components=1
 for _F in "$_DL_TMP"/*; do
