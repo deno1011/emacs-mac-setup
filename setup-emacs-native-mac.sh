@@ -47,7 +47,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
-source "$HOME/emacs-mac-setup/bw-unlock.sh"
+source "$SCRIPT_DIR/bw-unlock.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then

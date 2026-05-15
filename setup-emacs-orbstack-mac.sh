@@ -41,8 +41,8 @@ fi
 
 # ── Bitwarden (optional — used for git-crypt key and API key) ─────────────────
 BW_AVAILABLE=false
-if [[ -f "$HOME/emacs-mac-setup/bw-unlock.sh" ]]; then
-    source "$HOME/emacs-mac-setup/bw-unlock.sh"
+if [[ -f "$SCRIPT_DIR/bw-unlock.sh" ]]; then
+    source "$SCRIPT_DIR/bw-unlock.sh"
     if bw_ensure_session 2>/dev/null; then
         BW_AVAILABLE=true
     else
