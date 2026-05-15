@@ -1,8 +1,10 @@
 #!/bin/bash
 # Bootstrap: Downloads all Emacs setup scripts from GitHub.
-# Usage: bash bootstrap.sh [user/emacs-data] [branch]
-# Example: bash bootstrap.sh janedoe/emacs-data stable
-# (user/repo required here since GH_USER is not yet known at bootstrap time)
+# Usage: bash bootstrap.sh [gh_user_or_user/repo] [branch]
+# Examples:
+#   bash bootstrap.sh janedoe              # pulls from janedoe/emacs-data (default repo)
+#   bash bootstrap.sh janedoe/my-repo      # pulls from janedoe/my-repo
+#   bash bootstrap.sh janedoe stable       # pulls from janedoe/emacs-data on stable branch
 
 set -e
 
@@ -36,7 +38,13 @@ for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
 done
 unset _BREW_SHELLENV_LINE _PROFILE
 
-DATA_REPO="${1:-}"
+# Accept "janedoe" or "janedoe/my-repo"; default repo is emacs-data
+_ARG1="${1:-}"
+case "$_ARG1" in
+  */*) DATA_REPO="$_ARG1" ;;
+  "")  DATA_REPO="" ;;
+  *)   DATA_REPO="${_ARG1}/emacs-data" ;;
+esac
 _BS_BRANCH="${2:-stable}"
 DEST="$(pwd)"
 CONFIG_FILE="$HOME/setup-emacs-mac.conf"
@@ -276,8 +284,8 @@ echo "    bash $DEST/setup-emacs-docker-mac.sh           # isolated in Docker"
 echo "    bash $DEST/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz"
 echo ""
 if [ -n "${GH_USER:-}" ]; then
-  echo "  On a new Mac, skip config questions by passing your data repo:"
-  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER/${GH_REPO:-emacs-data}"
+  echo "  On a new Mac, skip config questions by passing your GitHub username:"
+  echo "    bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh) $GH_USER"
   echo ""
 fi
 echo "  Docs: https://github.com/deno1011/emacs-mac-setup/blob/main/README.md"
