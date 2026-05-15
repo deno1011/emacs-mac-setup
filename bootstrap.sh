@@ -152,8 +152,11 @@ if [ -z "$_BS_GH_USER" ]; then
   read -r _BS_GH_USER < /dev/tty
 fi
 
-# Pull config if user known
-if [ -n "$_BS_GH_USER" ]; then
+# Pull config only if no local conf exists — local conf takes precedence
+if [ -n "$_BS_GH_USER" ] && [ -f "$CONFIG_FILE" ]; then
+  echo "    Local config already exists — skipping pull (local takes precedence)."
+  CONF_PULLED=true
+elif [ -n "$_BS_GH_USER" ]; then
   DATA_REPO="${_BS_GH_USER}/emacs-data"
   echo "    Trying to pull config from github.com/${DATA_REPO}..."
   CONF_TMP=$(mktemp -d)
@@ -193,8 +196,6 @@ if [ -n "$_BS_GH_USER" ]; then
     CONF_PULLED=false
   fi
   rm -rf "$CONF_TMP"
-else
-  echo "    Skipping config pull — will configure interactively."
 fi
 unset _BS_GH_USER
 
