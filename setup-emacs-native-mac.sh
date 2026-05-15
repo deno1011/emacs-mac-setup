@@ -295,18 +295,14 @@ mkdir -p "$HOME/.emacs.d/config-readonly"
 rsync -a --delete "$EMACS_CONFIG_DIR/config/" "$HOME/.emacs.d/config-readonly/"
 echo "    config-readonly/ updated."
 
-# --- init.el ---
-if [ -f "$EMACS_INIT" ]; then
-  skip "init.el"
-else
+# --- init.el — always update (managed by setup, not user-customized) ---
+if [ -f "$SCRIPT_DIR/init.el" ]; then
   mkdir -p "$HOME/.emacs.d"
-  if [ -f "$SCRIPT_DIR/init.el" ]; then
-    cp "$SCRIPT_DIR/init.el" "$EMACS_INIT"
-    echo "==> init.el installiert."
-  else
-    echo "ERROR: init.el not found — re-run bootstrap.sh."
-    exit 1
-  fi
+  cp "$SCRIPT_DIR/init.el" "$EMACS_INIT"
+  echo "==> init.el updated."
+else
+  echo "ERROR: init.el not found — re-run bootstrap.sh."
+  exit 1
 fi
 
 # --- secrets.el ---
