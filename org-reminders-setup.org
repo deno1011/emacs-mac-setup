@@ -1,0 +1,61 @@
+#+TITLE: Apple Reminders — org-reminders Setup
+#+STARTUP: overview
+
+Geladen von [[file:config.org][config.org]] nur auf macOS (=system-type 'darwin=).
+Nicht geladen in Docker/Orbstack-Varianten (=system-type 'gnu/linux=).
+
+Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirektionaler Sync zwischen Apple Reminders und Org.
+Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
+
+* Voraussetzungen
+
+- *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — wird automatisch installiert
+- *websocket-bridge* + *websocket*: Emacs-Pakete — werden automatisch installiert
+- *Reminders-Zugriff*: macOS fragt beim ersten Sync nach Berechtigung
+
+* Installation & Konfiguration
+
+#+begin_src emacs-lisp :tangle yes
+;;; Apple Reminders via org-reminders — nur macOS
+;;; Abhängigkeiten: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
+
+;; org-reminders-cli automatisch im Hintergrund installieren falls fehlend
+(unless (executable-find "org-reminders")
+  (my/brew-install-and-log "formula" "org-reminders-cli"
+                           "install" "ginqi7/formulae/org-reminders-cli"))
+
+;; quelpa: installiert GitHub-Packages und aktiviert sie sofort in der Session
+;; (package-vc-install aktiviert nicht sofort → Kompilierungsfehler bei Abhängigkeiten)
+(use-package quelpa
+  :ensure t
+  :custom
+  (quelpa-update-melpa-p nil)
+  (quelpa-self-upgrade-p nil))
+
+;; websocket (MELPA) — Abhängigkeit von websocket-bridge
+(use-package websocket
+  :ensure t)
+
+;; websocket-bridge zuerst installieren (Abhängigkeit von org-reminders)
+(unless (package-installed-p 'websocket-bridge)
+  (quelpa '(websocket-bridge :fetcher github :repo "ginqi7/websocket-bridge")))
+
+;; org-reminders installieren
+(unless (package-installed-p 'org-reminders)
+  (quelpa '(org-reminders :fetcher github :repo "ginqi7/org-reminders")))
+
+(use-package org-reminders
+  :ensure nil
+  :custom
+  (org-reminders-sync-file (expand-file-name "~/org/reminders.org")))
+
+;; reminders.org in Agenda einbinden
+(add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org"))
+
+;; Auto-Sync starten sobald CLI verfügbar (idle damit Startup nicht blockiert)
+(when (executable-find "org-reminders")
+  (run-with-idle-timer 3 nil
+                       (lambda ()
+                         (org-reminders-check-sync-file)
+                         (org-reminders-start-auto-sync))))
+#+end_src

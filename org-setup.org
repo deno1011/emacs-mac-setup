@@ -12,8 +12,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :config
   (setq org-directory (expand-file-name "data/org/" my/data-dir)
         org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        org-agenda-files (list (expand-file-name "data/org/" my/data-dir)
-                               (expand-file-name "~/org/reminders.org"))
+        org-agenda-files (list (expand-file-name "data/org/" my/data-dir))
         org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
@@ -1320,48 +1319,6 @@ sequenceDiagram
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src
 
-* Apple Reminders (org-reminders)
+* Apple Reminders
 
-Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
-Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirektionaler Sync zwischen Apple Reminders und Org.
-
-** Voraussetzungen
-
-- *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — eigenes CLI (nicht keith/reminders-cli!)
-- *websocket-bridge* + *websocket*: Emacs-Abhängigkeiten — werden automatisch installiert
-
-** Installation & Konfiguration
-
-#+begin_src emacs-lisp :tangle yes
-;;; Apple Reminders via org-reminders
-;;; Abhängigkeiten: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
-
-;; org-reminders-cli prüfen (brew install ginqi7/formulae/org-reminders-cli)
-(unless (executable-find "org-reminders")
-  (message "org-reminders: CLI fehlt — brew install ginqi7/formulae/org-reminders-cli"))
-
-;; quelpa: installiert GitHub-Packages und aktiviert sie sofort in der Session
-;; (package-vc-install aktiviert nicht sofort → Kompilierungsfehler bei Abhängigkeiten)
-(use-package quelpa
-  :ensure t
-  :custom
-  (quelpa-update-melpa-p nil)
-  (quelpa-self-upgrade-p nil))
-
-;; websocket (MELPA) — Abhängigkeit von websocket-bridge
-(use-package websocket
-  :ensure t)
-
-;; websocket-bridge zuerst installieren (Abhängigkeit von org-reminders)
-(unless (package-installed-p 'websocket-bridge)
-  (quelpa '(websocket-bridge :fetcher github :repo "ginqi7/websocket-bridge")))
-
-;; org-reminders installieren (findet websocket-bridge jetzt im load-path)
-(unless (package-installed-p 'org-reminders)
-  (quelpa '(org-reminders :fetcher github :repo "ginqi7/org-reminders")))
-
-(use-package org-reminders
-  :ensure nil
-  :custom
-  (org-reminders-sync-file (expand-file-name "~/org/reminders.org")))
-#+end_src
+Konfiguriert in [[file:org-reminders-setup.org][org-reminders-setup.org]] — wird von [[file:config.org][config.org]] nur auf macOS geladen.
