@@ -11,7 +11,24 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
 
 - *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — wird automatisch installiert
 - *websocket-bridge* + *websocket*: Emacs-Pakete — werden automatisch installiert
-- *Reminders-Zugriff*: macOS fragt beim ersten Sync nach Berechtigung
+- *Reminders-Zugriff*: muss einmalig manuell erteilt werden (siehe unten)
+
+* Reminders-Zugriff erteilen (einmalig)
+
+macOS vergibt Reminders-Berechtigung pro Prozess. Da der CLI von Emacs gestartet
+wird, muss die Berechtigung dem *Emacs-Prozess* erteilt werden — nicht Terminal.
+
+Diesen Befehl in *Eshell innerhalb von Emacs* ausführen (=M-x eshell=):
+
+#+begin_src shell
+osascript -e 'tell application "Reminders" to show (first list whose name is "blabla")'
+#+end_src
+
+macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
+
+#+begin_src emacs-lisp
+(org-reminders-restart-auto-sync)
+#+end_src
 
 * Installation & Konfiguration
 
