@@ -20,7 +20,7 @@ wird, muss die Berechtigung dem *Emacs-Prozess* erteilt werden — nicht Termina
 
 Diesen Befehl in *Eshell innerhalb von Emacs* ausführen (=M-x eshell=):
 
-#+begin_src shell
+#+begin_src shell :tangle no
 osascript -e 'tell application "Reminders" to show (first list whose name is "blabla")'
 #+end_src
 
@@ -73,33 +73,51 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
   ;; Anzahl Saves bis ein Sync ausgelöst wird (1 = bei jedem Save)
   (org-reminders-sync-frequency 1))
 
-;; Auto-Sync starten sobald CLI verfügbar (idle damit Startup nicht blockiert)
+;; Erster Start: sync-all ausführen wenn reminders.org noch keine Daten enthält,
+;; dann auto-sync starten sobald sync-all abgeschlossen ist.
+;; Folgestarts: direkt auto-sync starten.
 (when (executable-find "org-reminders")
   (run-with-idle-timer 3 nil
                        (lambda ()
                          (org-reminders-check-sync-file)
-                         (org-reminders-start-auto-sync))))
+                         (if (with-temp-buffer
+                               (insert-file-contents org-reminders-sync-file)
+                               (not (search-forward "EXTERNAL-ID" nil t)))
+                             ;; Erste Ausführung: sync-all, auto-sync nach Abschluss
+                             (let ((proc (org-reminders-sync-all)))
+                               (when (processp proc)
+                                 (set-process-sentinel
+                                  proc
+                                  (lambda (p _m)
+                                    (when (zerop (process-exit-status p))
+                                      (org-reminders-start-auto-sync))))))
+                           ;; Folgestarts: direkt auto-sync starten
+                           (org-reminders-start-auto-sync)))))
+#+end_src
 
+* Emacs→Apple Sync (deaktiviert — Referenz)
+
+Dieser Block behebt das Problem dass Änderungen in Emacs nicht in Apple Reminders
+ankommen. Deaktiviert weil das Standard-Paketverhalten noch getestet wird.
+
+Problem: =org-reminders-with-sync-file= ruft intern =save-buffer= auf — ohne
+Schutzflag würde der =after-save-hook= rekursiv feuern (Loop).
+
+#+begin_src emacs-lisp :tangle no
 ;; Flag: t während package Apple→Org-Updates einspielt → verhindert Sync-Loop
-;; Muss defvar sein (special variable) damit dynamisches Scoping durch alle Hook-Aufrufe gilt
 (defvar my/org-reminders--from-apple nil)
 
 (with-eval-after-load 'org-reminders
-  ;; org-reminders-message-handle wrappen (nicht nur item-update-detail):
-  ;; org-reminders-with-sync-file ruft save-buffer NACH dem return von item-update-detail auf,
-  ;; deshalb muss das Flag den gesamten message-handle-Aufruf umfassen.
   (advice-add 'org-reminders-message-handle :around
               (lambda (orig &rest args)
                 (let ((my/org-reminders--from-apple t))
                   (apply orig args))))
-  ;; check-sync-file beim Start unterdrücken (ruft ebenfalls save-buffer auf)
   (advice-add 'org-reminders-check-sync-file :around
               (lambda (orig &rest args)
                 (let ((my/org-reminders--from-apple t))
                   (apply orig args)))))
 
 ;; LAST-MODIFIED aktualisieren wenn User TODO-State ändert → syncOnce erkennt Änderung
-;; (nicht bei package-internem Apple→Org-Sync → würde sonst Loop verursachen)
 (defun my/org-reminders-mark-entry-modified ()
   (when (and (not my/org-reminders--from-apple)
              (buffer-file-name)
@@ -112,7 +130,6 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
 (add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
 ;; Sync-once nach User-Save — übersprungen wenn package-internes Save (from-apple = t)
-;; condition-case fängt websocket-closed ab falls CLI nicht verbunden ist
 (defvar my/org-reminders--sync-timer nil)
 
 (defun my/org-reminders-on-save ()
