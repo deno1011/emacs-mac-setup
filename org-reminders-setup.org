@@ -60,10 +60,20 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-start-auto-sync))))
 
 ;; Save-Hook: Emacs → Apple bei jedem Speichern von reminders.org
+;; update-hash aktualisiert LAST-MODIFIED für geänderte Items (nötig weil Emacs atomic saves
+;; macht → CLI file-monitor feuert nicht). Danach sync-once für bidirektionalen Abgleich.
 (defun my/org-reminders-on-save ()
   (when (string= (buffer-file-name)
                  (expand-file-name "~/org/reminders.org"))
-    (org-reminders-send-message "sync-once")))
+    (let ((proc (start-process "org-reminders-hash" nil
+                               (executable-find "org-reminders")
+                               "update-hash"
+                               (expand-file-name "~/org/reminders.org"))))
+      (set-process-sentinel
+       proc
+       (lambda (p _)
+         (when (= (process-exit-status p) 0)
+           (org-reminders-send-message "sync-once")))))))
 
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 #+end_src
