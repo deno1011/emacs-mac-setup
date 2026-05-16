@@ -100,7 +100,9 @@ macOS shows a permission dialog → click *OK*. Then once:
   (advice-add 'org-reminders--item-update-detail :after
               (lambda (obj)
                 (when (= 0 (org-reminders-item-priority obj))
-                  (org-priority 'remove)))))
+                  (condition-case nil
+                      (org-priority 'remove)
+                    (error nil))))))
 #+end_src
 
 * Emacs→Apple Sync (disabled — reference)
