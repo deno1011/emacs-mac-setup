@@ -52,6 +52,17 @@ nil means use the first list returned by Apple Reminders."
            (mapconcat (lambda (l) (concat "  • " l))
                       (my/apple-reminders-lists) "\n")))
 
+(defun my/apple-reminders-create-list (name)
+  "Create a new Apple Reminders list called NAME."
+  (interactive "sNew list name: ")
+  (when (string-empty-p (string-trim name))
+    (user-error "List name cannot be empty"))
+  (my/apple-reminders--jxa-async
+   (format "Application('Reminders').lists.push(Application('Reminders').List({name:%s}));"
+           (json-encode name))
+   (lambda (_)
+     (message "Apple Reminders: created list \"%s\"." name))))
+
 
 (defun my/apple-reminders-add (title &optional list-name due-date notes)
   "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES.
@@ -788,6 +799,7 @@ If `my/apple-reminders-agenda-file' is also set, it is registered too."
 (global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
 (global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
 (global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
+(global-set-key (kbd "C-c r L") #'my/apple-reminders-create-list)
 
 ;;; Org-specific bindings — only meaningful in org buffers
 (defun my/apple-reminders--setup-org-keys ()
