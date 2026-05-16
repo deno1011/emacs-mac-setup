@@ -5,7 +5,7 @@
 Bidirectional integration between macOS Apple Reminders and Emacs/Org-mode.
 Uses JXA (JavaScript for Automation / osascript) directly — no third-party CLI required.
 
-Version: 1.6.14 | Loaded by: [[file:config.org][config.org]]
+Version: 1.6.15 | Loaded by: [[file:config.org][config.org]]
 
 * Overview
 :PROPERTIES:
@@ -649,7 +649,9 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                       (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
              (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))))
          nil nil)
-        (save-buffer)))
+        (save-buffer)
+        ;; Restore overview fold so sync operations don't leave headings expanded
+        (org-overview)))
     (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
              n-done n-pushed n-pulled n-updated)))
 #+end_src
@@ -959,30 +961,56 @@ file are added to =org-agenda-files= so all reminders appear in =M-x org-agenda=
                       nil nil)
                      (dolist (m (nreverse done-pts))
                        (goto-char m) (org-todo "DONE") (set-marker m nil)))
-                   ;; Update priorities for existing items (Apple → org)
-                   (let (prio-updates)
+                   ;; Sync all fields from Apple → org for existing entries.
+                   ;; Hash guard: only apply if org is unchanged since last push
+                   ;; (cur-hash == stored REMINDER_HASH), so org edits always win.
+                   (let (field-updates)
                      (org-map-entries
                       (lambda ()
                         (let* ((id     (org-entry-get nil "REMINDER_ID"))
-                               (aitem  (when id (gethash id apple-by-id)))
-                               (a-prio (when aitem (alist-get 'priority aitem)))
-                               (p-char (nth 3 (org-heading-components)))
-                               (o-prio (cond ((eql p-char ?A) 1)
-                                             ((eql p-char ?B) 5)
-                                             ((eql p-char ?C) 9)
-                                             (t 0))))
-                          (when (and aitem (numberp a-prio) (/= a-prio o-prio))
-                            (push (cons (point-marker)
-                                        (cond ((= a-prio 1) ?A)
-                                              ((= a-prio 5) ?B)
-                                              ((= a-prio 9) ?C)
-                                              (t 'remove)))
-                                  prio-updates))))
+                               (aitem  (when id (gethash id apple-by-id))))
+                          (when (and id aitem
+                                     (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
+                            (let* ((a-prio    (or (alist-get 'priority aitem) 0))
+                                   (a-due     (let ((d (alist-get 'due aitem)))
+                                                (and (stringp d) (not (string-empty-p d)) d)))
+                                   (a-flagged (eq (alist-get 'flagged aitem) t))
+                                   (p-char    (nth 3 (org-heading-components)))
+                                   (o-prio    (cond ((eql p-char ?A) 1)
+                                                    ((eql p-char ?B) 5)
+                                                    ((eql p-char ?C) 9)
+                                                    (t 0)))
+                                   (o-due     (let ((dl (org-entry-get nil "DEADLINE")))
+                                                (when (and dl (string-match
+                                                              "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" dl))
+                                                  (match-string 1 dl))))
+                                   (o-flagged (not (null (member "flagged" (org-get-tags nil t)))))
+                                   (changed   (or (/= a-prio o-prio)
+                                                  (not (equal a-due o-due))
+                                                  (not (eq a-flagged o-flagged))))
+                                   (cur-hash  (my/apple-reminders--entry-hash))
+                                   (stored    (org-entry-get nil "REMINDER_HASH")))
+                              (when (and changed (equal cur-hash stored))
+                                (push (list (point-marker)
+                                            a-prio o-prio a-due o-due a-flagged o-flagged)
+                                      field-updates))))))
                       nil nil)
-                     (dolist (upd (nreverse prio-updates))
-                       (goto-char (car upd))
-                       (org-priority (cdr upd))
-                       (set-marker (car upd) nil)))
+                     (dolist (upd (nreverse field-updates))
+                       (cl-destructuring-bind (m a-prio o-prio a-due o-due a-flagged o-flagged) upd
+                         (goto-char m)
+                         (unless (= a-prio o-prio)
+                           (org-priority (cond ((= a-prio 1) ?A)
+                                               ((= a-prio 5) ?B)
+                                               ((= a-prio 9) ?C)
+                                               (t 'remove))))
+                         (unless (equal a-due o-due)
+                           (if a-due
+                               (org-add-planning-info 'deadline a-due)
+                             (org-add-planning-info nil nil 'deadline)))
+                         (unless (eq a-flagged o-flagged)
+                           (org-toggle-tag "flagged" (if a-flagged 'on 'off)))
+                         (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
+                         (set-marker m nil))))
                    (let ((known-ids (let (ids)
                                       (org-map-entries
                                        (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
@@ -1006,8 +1034,15 @@ file are added to =org-agenda-files= so all reminders appear in =M-x org-agenda=
                          (dolist (item items)
                            (when (not (member (alist-get 'id item) known-ids))
                              (my/apple-reminders--goto-list-heading lname)
-                             (my/apple-reminders--insert-org-heading item lname))))))
+                             (my/apple-reminders--insert-org-heading item lname)
+                             ;; Stamp hash so next save doesn't re-push what Apple just sent
+                             (save-excursion
+                               (org-back-to-heading t)
+                               (org-set-property "REMINDER_HASH"
+                                                 (my/apple-reminders--entry-hash))))))))
                    (save-buffer)
+                   ;; Restore overview fold so pull operations don't leave headings expanded
+                   (org-overview)
                    ;; Rebuild open agenda buffers so org-hd-marker stays fresh
                    (dolist (buf (buffer-list))
                      (when (buffer-live-p buf)
