@@ -80,10 +80,12 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 
 ;; Auto-Save nach 3s Idle → triggert after-save-hook → kein manuelles C-x C-s nötig
+;; file-precious-flag nil → kein atomic save → CLI file-monitor feuert wie vorgesehen
 (defun my/org-reminders-enable-autosave ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org")))
+    (setq-local file-precious-flag nil)
     (setq-local auto-save-visited-interval 3)
     (auto-save-visited-mode 1)))
 
