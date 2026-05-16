@@ -226,6 +226,44 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
              "r.dueDate=null;"))))
     (my/apple-reminders--jxa-async script)))
 
+(defun my/apple-reminders-migrate-flat-headings ()
+  "One-time migration: move flat * TODO reminder entries under * ListName headings.
+Run once after upgrading from v1.4.x. Operates on `my/apple-reminders-sync-file'."
+  (interactive)
+  (let* ((file (expand-file-name my/apple-reminders-sync-file))
+         (buf  (find-file-noselect file))
+         moves)
+    (with-current-buffer buf
+      (org-map-entries
+       (lambda ()
+         (when (and (= (org-current-level) 1)
+                    (org-entry-get nil "REMINDER_LIST"))
+           (let* ((beg   (point))
+                  (end   (save-excursion (org-end-of-subtree t t) (point)))
+                  (lname (org-entry-get nil "REMINDER_LIST"))
+                  (text  (buffer-substring-no-properties beg end)))
+             (push (list (copy-marker beg) (copy-marker end) lname text) moves))))
+       nil nil)
+      (dolist (m (sort (copy-sequence moves)
+                       (lambda (a b) (> (marker-position (car a))
+                                        (marker-position (car b))))))
+        (delete-region (nth 0 m) (nth 1 m))
+        (set-marker (nth 0 m) nil)
+        (set-marker (nth 1 m) nil))
+      (dolist (m (nreverse moves))
+        (let* ((lname (nth 2 m))
+               (text  (with-temp-buffer
+                        (insert (nth 3 m))
+                        (goto-char (point-min))
+                        (while (re-search-forward "^\\*+" nil t)
+                          (replace-match (concat (match-string 0) "*")))
+                        (buffer-string))))
+          (my/apple-reminders--goto-list-heading lname)
+          (unless (bolp) (insert "\n"))
+          (insert text)))
+      (save-buffer))
+    (message "Migrated %d entries under list headings." (length moves))))
+
 (defun my/apple-reminders--goto-list-heading (list-name)
   "Move point to end of LIST-NAME's subtree, creating the * heading if absent."
   (goto-char (point-min))
