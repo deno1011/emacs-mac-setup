@@ -1318,3 +1318,41 @@ sequenceDiagram
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src
+
+* Apple Reminders (org-reminders)
+
+Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
+Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirektionaler Sync zwischen Apple Reminders und Org.
+
+** Voraussetzungen
+
+- *reminders-cli*: =brew install keith/formulae/reminders-cli=
+  (dasselbe CLI das auch =apple-reminders.el= verwendete)
+- *Emacs 29+*: für =package-vc-install= (in Emacs integriert, kein extra Package-Manager nötig)
+- *org-mode*: bereits geladen
+
+** Installation & Konfiguration
+
+#+begin_src emacs-lisp :tangle yes
+;;; Apple Reminders via org-reminders package
+;;; Voraussetzung: brew install keith/formulae/reminders-cli
+
+;; Sicherstellen dass reminders-cli vorhanden ist
+(unless (executable-find "reminders")
+  (message "org-reminders: reminders-cli fehlt — bitte installieren: brew install keith/formulae/reminders-cli"))
+
+;; Package von GitHub installieren (Emacs 29+ package-vc-install)
+(use-package org-reminders
+  :ensure nil
+  :init
+  (unless (package-installed-p 'org-reminders)
+    (when (fboundp 'package-vc-install)
+      (package-vc-install "https://github.com/ginqi7/org-reminders")))
+  :config
+  ;; Org-Datei in die Apple Reminders synchronisiert werden
+  (setq org-reminders-reminders-to-org-file
+        (expand-file-name "~/org/reminders.org"))
+  ;; Agenda-Datei einbinden damit Reminders im org-agenda erscheinen
+  (add-to-list 'org-agenda-files
+               (expand-file-name "~/org/reminders.org")))
+#+end_src
