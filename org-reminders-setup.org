@@ -26,7 +26,7 @@ osascript -e 'tell application "Reminders" to show (first list whose name is "bl
 
 macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
 
-#+begin_src emacs-lisp
+#+begin_src emacs-lisp :tangle no
 (org-reminders-restart-auto-sync)
 #+end_src
 
@@ -67,7 +67,11 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
 (use-package org-reminders
   :ensure nil
   :custom
-  (org-reminders-sync-file (expand-file-name "~/org/reminders.org")))
+  (org-reminders-sync-file (expand-file-name "~/org/reminders.org"))
+  ;; "all" | "incomplete" | "complete"
+  (org-reminders-display-options "all")
+  ;; Anzahl Saves bis ein Sync ausgelöst wird (1 = bei jedem Save)
+  (org-reminders-sync-frequency 1))
 
 ;; Auto-Sync starten sobald CLI verfügbar (idle damit Startup nicht blockiert)
 (when (executable-find "org-reminders")
