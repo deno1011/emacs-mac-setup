@@ -723,7 +723,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                          (when (derived-mode-p 'org-agenda-mode)
                            (let ((inhibit-message t))
                              (ignore-errors (org-agenda-redo)))))))))))))
-         (error nil))))))
+         (error nil)))))
 
 (defun my/apple-reminders--start-sync-timer ()
   (when (and (> my/apple-reminders-auto-sync-interval 0)
