@@ -491,9 +491,9 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
          nil nil)
         (save-buffer)
         ;; Restore overview fold so sync operations don't leave headings expanded
-        (org-overview)))
+        (org-overview))))
     (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
-             n-done n-pushed n-pulled n-updated)))
+             n-done n-pushed n-pulled n-updated))
 
 ;;; Async JXA core
 
@@ -846,7 +846,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                              (save-excursion
                                (org-back-to-heading t)
                                (org-set-property "REMINDER_HASH"
-                                                 (my/apple-reminders--entry-hash)))))))
+                                                 (my/apple-reminders--entry-hash))))))))
                    (save-buffer)
                    ;; Restore overview fold so pull operations don't leave headings expanded
                    (org-overview)
