@@ -895,6 +895,7 @@ If `my/apple-reminders-agenda-file' is also set, it is registered too."
 (global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
 (global-set-key (kbd "C-c r L") #'my/apple-reminders-create-list)
 (global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
+(global-set-key (kbd "C-c r R") #'my/apple-reminders-sync)
 
 ;;; Org-specific bindings — only meaningful in org buffers
 (defun my/apple-reminders--setup-org-keys ()
