@@ -1343,17 +1343,25 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
 (unless (executable-find "reminders")
   (message "org-reminders: reminders-cli fehlt — brew install keith/formulae/reminders-cli"))
 
-;; Python-Abhängigkeit installieren (my/pip-install-and-log aus core.org)
+;; Python-Abhängigkeit (websocket-bridge-python)
 (when (fboundp 'my/pip-install-and-log)
   (my/pip-install-and-log "websocket-bridge-python"))
 
-(when (fboundp 'package-vc-install)
-  ;; websocket-bridge zuerst (Abhängigkeit von org-reminders)
-  (unless (package-installed-p 'websocket-bridge)
-    (package-vc-install "https://github.com/ginqi7/websocket-bridge"))
-  ;; org-reminders selbst
-  (unless (package-installed-p 'org-reminders)
-    (package-vc-install "https://github.com/ginqi7/org-reminders")))
+;; quelpa: installiert GitHub-Packages und aktiviert sie sofort in der Session
+;; (package-vc-install aktiviert nicht sofort → Kompilierungsfehler bei Abhängigkeiten)
+(use-package quelpa
+  :ensure t
+  :custom
+  (quelpa-update-melpa-p nil)
+  (quelpa-self-upgrade-p nil))
+
+;; websocket-bridge zuerst installieren (Abhängigkeit von org-reminders)
+(unless (package-installed-p 'websocket-bridge)
+  (quelpa '(websocket-bridge :fetcher github :repo "ginqi7/websocket-bridge")))
+
+;; org-reminders installieren (findet websocket-bridge jetzt im load-path)
+(unless (package-installed-p 'org-reminders)
+  (quelpa '(org-reminders :fetcher github :repo "ginqi7/org-reminders")))
 
 (use-package org-reminders
   :ensure nil
