@@ -962,8 +962,8 @@ Falls back to standard org-agenda navigation for non-reminder items."
   (local-set-key (kbd "TAB")    #'my/apple-reminders--agenda-tab)
   (local-set-key (kbd "o")      #'my/apple-reminders--agenda-tab)
   (local-set-key [mouse-2]      #'my/apple-reminders--agenda-mouse-same)
-  (local-set-key [down-mouse-3] #'ignore)
-  (local-set-key [mouse-3]      #'my/apple-reminders--agenda-mouse-other))
+  (local-set-key [down-mouse-3] #'my/apple-reminders--agenda-mouse-other)
+  (local-set-key [mouse-3]      #'ignore))
 
 ;; Run on mode-hook (new buffers) AND finalize-hook (refreshes of existing buffers)
 (add-hook 'org-agenda-mode-hook     #'my/apple-reminders--setup-agenda-nav)

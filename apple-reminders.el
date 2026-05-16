@@ -63,7 +63,6 @@ nil means use the first list returned by Apple Reminders."
    (lambda (_)
      (message "Apple Reminders: created list \"%s\"." name))))
 
-
 (defun my/apple-reminders-add (title &optional list-name due-date notes)
   "Add a reminder TITLE to LIST-NAME with optional DUE-DATE and NOTES.
 DUE-DATE is an ISO date string like \"2025-12-31\" or natural language
@@ -803,7 +802,6 @@ Uses marker position first; falls back to title search when marker is stale."
   (let* ((sync-file (expand-file-name my/apple-reminders-sync-file))
          (sync-buf  (get-file-buffer sync-file)))
     (when sync-buf
-      ;; Build title→id map once from the live buffer (O(n))
       (let ((title-id (make-hash-table :test #'equal)))
         (with-current-buffer sync-buf
           (org-map-entries
@@ -818,14 +816,12 @@ Uses marker position first; falls back to title search when marker is stale."
               (when (and m (buffer-live-p (marker-buffer m))
                          (eq (marker-buffer m) sync-buf))
                 (let ((id (or
-                           ;; 1. Read from marker (correct when fresh)
                            (with-current-buffer sync-buf
                              (save-excursion
                                (goto-char m)
                                (condition-case nil
                                    (org-entry-get nil "REMINDER_ID")
                                  (error nil))))
-                           ;; 2. Match heading title against agenda txt (stale marker)
                            (let ((txt (get-text-property (point) 'txt)))
                              (when txt
                                (let (found)
@@ -869,8 +865,8 @@ Falls back to standard org-agenda navigation for non-reminder items."
   (local-set-key (kbd "TAB")    #'my/apple-reminders--agenda-tab)
   (local-set-key (kbd "o")      #'my/apple-reminders--agenda-tab)
   (local-set-key [mouse-2]      #'my/apple-reminders--agenda-mouse-same)
-  (local-set-key [down-mouse-3] #'ignore)
-  (local-set-key [mouse-3]      #'my/apple-reminders--agenda-mouse-other))
+  (local-set-key [down-mouse-3] #'my/apple-reminders--agenda-mouse-other)
+  (local-set-key [mouse-3]      #'ignore))
 
 ;; Run on mode-hook (new buffers) AND finalize-hook (refreshes of existing buffers)
 (add-hook 'org-agenda-mode-hook     #'my/apple-reminders--setup-agenda-nav)
@@ -879,8 +875,8 @@ Falls back to standard org-agenda navigation for non-reminder items."
 ;;; Global bindings — work from any buffer
 (global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
 (global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
-(global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
 (global-set-key (kbd "C-c r L") #'my/apple-reminders-create-list)
+(global-set-key (kbd "C-c r a") #'my/apple-reminders-add)
 
 ;;; Org-specific bindings — only meaningful in org buffers
 (defun my/apple-reminders--setup-org-keys ()
