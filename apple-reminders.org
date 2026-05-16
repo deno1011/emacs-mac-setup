@@ -2,23 +2,164 @@
 #+STARTUP: overview
 #+PROPERTY: header-args:emacs-lisp :comments no
 
-Integrates macOS Apple Reminders with Emacs/Org. Uses the
-[[https://github.com/keith/reminders-cli][reminders-cli]] Swift tool by Keith Smiley as a clean, scriptable backend.
+Bidirectional integration between macOS Apple Reminders and Emacs/Org-mode.
+Uses JXA (JavaScript for Automation / osascript) directly — no third-party CLI required.
 
-Loaded by: [[file:config.org][config.org]]
+Version: 1.6.12 | Loaded by: [[file:config.org][config.org]]
 
 * Overview
+:PROPERTIES:
+:DESCRIPTION: What this module provides and how it is structured
+:END:
 
-This module provides:
+** What it does
 
-- Auto-install of =reminders-cli= via Homebrew on first run.
-- Elisp wrapper functions: list, show, add, complete.
-- Org integration: push the current TODO heading (with DEADLINE) to Apple Reminders.
-- Bulk-sync: mirror all DEADLINE'd TODOs into a dedicated Apple Reminders list.
+- *Live field sync*: title, priority, deadline, flagged tag, notes — any change
+  in org is pushed to Apple within seconds; Apple changes appear in org on the
+  next background pull (every 5 min) or on =C-c r R=.
+- *State sync*: marking a heading =DONE= / =CANCELLED= completes the reminder in
+  Apple; reopening it (back to =TODO=) reopens it in Apple.
+- *Dashboard* (=C-c r d=): read-only org buffer showing all lists and open
+  reminders; supports complete (=t=), show/hide done (=h=), jump to org (=e=),
+  refresh (=g=).
+- *Background auto-pull*: runs every 5 min, marks completed-in-Apple items as
+  DONE in =reminders.org=, inserts new Apple items, updates priorities.
+- *Agenda integration*: writes =reminders-agenda.org= so Apple Reminders appear
+  in the standard org agenda (=f12= / =A=).
+- *Org capture*: =C-c c A= captures a new reminder directly into =reminders.org=.
 
-The dedicated list name is configurable via =my/apple-reminders-default-list=.
-By default it auto-detects the first list in Apple Reminders. Set
-=my/apple-reminders-sync-list= to pin a specific list for bidirectional sync.
+** Implementation sections
+
+| Section                        | What it contains                                              |
+|--------------------------------+---------------------------------------------------------------|
+| Prerequisites                  | Auto-install check (no-op if JXA works without CLI)          |
+| Configuration                  | All =defcustom= variables (sync file, list, interval, …)     |
+| Core Wrapper Functions         | JXA async/sync helpers; list/add/complete API wrappers       |
+| Org Integration                | Field extraction; org-priority/deadline/tags advice hooks    |
+| Bidirectional Sync             | =C-c r R= full sync; push-to-apple save hook                 |
+| Dashboard                      | =*Apple Reminders*= buffer; render, complete, toggle done    |
+| Auto-Sync and Org Integration  | Background pull timer; agenda file writer; capture template  |
+| Key Bindings                   | All keymaps (global + org-mode-map)                          |
+
+** Field mapping
+
+| Org                        | Apple Reminders  | Direction  |
+|----------------------------+------------------+------------|
+| Heading title              | Name             | ↔          |
+| =[#A]= / =[#B]= / =[#C]=  | Priority H/M/L   | ↔          |
+| =DEADLINE:=                | Due date         | ↔          |
+| =:flagged:= tag            | Flagged          | ↔          |
+| Body text (no metadata)    | Notes            | ↔          |
+| =DONE= / =CANCELLED=       | Completed        | ↔          |
+| =:REMINDER_ID:= property   | Internal ID      | Apple→org  |
+| =:REMINDER_LIST:= property | List name        | Apple→org  |
+
+Org-only fields (=SCHEDULED=, =LOGBOOK=, clocking, =NEXT=/=WAITING= states,
+other tags, sub-tasks, progress cookies =[n/m]=) are never sent to Apple.
+
+* User Manual
+:PROPERTIES:
+:DESCRIPTION: How to use the integration day-to-day
+:END:
+
+** Quick-reference keybindings
+
+| Key         | What it does                                       | Where     |
+|-------------+----------------------------------------------------+-----------|
+| =C-c r d=   | Open Apple Reminders dashboard                     | anywhere  |
+| =C-c r l=   | Show all Reminders lists in echo area              | anywhere  |
+| =C-c r L=   | Create a new Reminders list                        | anywhere  |
+| =C-c r a=   | Add a new reminder (prompts title, list, due date) | anywhere  |
+| =C-c r p=   | Push current org heading to Apple                  | org files |
+| =C-c r R=   | Full bidirectional sync                            | org files |
+| =C-c c A=   | Org capture → new reminder                        | anywhere  |
+| =C-c ,=     | Change priority → syncs to Apple immediately       | org files |
+| =C-c C-d=   | Set/change deadline → syncs to Apple immediately   | org files |
+| =C-c C-q=   | Set tags; add =flagged= → flags in Apple           | org files |
+| =C-c C-t=   | Change TODO state; DONE → completes in Apple       | org files |
+
+** Dashboard (=C-c r d=)
+
+Opens =*Apple Reminders*= buffer. Keys inside:
+
+| Key | Action                                  |
+|-----+-----------------------------------------|
+| =g= | Refresh from Apple                      |
+| =t= | Complete reminder at point              |
+| =h= | Toggle visibility of session-done items |
+| =e= | Jump to heading in =reminders.org=      |
+| =q= | Quit / close buffer                     |
+
+The dashboard re-uses standard org navigation (=TAB=, =RET=, mouse).
+
+** Priority sync
+
+Uses standard org priority (=C-c ,= or =S-↑= / =S-↓=):
+
+| Org    | Apple Reminders |
+|--------+-----------------|
+| =[#A]= | High            |
+| =[#B]= | Medium          |
+| =[#C]= | Low             |
+| none   | None            |
+
+Changing priority in org pushes to Apple instantly.
+Changing priority in Apple appears in =reminders.org= on the next background pull.
+
+** Deadline sync
+
+Use =C-c C-d= to set a deadline — it is pushed to Apple immediately.
+To remove: =C-c C-d= then =C-c C-d= again (org removes the DEADLINE line) — Apple
+due date is cleared.
+
+** Flagged sync
+
+Add the tag =:flagged:= with =C-c C-q= → reminder is flagged in Apple.
+Remove the tag → reminder is unflagged.
+
+** State sync (complete/reopen)
+
+- =C-c C-t= → =DONE= (or =CANCELLED=) → reminder completed in Apple.
+- =C-c C-t= → =TODO= on a done heading → reminder reopened in Apple.
+
+** Notes sync
+
+Body text below the heading (excluding =:PROPERTIES:=, =DEADLINE=, =LOGBOOK=) is
+synced as the reminder's Notes field. Synced on every save of =reminders.org=.
+
+** Full bidirectional sync (=C-c r R=)
+
+Runs synchronously. Covers all open items:
+
+1. New org headings (no =REMINDER_ID=) → created in Apple, ID stamped back.
+2. Existing headings with =REMINDER_ID= → org values pushed to Apple (org wins).
+3. DONE/CANCELLED in org, open in Apple → Apple completed.
+4. Completed/gone in Apple, open in org → org marked DONE.
+5. New in Apple, missing from org → inserted under =* ListName= heading.
+
+** Background auto-pull
+
+Runs every 5 minutes silently. Does:
+- Marks org items DONE if completed in Apple.
+- Updates priorities of existing items from Apple.
+- Inserts new Apple items not yet in =reminders.org=.
+- Rebuilds open agenda buffers (keeps =org-hd-marker= fresh for navigation).
+
+Interval: =my/apple-reminders-auto-sync-interval= (default 300 s, 0 to disable).
+
+** Configuration variables
+
+| Variable                                  | Default                       | Purpose                            |
+|-------------------------------------------+-------------------------------+------------------------------------|
+| =my/apple-reminders-sync-file=            | =~/org/reminders.org=         | Bidirectional sync file            |
+| =my/apple-reminders-sync-list=            | nil (auto-detect first list)  | Pin a specific list for sync       |
+| =my/apple-reminders-agenda-file=          | =~/org/reminders-agenda.org=  | Read-only agenda source file       |
+| =my/apple-reminders-auto-sync-interval=   | 300                           | Background pull interval (seconds) |
+
+Set in your config:
+#+begin_example
+(setq my/apple-reminders-sync-list "Work")
+#+end_example
 
 * Prerequisites: Auto-Install reminders-cli
 
