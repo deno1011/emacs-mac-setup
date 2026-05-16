@@ -1,66 +1,66 @@
 #+TITLE: Apple Reminders — org-reminders Setup
 #+STARTUP: overview
 
-Geladen von [[file:config.org][config.org]] nur auf macOS (=system-type 'darwin=).
-Nicht geladen in Docker/Orbstack-Varianten (=system-type 'gnu/linux=).
+Loaded from [[file:config.org][config.org]] on macOS only (=system-type 'darwin=).
+Not loaded in Docker/Orbstack variants (=system-type 'gnu/linux=).
 
-Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirektionaler Sync zwischen Apple Reminders und Org.
-Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
+Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirectional sync between Apple Reminders and Org.
+Replaces the earlier =apple-reminders.org= custom implementation.
 
-* Voraussetzungen
+* Prerequisites
 
-- *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — wird automatisch installiert
-- *websocket-bridge* + *websocket*: Emacs-Pakete — werden automatisch installiert
-- *Reminders-Zugriff*: muss einmalig manuell erteilt werden (siehe unten)
+- *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — installed automatically
+- *websocket-bridge* + *websocket*: Emacs packages — installed automatically
+- *Reminders access*: must be granted manually once (see below)
 
-* Reminders-Zugriff erteilen (einmalig)
+* Grant Reminders Access (once)
 
-macOS vergibt Reminders-Berechtigung pro Prozess. Da der CLI von Emacs gestartet
-wird, muss die Berechtigung dem *Emacs-Prozess* erteilt werden — nicht Terminal.
+macOS grants Reminders permission per process. Since the CLI is launched by Emacs,
+the permission must be granted to the *Emacs process* — not Terminal.
 
-Diesen Befehl in *Eshell innerhalb von Emacs* ausführen (=M-x eshell=):
+Run this command in *Eshell inside Emacs* (=M-x eshell=):
 
 #+begin_src shell :tangle no
 osascript -e 'tell application "Reminders" to show (first list whose name is "blabla")'
 #+end_src
 
-macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
+macOS shows a permission dialog → click *OK*. Then once:
 
 #+begin_src emacs-lisp :tangle no
 (org-reminders-restart-auto-sync)
 #+end_src
 
-* Installation & Konfiguration
+* Installation & Configuration
 
 #+begin_src emacs-lisp :tangle yes
-;;; Apple Reminders via org-reminders — nur macOS
-;;; Abhängigkeiten: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
+;;; Apple Reminders via org-reminders — macOS only
+;;; Dependencies: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
 
-;; Agenda-Eintrag zuerst — damit er auch bei Ladefehlern weiter unten aktiv bleibt
+;; Register agenda file first — stays active even if packages below fail to load
 (add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org"))
 
-;; org-reminders-cli automatisch im Hintergrund installieren falls fehlend
+;; Install org-reminders-cli automatically if missing
 (unless (executable-find "org-reminders")
   (my/brew-install-and-log "formula" "org-reminders-cli"
                            "install" "ginqi7/formulae/org-reminders-cli"))
 
-;; quelpa: installiert GitHub-Packages und aktiviert sie sofort in der Session
-;; (package-vc-install aktiviert nicht sofort → Kompilierungsfehler bei Abhängigkeiten)
+;; quelpa: installs GitHub packages and activates them in the current session
+;; (package-vc-install does not activate immediately → compile errors with dependencies)
 (use-package quelpa
   :ensure t
   :custom
   (quelpa-update-melpa-p nil)
   (quelpa-self-upgrade-p nil))
 
-;; websocket (MELPA) — Abhängigkeit von websocket-bridge
+;; websocket (MELPA) — dependency of websocket-bridge
 (use-package websocket
   :ensure t)
 
-;; websocket-bridge zuerst installieren (Abhängigkeit von org-reminders)
+;; Install websocket-bridge first (dependency of org-reminders)
 (unless (package-installed-p 'websocket-bridge)
   (quelpa '(websocket-bridge :fetcher github :repo "ginqi7/websocket-bridge")))
 
-;; org-reminders installieren
+;; Install org-reminders
 (unless (package-installed-p 'org-reminders)
   (quelpa '(org-reminders :fetcher github :repo "ginqi7/org-reminders")))
 
@@ -70,12 +70,12 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
   (org-reminders-sync-file (expand-file-name "~/org/reminders.org"))
   ;; "all" | "incomplete" | "complete"
   (org-reminders-display-options "all")
-  ;; Anzahl Saves bis ein Sync ausgelöst wird (1 = bei jedem Save)
+  ;; Number of saves before a sync is triggered (1 = every save)
   (org-reminders-sync-frequency 1))
 
-;; Erster Start: sync-all ausführen wenn reminders.org noch keine Daten enthält,
-;; dann auto-sync starten sobald sync-all abgeschlossen ist.
-;; Folgestarts: direkt auto-sync starten.
+;; First start: run sync-all if reminders.org has no data yet, then start auto-sync
+;; via process sentinel once sync-all completes.
+;; Subsequent starts: go straight to auto-sync.
 (when (executable-find "org-reminders")
   (run-with-idle-timer 3 nil
                        (lambda ()
@@ -83,7 +83,7 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
                          (if (with-temp-buffer
                                (insert-file-contents org-reminders-sync-file)
                                (not (search-forward "EXTERNAL-ID" nil t)))
-                             ;; Erste Ausführung: sync-all, auto-sync nach Abschluss
+                             ;; First run: sync-all, start auto-sync after completion
                              (let ((proc (org-reminders-sync-all)))
                                (when (processp proc)
                                  (set-process-sentinel
@@ -91,11 +91,11 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
                                   (lambda (p _m)
                                     (when (zerop (process-exit-status p))
                                       (org-reminders-start-auto-sync))))))
-                           ;; Folgestarts: direkt auto-sync starten
+                           ;; Subsequent starts: start auto-sync directly
                            (org-reminders-start-auto-sync)))))
 
-;; Fix: package überspringt org-priority-Aufruf wenn Apple-Priorität 0 ist (kein Wächter nötig)
-;; → bestehende Priorität im Org-Eintrag wird nie gelöscht wenn sie in Apple entfernt wird
+;; Fix: package skips the org-priority call when Apple priority is 0 (no priority)
+;; → existing priority in the org entry is never cleared when removed in Apple
 (with-eval-after-load 'org-reminders
   (advice-add 'org-reminders--item-update-detail :after
               (lambda (obj)
@@ -103,16 +103,16 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
                   (org-priority 'remove)))))
 #+end_src
 
-* Emacs→Apple Sync (deaktiviert — Referenz)
+* Emacs→Apple Sync (disabled — reference)
 
-Dieser Block behebt das Problem dass Änderungen in Emacs nicht in Apple Reminders
-ankommen. Deaktiviert weil das Standard-Paketverhalten noch getestet wird.
+This block fixes the issue where changes made in Emacs do not arrive in Apple Reminders.
+Disabled while testing the default package behavior.
 
-Problem: =org-reminders-with-sync-file= ruft intern =save-buffer= auf — ohne
-Schutzflag würde der =after-save-hook= rekursiv feuern (Loop).
+Problem: =org-reminders-with-sync-file= calls =save-buffer= internally — without the
+guard flag the =after-save-hook= would fire recursively (loop).
 
 #+begin_src emacs-lisp :tangle no
-;; Flag: t während package Apple→Org-Updates einspielt → verhindert Sync-Loop
+;; Flag: t while package is applying Apple→Org updates → prevents sync loop
 (defvar my/org-reminders--from-apple nil)
 
 (with-eval-after-load 'org-reminders
@@ -125,7 +125,7 @@ Schutzflag würde der =after-save-hook= rekursiv feuern (Loop).
                 (let ((my/org-reminders--from-apple t))
                   (apply orig args)))))
 
-;; LAST-MODIFIED aktualisieren wenn User TODO-State ändert → syncOnce erkennt Änderung
+;; Update LAST-MODIFIED when user changes TODO state → syncOnce detects the change
 (defun my/org-reminders-mark-entry-modified ()
   (when (and (not my/org-reminders--from-apple)
              (buffer-file-name)
@@ -137,7 +137,7 @@ Schutzflag würde der =after-save-hook= rekursiv feuern (Loop).
 
 (add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
-;; Sync-once nach User-Save — übersprungen wenn package-internes Save (from-apple = t)
+;; Send sync-once after user save — skipped for package-internal saves (from-apple = t)
 (defvar my/org-reminders--sync-timer nil)
 
 (defun my/org-reminders-on-save ()
@@ -158,7 +158,7 @@ Schutzflag würde der =after-save-hook= rekursiv feuern (Loop).
 
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 
-;; Auto-Save nach 3s Idle → kein manuelles C-x C-s nötig
+;; Auto-save after 3s idle → no manual C-x C-s needed
 (defun my/org-reminders-enable-autosave ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
