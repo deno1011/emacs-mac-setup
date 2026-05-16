@@ -59,13 +59,38 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; file-precious-flag nil → kein atomic save → CLI DispatchSource feuert bei Änderungen
+;; LAST-MODIFIED aktualisieren wenn TODO-State sich ändert → syncOnce erkennt Änderung
+;; (syncOnce vergleicht LAST-MODIFIED-Timestamps; org muss neuer sein als Apple)
+(defun my/org-reminders-mark-entry-modified ()
+  (when (and (buffer-file-name)
+             (string= (buffer-file-name)
+                      (expand-file-name "~/org/reminders.org"))
+             (org-entry-get nil "EXTERNAL-ID"))
+    (org-entry-put nil "LAST-MODIFIED"
+                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
+
+(add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
+
+;; Debounced sync-once nach Save — 1s Delay verhindert Loop durch package-internes save-buffer
+;; (org-reminders-with-sync-file ruft save-buffer auf → ohne Delay würde Hook rekursiv feuern)
+(defvar my/org-reminders--sync-timer nil)
+
+(defun my/org-reminders-on-save ()
+  (when (and (buffer-file-name)
+             (string= (buffer-file-name)
+                      (expand-file-name "~/org/reminders.org")))
+    (when my/org-reminders--sync-timer
+      (cancel-timer my/org-reminders--sync-timer))
+    (setq my/org-reminders--sync-timer
+          (run-with-timer 1 nil #'org-reminders-send-message "sync-once"))))
+
+(add-hook 'after-save-hook #'my/org-reminders-on-save)
+
 ;; Auto-Save nach 3s Idle → kein manuelles C-x C-s nötig
 (defun my/org-reminders-enable-autosave ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org")))
-    (setq-local file-precious-flag nil)
     (setq-local auto-save-visited-interval 3)
     (auto-save-visited-mode 1)))
 
