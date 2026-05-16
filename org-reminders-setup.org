@@ -59,10 +59,29 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; LAST-MODIFIED aktualisieren wenn TODO-State sich ändert → syncOnce erkennt Änderung
-;; (syncOnce vergleicht LAST-MODIFIED-Timestamps; org muss neuer sein als Apple)
+;; Flag: t während package Apple→Org-Updates einspielt → verhindert Sync-Loop
+;; Muss defvar sein (special variable) damit dynamisches Scoping durch alle Hook-Aufrufe gilt
+(defvar my/org-reminders--from-apple nil)
+
+(with-eval-after-load 'org-reminders
+  ;; org-reminders-message-handle wrappen (nicht nur item-update-detail):
+  ;; org-reminders-with-sync-file ruft save-buffer NACH dem return von item-update-detail auf,
+  ;; deshalb muss das Flag den gesamten message-handle-Aufruf umfassen.
+  (advice-add 'org-reminders-message-handle :around
+              (lambda (orig &rest args)
+                (let ((my/org-reminders--from-apple t))
+                  (apply orig args))))
+  ;; check-sync-file beim Start unterdrücken (ruft ebenfalls save-buffer auf)
+  (advice-add 'org-reminders-check-sync-file :around
+              (lambda (orig &rest args)
+                (let ((my/org-reminders--from-apple t))
+                  (apply orig args)))))
+
+;; LAST-MODIFIED aktualisieren wenn User TODO-State ändert → syncOnce erkennt Änderung
+;; (nicht bei package-internem Apple→Org-Sync → würde sonst Loop verursachen)
 (defun my/org-reminders-mark-entry-modified ()
-  (when (and (buffer-file-name)
+  (when (and (not my/org-reminders--from-apple)
+             (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org"))
              (org-entry-get nil "EXTERNAL-ID"))
@@ -71,18 +90,25 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
 
 (add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
-;; Debounced sync-once nach Save — 1s Delay verhindert Loop durch package-internes save-buffer
-;; (org-reminders-with-sync-file ruft save-buffer auf → ohne Delay würde Hook rekursiv feuern)
+;; Sync-once nach User-Save — übersprungen wenn package-internes Save (from-apple = t)
+;; condition-case fängt websocket-closed ab falls CLI nicht verbunden ist
 (defvar my/org-reminders--sync-timer nil)
 
 (defun my/org-reminders-on-save ()
-  (when (and (buffer-file-name)
+  (when (and (not my/org-reminders--from-apple)
+             (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org")))
     (when my/org-reminders--sync-timer
       (cancel-timer my/org-reminders--sync-timer))
     (setq my/org-reminders--sync-timer
-          (run-with-timer 1 nil #'org-reminders-send-message "sync-once"))))
+          (run-with-timer 1 nil
+                          (lambda ()
+                            (condition-case err
+                                (org-reminders-send-message "sync-once")
+                              (error
+                               (message "org-reminders sync-once: %s"
+                                        (error-message-string err)))))))))
 
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 
