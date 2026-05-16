@@ -365,7 +365,8 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
   "Full bidirectional sync: `my/apple-reminders-sync-file' ↔ all Apple Reminders lists.
 
 - New org item (no REMINDER_ID) → created in Apple, ID stamped back.
-- Open in both → org values pushed to Apple (org wins on conflict).
+- Open in both, org unchanged (REMINDER_HASH matches) → Apple wins: priority/due/flagged pulled.
+- Open in both, org edited since last push → org wins: values pushed to Apple.
 - DONE/CANCELLED in org, open in Apple → Apple completed.
 - Open in org, completed/gone in Apple → org marked DONE.
 - Open in Apple, missing from org → pulled under its * ListName heading."
@@ -388,7 +389,7 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
         (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n")))
     (let ((my/apple-reminders--syncing t))
       (with-current-buffer (find-file-noselect file)
-        (let (done-pts new-pts)
+        (let (done-pts new-pts apple-updates)
           (org-map-entries
            (lambda ()
              (let* ((id    (org-entry-get nil "REMINDER_ID"))
@@ -407,9 +408,36 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                           (or (null apple) (eq (alist-get 'completed apple) t)))
                      (push (point-marker) done-pts))
                     ((member state '("TODO" "NEXT" "WAITING"))
-                     (my/apple-reminders--update-in-apple
-                      rlist id (my/apple-reminders--org-item-values))
-                     (setq n-updated (1+ n-updated)))))))))
+                     ;; Hash guard: if org unchanged since last push, Apple wins.
+                     ;; If org was edited, org wins and values are pushed to Apple.
+                     (let* ((cur-hash (my/apple-reminders--entry-hash))
+                            (stored   (org-entry-get nil "REMINDER_HASH")))
+                       (if (equal cur-hash stored)
+                           (let* ((a-prio    (or (alist-get 'priority apple) 0))
+                                  (a-due     (let ((d (alist-get 'due apple)))
+                                               (and (stringp d) (not (string-empty-p d)) d)))
+                                  (a-flagged (eq (alist-get 'flagged apple) t))
+                                  (p-char    (nth 3 (org-heading-components)))
+                                  (o-prio    (cond ((eql p-char ?A) 1)
+                                                   ((eql p-char ?B) 5)
+                                                   ((eql p-char ?C) 9)
+                                                   (t 0)))
+                                  (o-due     (let ((dl (org-entry-get nil "DEADLINE")))
+                                               (when (and dl (string-match
+                                                             "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" dl))
+                                                 (match-string 1 dl))))
+                                  (o-flagged (not (null (member "flagged" (org-get-tags nil t)))))
+                                  (changed   (or (/= a-prio o-prio)
+                                                 (not (equal a-due o-due))
+                                                 (not (eq a-flagged o-flagged)))))
+                             (when changed
+                               (push (list (point-marker) rlist
+                                           a-prio o-prio a-due o-due a-flagged o-flagged)
+                                     apple-updates)))
+                         ;; org edited → push org to Apple
+                         (my/apple-reminders--update-in-apple
+                          rlist id (my/apple-reminders--org-item-values))
+                         (setq n-updated (1+ n-updated))))))))))
            nil nil)
           (dolist (m (nreverse done-pts))
             (goto-char m) (org-todo "DONE") (set-marker m nil)
@@ -422,7 +450,24 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
               (when new-id
                 (org-set-property "REMINDER_ID"   new-id)
                 (org-set-property "REMINDER_LIST" rlist)
-                (setq n-pushed (1+ n-pushed))))))
+                (setq n-pushed (1+ n-pushed)))))
+          ;; Apply Apple → org field updates
+          (dolist (upd (nreverse apple-updates))
+            (cl-destructuring-bind (m _rlist a-prio o-prio a-due o-due a-flagged o-flagged) upd
+              (goto-char m)
+              (unless (= a-prio o-prio)
+                (org-priority (cond ((= a-prio 1) ?A)
+                                    ((= a-prio 5) ?B)
+                                    ((= a-prio 9) ?C)
+                                    (t 'remove))))
+              (unless (equal a-due o-due)
+                (if a-due
+                    (org-add-planning-info 'deadline a-due)
+                  (org-add-planning-info nil nil 'deadline)))
+              (unless (eq a-flagged o-flagged)
+                (org-toggle-tag "flagged" (if a-flagged 'on 'off)))
+              (setq n-updated (1+ n-updated))
+              (set-marker m nil))))
         (let ((known-ids (let (ids)
                            (org-map-entries
                             (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
