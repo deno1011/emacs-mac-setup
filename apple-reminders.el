@@ -389,7 +389,7 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
         (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n")))
     (let ((my/apple-reminders--syncing t))
       (with-current-buffer (find-file-noselect file)
-        (let (done-pts new-pts apple-updates)
+        (let (done-pts new-pts apple-updates changed-positions)
           (org-map-entries
            (lambda ()
              (let* ((id    (org-entry-get nil "REMINDER_ID"))
@@ -440,10 +440,13 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                          (setq n-updated (1+ n-updated)))))))))))
            nil nil)
           (dolist (m (nreverse done-pts))
-            (goto-char m) (org-todo "DONE") (set-marker m nil)
+            (goto-char m)
+            (push (point-marker) changed-positions)
+            (org-todo "DONE") (set-marker m nil)
             (setq n-done (1+ n-done)))
           (dolist (m (nreverse new-pts))
             (goto-char m)
+            (push (point-marker) changed-positions)
             (let* ((rlist (or (org-entry-get nil "REMINDER_LIST") default-list))
                    (new-id (my/apple-reminders--create-in-apple
                             rlist (my/apple-reminders--org-item-values))))
@@ -455,6 +458,7 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
           (dolist (upd (nreverse apple-updates))
             (cl-destructuring-bind (m _rlist a-prio o-prio a-due o-due a-flagged o-flagged) upd
               (goto-char m)
+              (push (point-marker) changed-positions)
               (unless (= a-prio o-prio)
                 (org-priority (cond ((= a-prio 1) ?A)
                                     ((= a-prio 5) ?B)
@@ -480,6 +484,7 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
               (dolist (item items)
                 (when (not (member (alist-get 'id item) known-ids))
                   (my/apple-reminders--goto-list-heading lname)
+                  (push (point-marker) changed-positions)
                   (my/apple-reminders--insert-org-heading item lname)
                   (setq n-pulled (1+ n-pulled)))))))
         ;; Stamp REMINDER_HASH for all open entries so the next save hook is a no-op
@@ -490,8 +495,13 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
              (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))))
          nil nil)
         (save-buffer)
-        ;; Restore overview fold so sync operations don't leave headings expanded
-        (org-overview))))
+        (org-overview)
+        (dolist (m (nreverse changed-positions))
+          (when (marker-position m)
+            (goto-char m)
+            (org-reveal)
+            (set-marker m nil)))
+        )))
     (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
              n-done n-pushed n-pulled n-updated))
 
