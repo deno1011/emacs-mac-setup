@@ -135,18 +135,19 @@ With prefix arg, prompt for list name."
 (defun my/apple-reminders--on-todo-state-change ()
   "Instantly sync org TODO state change to Apple Reminders via REMINDER_ID.
 DONE/CANCELLED → completed=true. TODO/NEXT/WAITING → completed=false (reopen)."
-  (let ((id   (org-entry-get nil "REMINDER_ID"))
-        (list (org-entry-get nil "REMINDER_LIST")))
-    (when (and id list)
-      (cond
-       ((member org-state '("DONE" "CANCELLED"))
-        (my/apple-reminders--jxa-async
-         (format "Application('Reminders').lists.byName(%s).reminders.byId(%s).completed=true;"
-                 (json-encode list) (json-encode id))))
-       ((member org-state '("TODO" "NEXT" "WAITING"))
-        (my/apple-reminders--jxa-async
-         (format "Application('Reminders').lists.byName(%s).reminders.byId(%s).completed=false;"
-                 (json-encode list) (json-encode id))))))))
+  (unless my/apple-reminders--syncing
+    (let ((id   (org-entry-get nil "REMINDER_ID"))
+          (list (org-entry-get nil "REMINDER_LIST")))
+      (when (and id list)
+        (cond
+         ((member org-state '("DONE" "CANCELLED"))
+          (my/apple-reminders--jxa-async
+           (format "Application('Reminders').lists.byName(%s).reminders.byId(%s).completed=true;"
+                   (json-encode list) (json-encode id))))
+         ((member org-state '("TODO" "NEXT" "WAITING"))
+          (my/apple-reminders--jxa-async
+           (format "Application('Reminders').lists.byName(%s).reminders.byId(%s).completed=false;"
+                   (json-encode list) (json-encode id)))))))))
 
 (add-hook 'org-after-todo-state-change-hook #'my/apple-reminders--on-todo-state-change)
 
@@ -408,11 +409,11 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                           (or (null apple) (eq (alist-get 'completed apple) t)))
                      (push (point-marker) done-pts))
                     ((member state '("TODO" "NEXT" "WAITING"))
-                     ;; Hash guard: if org unchanged since last push, Apple wins.
+                     ;; Hash guard: if org unchanged since last push (or no hash yet), Apple wins.
                      ;; If org was edited, org wins and values are pushed to Apple.
                      (let* ((cur-hash (my/apple-reminders--entry-hash))
                             (stored   (org-entry-get nil "REMINDER_HASH")))
-                       (if (equal cur-hash stored)
+                       (if (or (null stored) (equal cur-hash stored))
                            (let* ((a-prio    (or (alist-get 'priority apple) 0))
                                   (a-due     (let ((d (alist-get 'due apple)))
                                                (and (stringp d) (not (string-empty-p d)) d)))
@@ -807,7 +808,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                                                   (not (eq a-flagged o-flagged))))
                                    (cur-hash  (my/apple-reminders--entry-hash))
                                    (stored    (org-entry-get nil "REMINDER_HASH")))
-                              (when (and changed (equal cur-hash stored))
+                              (when (and changed (or (null stored) (equal cur-hash stored)))
                                 (push (list (point-marker)
                                             a-prio o-prio a-due o-due a-flagged o-flagged)
                                       field-updates))))))
