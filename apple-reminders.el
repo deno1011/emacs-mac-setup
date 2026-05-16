@@ -226,8 +226,18 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
              "r.dueDate=null;"))))
     (my/apple-reminders--jxa-async script)))
 
+(defun my/apple-reminders--goto-list-heading (list-name)
+  "Move point to end of LIST-NAME's subtree, creating the * heading if absent."
+  (goto-char (point-min))
+  (if (re-search-forward (format "^\\* %s\\s-*$" (regexp-quote list-name)) nil t)
+      (org-end-of-subtree t t)
+    (goto-char (point-max))
+    (unless (bolp) (insert "\n"))
+    (insert (format "* %s\n" list-name)))
+  (unless (bolp) (insert "\n")))
+
 (defun my/apple-reminders--insert-org-heading (item list-name)
-  "Insert org heading for Apple ITEM alist at point."
+  "Insert ** TODO org heading for Apple ITEM under LIST-NAME's section."
   (let* ((id      (alist-get 'id       item))
          (title   (alist-get 'title    item))
          (notes   (alist-get 'notes    item))
@@ -235,17 +245,17 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
          (prio    (alist-get 'priority item))
          (flagged (alist-get 'flagged  item)))
     (unless (bolp) (insert "\n"))
-    (insert (format "* TODO %s%s%s\n"
+    (insert (format "** TODO %s%s%s\n"
                     (my/apple-reminders--prio-label prio)
                     (if (eq flagged t) "★ " "")
                     title))
     (when (and due (not (eq due :null)))
-      (insert (format "  DEADLINE: <%s>\n" due)))
-    (insert (format "  :PROPERTIES:\n  :REMINDER_ID:   %s\n  :REMINDER_LIST: %s\n  :END:\n"
+      (insert (format "   DEADLINE: <%s>\n" due)))
+    (insert (format "   :PROPERTIES:\n   :REMINDER_ID:   %s\n   :REMINDER_LIST: %s\n   :END:\n"
                     id list-name))
     (when (and (stringp notes) (not (string-empty-p notes)))
       (dolist (line (split-string notes "\n"))
-        (insert (format "  %s\n" line))))))
+        (insert (format "   %s\n" line))))))
 
 ;;; Push-only (org → Apple): called from save hook
 
@@ -314,9 +324,7 @@ JSON.stringify(out);"
          (n-done 0) (n-pushed 0) (n-pulled 0) (n-updated 0))
     (unless (file-exists-p file)
       (with-temp-file file
-        (insert (format
-                 "#+TITLE: Reminders — %s\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n"
-                 list-name))))
+        (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n")))
     (let ((my/apple-reminders--syncing t))
       (with-current-buffer (find-file-noselect file)
         (let (done-pts new-pts)
@@ -361,7 +369,7 @@ JSON.stringify(out);"
           (dolist (item apple-items)
             (when (and (not (eq (alist-get 'completed item) t))
                        (not (member (alist-get 'id item) known-ids)))
-              (goto-char (point-max))
+              (my/apple-reminders--goto-list-heading list-name)
               (my/apple-reminders--insert-org-heading item list-name)
               (setq n-pulled (1+ n-pulled)))))
         (save-buffer)))
@@ -648,16 +656,30 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                       nil nil)
                      (dolist (m (nreverse done-pts))
                        (goto-char m) (org-todo "DONE") (set-marker m nil)))
-                   ;; Pull Apple items not yet in org
+                   ;; Pull Apple items not yet in any open org buffer
                    (let ((known-ids (let (ids)
+                                      ;; Scan reminders.org
                                       (org-map-entries
                                        (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
                                                     (push id ids)))
                                        nil nil)
+                                      ;; Also scan other open org buffers so items pushed via
+                                      ;; C-c r p from other files are not re-pulled here
+                                      (dolist (buf (buffer-list))
+                                        (with-current-buffer buf
+                                          (when (and (derived-mode-p 'org-mode)
+                                                     (buffer-file-name)
+                                                     (not (string= (expand-file-name (buffer-file-name))
+                                                                   (expand-file-name my/apple-reminders-sync-file))))
+                                            (ignore-errors
+                                              (org-map-entries
+                                               (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
+                                                            (push id ids)))
+                                               nil nil)))))
                                       ids)))
                      (dolist (item sync-items)
                        (when (not (member (alist-get 'id item) known-ids))
-                         (goto-char (point-max))
+                         (my/apple-reminders--goto-list-heading list-name)
                          (my/apple-reminders--insert-org-heading item list-name))))
                    (save-buffer)))))
          (error nil))))))
@@ -705,11 +727,12 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
 ;;; Org-agenda: register files and add dedicated "A" command
 
 (defun my/apple-reminders--ensure-agenda-files ()
-  "Create agenda file stub if needed, register in org-agenda-files, add custom command."
-  (let ((sync   (expand-file-name my/apple-reminders-sync-file))
-        (agenda (and my/apple-reminders-agenda-file
+  "Register reminders-agenda.org in org-agenda-files and add the 'A' custom command.
+Only reminders-agenda.org (auto-generated, all lists) goes into org-agenda-files.
+reminders.org is the editable sync file and is intentionally excluded to avoid
+showing the same items twice in the agenda."
+  (let ((agenda (and my/apple-reminders-agenda-file
                      (expand-file-name my/apple-reminders-agenda-file))))
-    (when (file-exists-p sync) (add-to-list 'org-agenda-files sync))
     (when agenda
       (unless (file-exists-p agenda)
         (condition-case nil

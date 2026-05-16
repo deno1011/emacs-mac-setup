@@ -450,6 +450,290 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 
 ---
 
+## Apple Reminders Integration
+
+`apple-reminders.org` provides full bidirectional sync between Emacs/Org and macOS Apple Reminders. It requires no external service — everything runs locally via two macOS mechanisms: **JXA** (JavaScript for Automation via `osascript`) for reading and updating reminders, and **reminders-cli** for adding new ones.
+
+---
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Apple Reminders app                       │
+└──────────┬──────────────────────────────────────────────────┘
+           │ JXA (osascript)            ▲ JXA async
+           │ pull on startup, every 5min│ instant on state/priority/
+           ▼                            │ deadline/tag change
+┌──────────────────────┐    ┌───────────┴────────────────────┐
+│  reminders-agenda.org│    │        reminders.org            │
+│  (auto-generated,    │    │  (editable, one sync list,      │
+│   all lists,         │    │   organised by list headings)   │
+│   read-only)         │    └───────────┬────────────────────┘
+└──────────┬───────────┘                │ on save: push all fields
+           │ org-agenda-files           │ C-c r R: full bidirectional sync
+           ▼                            │
+      org-agenda (f12)          any .org file
+      f12 → A (all reminders)   C-c r p: push heading → Apple
+```
+
+**Two files, two purposes:**
+
+| File | Role | Edit? | In agenda? |
+|------|------|-------|-----------|
+| `reminders.org` | Bidirectional sync bridge — one configured list | Yes | No |
+| `reminders-agenda.org` | Auto-generated snapshot of **all** lists | Never | Yes |
+
+The split keeps the agenda clean (one source) and gives you a proper editable org file for your primary list.
+
+---
+
+### Prerequisites
+
+**reminders-cli** is installed automatically via Homebrew on first use:
+
+```bash
+brew install keith/formulae/reminders-cli
+```
+
+**macOS permissions** — the first time `osascript` accesses Reminders, macOS will prompt for permission. Allow it. If you accidentally denied it: System Settings → Privacy & Security → Automation → Emacs.
+
+---
+
+### Field Mapping
+
+| Org | Apple Reminders | Notes |
+|-----|----------------|-------|
+| Heading title | Name | Stripped of `[#A]` / `★` prefixes |
+| `DEADLINE: <date>` | Due Date | ISO date only, no time |
+| Priority `[#A]` | High (1) | |
+| Priority `[#B]` | Medium (5) | |
+| Priority `[#C]` | Low (9) | |
+| No priority | None (0) | |
+| Tag `:flagged:` | Flagged | Only this tag is synced to Apple |
+| Body text | Notes | LOGBOOK drawer stripped |
+| `:REMINDER_ID:` | Internal UUID | **Never edit manually** |
+| `:REMINDER_LIST:` | List name | **Never edit manually** |
+
+Org-only features that are **never pushed to Apple**: `SCHEDULED`, `LOGBOOK`/clocking, `NEXT`/`WAITING` states, all tags except `:flagged:`, sub-tasks, other properties.
+
+---
+
+### Configuration
+
+All variables can be set in your config before `apple-reminders.org` loads:
+
+```elisp
+;; Which list to use for reminders.org sync (nil = auto-detect first list)
+(setq my/apple-reminders-sync-list "Work")
+
+;; Path to the bidirectional sync org file
+(setq my/apple-reminders-sync-file "~/org/reminders.org")
+
+;; Path to the auto-generated agenda file (nil to disable)
+(setq my/apple-reminders-agenda-file "~/org/reminders-agenda.org")
+
+;; Seconds between background pulls from Apple (0 to disable)
+(setq my/apple-reminders-auto-sync-interval 300)
+
+;; Pin a specific list as the default for add/push (nil = auto-detect)
+(setq my/apple-reminders-default-list nil)
+```
+
+---
+
+### Key Bindings
+
+#### Global (any buffer)
+
+| Key | Command | What it does |
+|-----|---------|-------------|
+| `C-c r d` | `my/apple-reminders-dashboard` | Open the *Apple Reminders* dashboard |
+| `C-c r l` | `my/apple-reminders-show-lists` | List all Reminders lists in the echo area |
+| `C-c r a` | `my/apple-reminders-add` | Add a new reminder interactively |
+
+#### Org buffers only
+
+| Key | Command | What it does |
+|-----|---------|-------------|
+| `C-c r p` | `my/org-heading-to-reminder` | Push heading at point to Apple, stamp `REMINDER_ID` |
+| `C-c r R` | `my/apple-reminders-sync` | Full bidirectional sync: `reminders.org` ↔ Apple |
+
+#### Inside `*Apple Reminders*` dashboard
+
+| Key | What it does |
+|-----|-------------|
+| `g` | Refresh — fetch all data fresh from Apple |
+| `t` / `C-c C-t` | Mark reminder at point as complete |
+| `e` | Jump to this reminder in `reminders.org` to edit |
+| `h` | Toggle show/hide items completed this session |
+| `q` | Quit / close dashboard |
+
+#### Inside `reminders.org` — standard org commands, auto-sync
+
+| Key | What it does | When Apple is updated |
+|-----|-------------|----------------------|
+| `C-c ,` | Set/change priority | Immediately (advice hook) |
+| `C-c C-d` | Set/change deadline | Immediately (advice hook) |
+| `C-c C-q` | Set/change tags (`:flagged:`) | Immediately (advice hook) |
+| `C-c C-t` | Change TODO state | Immediately (state-change hook) |
+| `S-↑` / `S-↓` | Cycle priority | Immediately (advice hook) |
+| Edit title or body, then `C-x C-s` | Title and notes | On save |
+
+#### Org capture
+
+| Key | What it does |
+|-----|-------------|
+| `C-c c A` | Capture a new reminder — filed to `reminders.org`, pushed to Apple on save |
+
+---
+
+### Use Cases
+
+#### 1. Browse all reminders
+
+`C-c r d` opens the *Apple Reminders* dashboard. All lists appear as top-level org headings, reminders as subheadings. The first open always uses cached data; press `g` to fetch fresh data from Apple.
+
+```
+* Inbox
+** TODO [#A] Call dentist
+** TODO Buy groceries
+* Work
+** TODO ★ Submit report
+   DEADLINE: <2025-06-30>
+```
+
+#### 2. Complete a reminder from Emacs
+
+In the dashboard, move to any `** TODO` heading and press `t`. The item immediately changes to `DONE` in the buffer and is marked complete in Apple Reminders (async, within seconds). Press `h` to show/hide items completed in this session.
+
+#### 3. Edit a reminder — via dashboard
+
+Press `e` on any dashboard item to jump to that reminder's heading in `reminders.org`. From there, use standard org commands to edit. All changes push to Apple automatically:
+
+- `C-c ,` → priority change → Apple updated immediately
+- `C-c C-d` → deadline change → Apple updated immediately
+- Edit the title line → `C-x C-s` → Apple updated on save
+
+#### 4. Add a quick reminder
+
+`C-c r a` prompts for a title, list (auto-detected default), and optional due date. The reminder is created in Apple immediately via reminders-cli.
+
+#### 5. Push an existing org heading to Apple
+
+Any `* TODO` heading in any org file can be pushed to Apple:
+
+1. Move cursor to the heading
+2. `C-c r p`
+3. The heading is created in Apple Reminders, and `REMINDER_ID` + `REMINDER_LIST` properties are stamped back onto the org heading
+
+After the push, standard org commands (`C-c ,`, `C-c C-d`, `C-c C-q`, `C-c C-t`) on that heading will auto-sync to Apple — from any org file, not just `reminders.org`.
+
+**With `C-u C-c r p`:** prompted to choose which list to push to.
+
+#### 6. Capture a reminder from anywhere
+
+`C-c c A` opens an org-capture template that files to `reminders.org`. Save with `C-c C-c`. The item is pushed to Apple on save.
+
+#### 7. Full bidirectional sync
+
+`C-c r R` (in any org buffer) runs a complete sync:
+
+| Situation | Result |
+|-----------|--------|
+| Org item with no `REMINDER_ID` | Created in Apple, `REMINDER_ID` stamped back |
+| Org item open, Apple item open | Org values pushed to Apple (org wins) |
+| Org `DONE`/`CANCELLED`, Apple still open | Apple marked complete |
+| Org open, Apple completed or missing | Org heading marked `DONE` |
+| Apple open, not yet in org | Pulled as new `** TODO` under `* ListName` heading |
+
+#### 8. View reminders in the org agenda
+
+Reminders appear in the standard `f12` agenda (they are in `org-agenda-files` via `reminders-agenda.org`). For a dedicated all-reminders view: `f12` → `A`.
+
+`reminders-agenda.org` is auto-generated — **do not edit it**. It is refreshed on every dashboard refresh, background pull, and `C-c r R`. It always reflects Apple's current state.
+
+#### 9. Automatic background sync
+
+A background pull runs 3 seconds after Emacs starts (idle timer) and then every 5 minutes. It:
+
+1. Fetches all open reminders from Apple (all lists)
+2. Updates `reminders-agenda.org` → agenda view stays fresh
+3. Refreshes the dashboard cache → press `g` to re-render with latest data
+4. In `reminders.org`: marks Apple-completed items as `DONE`, adds any new Apple items not yet in org
+
+Background pull does **not** overwrite fields (title, priority, deadline) in `reminders.org` for existing items — use `C-c r R` for that.
+
+---
+
+### File Structure
+
+**`reminders.org`** (editable, one list):
+```org
+#+TITLE: Reminders
+#+TODO: TODO NEXT WAITING | DONE CANCELLED
+
+* Inbox
+** TODO [#A] Call Alice
+   DEADLINE: <2025-06-15>
+   :PROPERTIES:
+   :REMINDER_ID:   x1y2z3-...
+   :REMINDER_LIST: Inbox
+   :END:
+
+** TODO Buy groceries  :flagged:
+   :PROPERTIES:
+   :REMINDER_ID:   a4b5c6-...
+   :REMINDER_LIST: Inbox
+   :END:
+```
+
+**`reminders-agenda.org`** (auto-generated, all lists — do not edit):
+```org
+#+TITLE: Apple Reminders (auto-generated — do not edit)
+#+TODO: TODO | DONE
+
+* TODO [#A] Call Alice
+  DEADLINE: <2025-06-15>
+  :PROPERTIES:
+  :REMINDER_LIST: Inbox
+  :REMINDER_ID:   x1y2z3-...
+  :END:
+```
+
+---
+
+### Troubleshooting
+
+**Duplicate reminders in Apple**
+Caused by `REMINDER_ID` not being stamped back (JXA timing issue on first create). Fixed in v1.4.3: the create script now uses a before/after ID diff instead of querying by name. To clean up existing duplicates: delete one copy in the Apple Reminders app, then run `C-c r R`.
+
+**"Non-existent agenda file" prompt from org-agenda**
+Happens if ERT tests were run in the live Emacs session, leaving a stale temp path in `org-agenda-custom-commands`. Fix:
+```elisp
+M-: (setq org-agenda-custom-commands (assoc-delete-all "A" org-agenda-custom-commands)) RET
+```
+Then reload `apple-reminders.el`.
+
+**Items appear twice in agenda**
+`reminders.org` and `reminders-agenda.org` were both in `org-agenda-files`. Fixed in v1.5.0: only `reminders-agenda.org` is registered. Run `M-: (setq org-agenda-files (delete (expand-file-name "~/org/reminders.org") org-agenda-files))` to clear it from the current session.
+
+**Priority in `reminders-agenda.org` differs from `reminders.org`**
+Expected. `reminders-agenda.org` is refreshed directly from Apple and always shows Apple's current state. `reminders.org` reflects the last push/sync. Run `C-c r R` to push org values to Apple (org wins), or edit in Apple and wait for the next background pull to see the change in the agenda.
+
+**Item pushed via `C-c r p` reappears in `reminders.org`**
+The background pull scans all open org buffers to avoid re-pulling items already tracked elsewhere. If the original file was closed when the pull ran, the item will be added to `reminders.org`. Solution: delete the duplicate from `reminders.org` and keep the original in your other file.
+
+**reminders-cli not found**
+```bash
+brew install keith/formulae/reminders-cli
+```
+
+**Emacs cannot access Reminders (JXA fails silently)**
+System Settings → Privacy & Security → Automation → Emacs → enable Reminders.
+
+---
+
 ## AI Integration
 
 The configuration includes a fully wired AI assistant inside Emacs via **gptel**, extended with a custom **claude-executor** layer that makes AI responses executable — not just readable.
