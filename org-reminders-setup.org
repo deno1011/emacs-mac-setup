@@ -59,28 +59,8 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; Bei TODO-State-Änderung: LAST-MODIFIED des Eintrags sofort auf jetzt setzen
-(defun my/org-reminders-mark-entry-modified ()
-  (when (and (buffer-file-name)
-             (string= (buffer-file-name)
-                      (expand-file-name "~/org/reminders.org"))
-             (org-entry-get nil "EXTERNAL-ID"))
-    (org-entry-put nil "LAST-MODIFIED"
-                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
-
-(add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
-
-;; after-save: sync-once via WebSocket an den laufenden CLI schicken
-(defun my/org-reminders-on-save ()
-  (when (and (buffer-file-name)
-             (string= (buffer-file-name)
-                      (expand-file-name "~/org/reminders.org")))
-    (org-reminders-send-message "sync-once")))
-
-(add-hook 'after-save-hook #'my/org-reminders-on-save)
-
-;; Auto-Save nach 3s Idle → triggert after-save-hook → kein manuelles C-x C-s nötig
-;; file-precious-flag nil → kein atomic save → CLI file-monitor feuert wie vorgesehen
+;; file-precious-flag nil → kein atomic save → CLI DispatchSource feuert bei Änderungen
+;; Auto-Save nach 3s Idle → kein manuelles C-x C-s nötig
 (defun my/org-reminders-enable-autosave ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
