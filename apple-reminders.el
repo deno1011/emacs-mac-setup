@@ -237,7 +237,7 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
            (if flagged "true" "false")
            (if due
                (format "r.dueDate=new Date(%s);" (json-encode (concat due "T00:00:00")))
-             "r.dueDate=null;"))))
+             "r.dueDate=undefined;"))))
     (my/apple-reminders--jxa-async script callback)))
 
 (defun my/apple-reminders-migrate-flat-headings ()
