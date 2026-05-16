@@ -291,35 +291,25 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
 ;;; Full bidirectional sync (C-c r R)
 
 (defun my/apple-reminders-sync ()
-  "Full bidirectional sync: `my/apple-reminders-sync-file' ↔ `my/apple-reminders-sync-list'.
+  "Full bidirectional sync: `my/apple-reminders-sync-file' ↔ all Apple Reminders lists.
 
 - New org item (no REMINDER_ID) → created in Apple, ID stamped back.
 - Open in both → org values pushed to Apple (org wins on conflict).
 - DONE/CANCELLED in org, open in Apple → Apple completed.
 - Open in org, completed/gone in Apple → org marked DONE.
-- Open in Apple, missing from org → pulled as new TODO heading."
+- Open in Apple, missing from org → pulled under its * ListName heading."
   (interactive)
   (message "Reminders: syncing…")
-  (let* ((list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
-         (file      (expand-file-name my/apple-reminders-sync-file))
-         (fetch-script
-          (format
-           "var app=Application('Reminders'),list=app.lists.byName(%s),rs=list.reminders;
-var names=rs.name(),ids=rs.id(),bodies=rs.body(),dates=rs.dueDate(),
-    prios=rs.priority(),flags=rs.flagged(),compl=rs.completed();
-var out=[];for(var i=0;i<names.length;i++){var d=dates[i];
-  out.push({id:ids[i],title:names[i],notes:bodies[i]||'',
-            due:d?d.toISOString().slice(0,10):null,
-            priority:prios[i],flagged:flags[i],completed:compl[i]});}
-JSON.stringify(out);"
-           (json-encode list-name)))
-         (raw (my/apple-reminders--jxa-run fetch-script))
-         (apple-items
-          (condition-case nil
-              (json-parse-string raw :object-type 'alist :array-type 'list)
-            (error (user-error "Reminders sync: fetch failed — %s" raw))))
+  (let* ((default-list (my/apple-reminders--default-list))
+         (file (expand-file-name my/apple-reminders-sync-file))
+         (raw  (my/apple-reminders--jxa-run my/apple-reminders--fetch-script))
+         (data (condition-case nil
+                   (json-parse-string raw :object-type 'alist :array-type 'list)
+                 (error (user-error "Reminders sync: fetch failed — %s" raw))))
          (apple-by-id (let ((ht (make-hash-table :test #'equal)))
-                        (dolist (i apple-items) (puthash (alist-get 'id i) i ht))
+                        (dolist (entry data)
+                          (dolist (item (alist-get 'items entry))
+                            (puthash (alist-get 'id item) item ht)))
                         ht))
          (n-done 0) (n-pushed 0) (n-pulled 0) (n-updated 0))
     (unless (file-exists-p file)
@@ -331,7 +321,7 @@ JSON.stringify(out);"
           (org-map-entries
            (lambda ()
              (let* ((id    (org-entry-get nil "REMINDER_ID"))
-                    (rlist (or (org-entry-get nil "REMINDER_LIST") list-name))
+                    (rlist (or (org-entry-get nil "REMINDER_LIST") default-list))
                     (state (org-get-todo-state)))
                (cond
                 ((and (null id) (member state '("TODO" "NEXT" "WAITING")))
@@ -355,23 +345,27 @@ JSON.stringify(out);"
             (setq n-done (1+ n-done)))
           (dolist (m (nreverse new-pts))
             (goto-char m)
-            (when-let (new-id (my/apple-reminders--create-in-apple
-                               list-name (my/apple-reminders--org-item-values)))
-              (org-set-property "REMINDER_ID"   new-id)
-              (org-set-property "REMINDER_LIST" list-name)
-              (setq n-pushed (1+ n-pushed)))))
+            (let* ((rlist (or (org-entry-get nil "REMINDER_LIST") default-list))
+                   (new-id (my/apple-reminders--create-in-apple
+                            rlist (my/apple-reminders--org-item-values))))
+              (when new-id
+                (org-set-property "REMINDER_ID"   new-id)
+                (org-set-property "REMINDER_LIST" rlist)
+                (setq n-pushed (1+ n-pushed))))))
         (let ((known-ids (let (ids)
                            (org-map-entries
                             (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
                                          (push id ids)))
                             nil nil)
                            ids)))
-          (dolist (item apple-items)
-            (when (and (not (eq (alist-get 'completed item) t))
-                       (not (member (alist-get 'id item) known-ids)))
-              (my/apple-reminders--goto-list-heading list-name)
-              (my/apple-reminders--insert-org-heading item list-name)
-              (setq n-pulled (1+ n-pulled)))))
+          (dolist (entry data)
+            (let ((lname (alist-get 'list  entry))
+                  (items (alist-get 'items entry)))
+              (dolist (item items)
+                (when (not (member (alist-get 'id item) known-ids))
+                  (my/apple-reminders--goto-list-heading lname)
+                  (my/apple-reminders--insert-org-heading item lname)
+                  (setq n-pulled (1+ n-pulled)))))))
         (save-buffer)))
     (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
              n-done n-pushed n-pulled n-updated)))
@@ -387,11 +381,11 @@ JSON.stringify(out);"
 (defvar my/apple-reminders--show-done nil
   "When non-nil, show session-completed reminders at the bottom of each list.")
 
-(defcustom my/apple-reminders-agenda-file
-  (expand-file-name "~/org/reminders-agenda.org")
-  "Org file written on each dashboard refresh for org-agenda integration.
-Set to nil to disable."
-  :type '(choice file (const nil))
+(defcustom my/apple-reminders-agenda-file nil
+  "Separate auto-generated org file for org-agenda integration.
+nil (default) means use `my/apple-reminders-sync-file' for the agenda directly.
+Set to a file path only if you want a separate read-only agenda file."
+  :type '(choice (const :tag "Use reminders.org (default)" nil) file)
   :group 'my/apple-reminders)
 
 (defconst my/apple-reminders--fetch-script
@@ -621,31 +615,24 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
 (defvar my/apple-reminders--sync-timer nil)
 
 (defun my/apple-reminders--background-pull ()
-  "Async pull: refresh cache, agenda file, and reminders.org (pull direction only)."
+  "Async pull: refresh cache and reminders.org for all Apple Reminders lists."
   (unless my/apple-reminders--syncing
     (my/apple-reminders--jxa-async
      my/apple-reminders--fetch-script
      (lambda (raw)
        (condition-case nil
-           (let* ((data      (json-parse-string raw :object-type 'alist :array-type 'list))
-                  (list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
-                  (file      (expand-file-name my/apple-reminders-sync-file))
-                  (sync-entry (cl-find list-name data
-                                       :key (lambda (e) (alist-get 'list e))
-                                       :test #'string=))
-                  (sync-items (when sync-entry (alist-get 'items sync-entry)))
+           (let* ((data (json-parse-string raw :object-type 'alist :array-type 'list))
+                  (file (expand-file-name my/apple-reminders-sync-file))
                   (apple-by-id (let ((ht (make-hash-table :test #'equal)))
-                                  (dolist (item (or sync-items '()))
-                                    (puthash (alist-get 'id item) item ht))
+                                  (dolist (entry data)
+                                    (dolist (item (alist-get 'items entry))
+                                      (puthash (alist-get 'id item) item ht)))
                                   ht)))
-             ;; Update dashboard cache and agenda file
              (setq my/apple-reminders--cache data)
              (my/apple-reminders--write-agenda-file data)
-             ;; Pull-only sync to reminders.org
-             (when (and sync-items (file-exists-p file))
+             (when (file-exists-p file)
                (let ((my/apple-reminders--syncing t))
                  (with-current-buffer (find-file-noselect file)
-                   ;; Mark Apple-completed as DONE in org
                    (let (done-pts)
                      (org-map-entries
                       (lambda ()
@@ -656,15 +643,11 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                       nil nil)
                      (dolist (m (nreverse done-pts))
                        (goto-char m) (org-todo "DONE") (set-marker m nil)))
-                   ;; Pull Apple items not yet in any open org buffer
                    (let ((known-ids (let (ids)
-                                      ;; Scan reminders.org
                                       (org-map-entries
                                        (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
                                                     (push id ids)))
                                        nil nil)
-                                      ;; Also scan other open org buffers so items pushed via
-                                      ;; C-c r p from other files are not re-pulled here
                                       (dolist (buf (buffer-list))
                                         (with-current-buffer buf
                                           (when (and (derived-mode-p 'org-mode)
@@ -677,10 +660,13 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                                                             (push id ids)))
                                                nil nil)))))
                                       ids)))
-                     (dolist (item sync-items)
-                       (when (not (member (alist-get 'id item) known-ids))
-                         (my/apple-reminders--goto-list-heading list-name)
-                         (my/apple-reminders--insert-org-heading item list-name))))
+                     (dolist (entry data)
+                       (let ((lname (alist-get 'list  entry))
+                             (items (alist-get 'items entry)))
+                         (dolist (item items)
+                           (when (not (member (alist-get 'id item) known-ids))
+                             (my/apple-reminders--goto-list-heading lname)
+                             (my/apple-reminders--insert-org-heading item lname))))))
                    (save-buffer)))))
          (error nil))))))
 
@@ -713,11 +699,12 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
 (defun my/apple-reminders--setup-capture ()
   (add-to-list 'org-capture-templates
                `("A" "Apple Reminder" entry
-                 (file ,(expand-file-name my/apple-reminders-sync-file))
-                 ,(concat "* TODO %?\n"
-                          "  :PROPERTIES:\n"
-                          "  :REMINDER_LIST: " (or my/apple-reminders-sync-list "") "\n"
-                          "  :END:\n")
+                 (file+headline ,(expand-file-name my/apple-reminders-sync-file)
+                                ,(or (my/apple-reminders--default-list) "Reminders"))
+                 ,(concat "** TODO %?\n"
+                          "   :PROPERTIES:\n"
+                          "   :REMINDER_LIST: " (or (my/apple-reminders--default-list) "") "\n"
+                          "   :END:\n")
                  :empty-lines 1)))
 
 (if (featurep 'org-capture)
@@ -727,33 +714,32 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
 ;;; Org-agenda: register files and add dedicated "A" command
 
 (defun my/apple-reminders--ensure-agenda-files ()
-  "Register reminders-agenda.org in org-agenda-files and add the 'A' custom command.
-Only reminders-agenda.org (auto-generated, all lists) goes into org-agenda-files.
-reminders.org is the editable sync file and is intentionally excluded to avoid
-showing the same items twice in the agenda."
-  (let ((agenda (and my/apple-reminders-agenda-file
-                     (expand-file-name my/apple-reminders-agenda-file))))
-    (when agenda
-      (unless (file-exists-p agenda)
-        (condition-case nil
-            (progn
-              (make-directory (file-name-directory agenda) t)
-              (if my/apple-reminders--cache
-                  (my/apple-reminders--write-agenda-file my/apple-reminders--cache)
-                (with-temp-file agenda
-                  (insert "#+TITLE: Apple Reminders (auto-generated — do not edit)\n")
-                  (insert "#+STARTUP: overview\n")
-                  (insert "#+TODO: TODO | DONE\n\n"))
-                (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull)))
-          (error nil)))
-      (when (file-exists-p agenda)
-        (add-to-list 'org-agenda-files agenda)
-        ;; Dedicated agenda command: f12 A  shows all open Apple Reminders
-        (add-to-list 'org-agenda-custom-commands
-                     `("A" "Apple Reminders" todo "TODO"
-                       ((org-agenda-files
-                         (cl-remove-if-not #'file-exists-p (list ,agenda)))
-                        (org-agenda-overriding-header "Apple Reminders"))))))))
+  "Register reminders.org in org-agenda-files and add the 'A' custom command.
+reminders.org (editable, all lists) is the primary agenda source.
+If `my/apple-reminders-agenda-file' is also set, it is registered too."
+  (let* ((sync-file (expand-file-name my/apple-reminders-sync-file))
+         (extra     (and my/apple-reminders-agenda-file
+                         (expand-file-name my/apple-reminders-agenda-file)))
+         (all-files (delq nil (list sync-file extra))))
+    ;; Create reminders.org stub if it does not exist yet
+    (unless (file-exists-p sync-file)
+      (condition-case nil
+          (progn
+            (make-directory (file-name-directory sync-file) t)
+            (with-temp-file sync-file
+              (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n"))
+            (run-with-idle-timer 1 nil #'my/apple-reminders--background-pull))
+        (error nil)))
+    (when (file-exists-p sync-file)
+      (add-to-list 'org-agenda-files sync-file))
+    (when (and extra (file-exists-p extra))
+      (add-to-list 'org-agenda-files extra))
+    ;; Dedicated agenda command: f12 A  shows all open Apple Reminders
+    (add-to-list 'org-agenda-custom-commands
+                 `("A" "Apple Reminders" todo "TODO"
+                   ((org-agenda-files
+                     (cl-remove-if-not #'file-exists-p ',all-files))
+                    (org-agenda-overriding-header "Apple Reminders"))))))
 
 (with-eval-after-load 'org-agenda
   (my/apple-reminders--ensure-agenda-files))

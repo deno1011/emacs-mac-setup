@@ -465,26 +465,20 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
            │ JXA (osascript)            ▲ JXA async
            │ pull on startup, every 5min│ instant on state/priority/
            ▼                            │ deadline/tag change
-┌──────────────────────┐    ┌───────────┴────────────────────┐
-│  reminders-agenda.org│    │        reminders.org            │
-│  (auto-generated,    │    │  (editable, one sync list,      │
-│   all lists,         │    │   organised by list headings)   │
-│   read-only)         │    └───────────┬────────────────────┘
-└──────────┬───────────┘                │ on save: push all fields
-           │ org-agenda-files           │ C-c r R: full bidirectional sync
+┌──────────────────────────────────────┴────────────────────┐
+│                       reminders.org                         │
+│  (editable, ALL lists, organised by * ListName headings)    │
+└──────────┬─────────────────────────────────────────────────┘
+           │ org-agenda-files           │ on save: push all fields
+           │                            │ C-c r R: full bidirectional sync
            ▼                            │
       org-agenda (f12)          any .org file
       f12 → A (all reminders)   C-c r p: push heading → Apple
 ```
 
-**Two files, two purposes:**
+**Single file, full control:**
 
-| File | Role | Edit? | In agenda? |
-|------|------|-------|-----------|
-| `reminders.org` | Bidirectional sync bridge — one configured list | Yes | No |
-| `reminders-agenda.org` | Auto-generated snapshot of **all** lists | Never | Yes |
-
-The split keeps the agenda clean (one source) and gives you a proper editable org file for your primary list.
+`reminders.org` is the only file you need. It covers **all** Apple Reminders lists, is fully editable, and is used directly by org-agenda. Each list appears as a top-level `* ListName` heading with `** TODO` items underneath.
 
 ---
 
@@ -530,8 +524,8 @@ All variables can be set in your config before `apple-reminders.org` loads:
 ;; Path to the bidirectional sync org file
 (setq my/apple-reminders-sync-file "~/org/reminders.org")
 
-;; Path to the auto-generated agenda file (nil to disable)
-(setq my/apple-reminders-agenda-file "~/org/reminders-agenda.org")
+;; Optional: separate auto-generated agenda file (nil = use reminders.org directly)
+(setq my/apple-reminders-agenda-file nil)
 
 ;; Seconds between background pulls from Apple (0 to disable)
 (setq my/apple-reminders-auto-sync-interval 300)
@@ -649,26 +643,23 @@ After the push, standard org commands (`C-c ,`, `C-c C-d`, `C-c C-q`, `C-c C-t`)
 
 #### 8. View reminders in the org agenda
 
-Reminders appear in the standard `f12` agenda (they are in `org-agenda-files` via `reminders-agenda.org`). For a dedicated all-reminders view: `f12` → `A`.
-
-`reminders-agenda.org` is auto-generated — **do not edit it**. It is refreshed on every dashboard refresh, background pull, and `C-c r R`. It always reflects Apple's current state.
+`reminders.org` is registered in `org-agenda-files` automatically. Reminders appear in `f12` (standard org agenda). For a dedicated all-reminders view: `f12` → `A`.
 
 #### 9. Automatic background sync
 
 A background pull runs 3 seconds after Emacs starts (idle timer) and then every 5 minutes. It:
 
 1. Fetches all open reminders from Apple (all lists)
-2. Updates `reminders-agenda.org` → agenda view stays fresh
-3. Refreshes the dashboard cache → press `g` to re-render with latest data
-4. In `reminders.org`: marks Apple-completed items as `DONE`, adds any new Apple items not yet in org
+2. Refreshes the dashboard cache → press `g` to re-render with latest data
+3. In `reminders.org`: marks Apple-completed items as `DONE`, adds any new Apple items not yet in org under their `* ListName` heading
 
-Background pull does **not** overwrite fields (title, priority, deadline) in `reminders.org` for existing items — use `C-c r R` for that.
+Background pull does **not** overwrite fields (title, priority, deadline) for existing items — use `C-c r R` for a full push-from-org sync.
 
 ---
 
 ### File Structure
 
-**`reminders.org`** (editable, one list):
+**`reminders.org`** (editable, all lists — the only file):
 ```org
 #+TITLE: Reminders
 #+TODO: TODO NEXT WAITING | DONE CANCELLED
@@ -686,20 +677,16 @@ Background pull does **not** overwrite fields (title, priority, deadline) in `re
    :REMINDER_ID:   a4b5c6-...
    :REMINDER_LIST: Inbox
    :END:
+
+* Work
+** TODO Prepare slides for Monday
+   :PROPERTIES:
+   :REMINDER_ID:   d7e8f9-...
+   :REMINDER_LIST: Work
+   :END:
 ```
 
-**`reminders-agenda.org`** (auto-generated, all lists — do not edit):
-```org
-#+TITLE: Apple Reminders (auto-generated — do not edit)
-#+TODO: TODO | DONE
-
-* TODO [#A] Call Alice
-  DEADLINE: <2025-06-15>
-  :PROPERTIES:
-  :REMINDER_LIST: Inbox
-  :REMINDER_ID:   x1y2z3-...
-  :END:
-```
+Each `* ListName` heading corresponds to one Apple Reminders list. Items are `** TODO` under their list heading. The file is editable — all standard org commands sync back to Apple automatically.
 
 ---
 
@@ -715,11 +702,12 @@ M-: (setq org-agenda-custom-commands (assoc-delete-all "A" org-agenda-custom-com
 ```
 Then reload `apple-reminders.el`.
 
-**Items appear twice in agenda**
-`reminders.org` and `reminders-agenda.org` were both in `org-agenda-files`. Fixed in v1.5.0: only `reminders-agenda.org` is registered. Run `M-: (setq org-agenda-files (delete (expand-file-name "~/org/reminders.org") org-agenda-files))` to clear it from the current session.
-
-**Priority in `reminders-agenda.org` differs from `reminders.org`**
-Expected. `reminders-agenda.org` is refreshed directly from Apple and always shows Apple's current state. `reminders.org` reflects the last push/sync. Run `C-c r R` to push org values to Apple (org wins), or edit in Apple and wait for the next background pull to see the change in the agenda.
+**`reminders-agenda.org` still in agenda (upgrading from v1.5 or earlier)**
+Remove the stale file from `org-agenda-files`:
+```elisp
+M-: (setq org-agenda-files (delete (expand-file-name "~/org/reminders-agenda.org") org-agenda-files)) RET
+```
+You can also delete `~/org/reminders-agenda.org` — it is no longer used.
 
 **Item pushed via `C-c r p` reappears in `reminders.org`**
 The background pull scans all open org buffers to avoid re-pulling items already tracked elsewhere. If the original file was closed when the pull ran, the item will be added to `reminders.org`. Solution: delete the duplicate from `reminders.org` and keep the original in your other file.

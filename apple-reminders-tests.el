@@ -773,27 +773,26 @@ whose() has timing bugs that cause duplicates — this is the guard."
     (my/apple-reminders--ensure-agenda-files)
     (should (null org-agenda-files))))
 
-(ert-deftest ar/ensure-agenda-creates-stub-for-missing-agenda-file ()
-  "Missing agenda file is created as a stub."
-  (let* ((tmpdir (make-temp-file "ar-agenda-dir" t))
-         (agenda-path (expand-file-name "reminders-agenda.org" tmpdir))
-         (my/apple-reminders-agenda-file agenda-path)
-         (my/apple-reminders-sync-file "/tmp/nonexistent-99999.org")
-         (my/apple-reminders--cache nil)
+(ert-deftest ar/ensure-agenda-creates-stub-for-missing-sync-file ()
+  "Missing reminders.org is created as a stub when parent dir exists."
+  (let* ((tmpdir (make-temp-file "ar-sync-dir" t))
+         (stub-path (expand-file-name "reminders.org" tmpdir))
+         (my/apple-reminders-sync-file stub-path)
+         (my/apple-reminders-agenda-file nil)
          (org-agenda-files nil)
-         (org-agenda-custom-commands nil)) ; prevent leaking stale path into custom commands
+         (org-agenda-custom-commands nil))
     (unwind-protect
         (progn
           (my/apple-reminders--ensure-agenda-files)
-          (should (file-exists-p agenda-path)))
-      (when (file-exists-p agenda-path) (delete-file agenda-path))
+          (should (file-exists-p stub-path)))
+      (when (file-exists-p stub-path) (delete-file stub-path))
       (delete-directory tmpdir))))
 
 (ert-deftest ar/ensure-agenda-adds-custom-command ()
   "\"A\" custom agenda command is added to org-agenda-custom-commands."
-  (let* ((tmpfile (make-temp-file "ar-agenda" nil ".org"))
-         (my/apple-reminders-agenda-file tmpfile)
-         (my/apple-reminders-sync-file "/tmp/nonexistent-99999.org")
+  (let* ((tmpfile (make-temp-file "reminders" nil ".org"))
+         (my/apple-reminders-sync-file tmpfile)
+         (my/apple-reminders-agenda-file nil)
          (org-agenda-files nil)
          (org-agenda-custom-commands nil))
     (unwind-protect
