@@ -59,21 +59,28 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; Save-Hook: Emacs → Apple bei jedem Speichern von reminders.org
-;; update-hash aktualisiert LAST-MODIFIED für geänderte Items (nötig weil Emacs atomic saves
-;; macht → CLI file-monitor feuert nicht). Danach sync-once für bidirektionalen Abgleich.
+;; before-save: LAST-MODIFIED des aktuellen Eintrags auf jetzt setzen damit
+;; syncOnce() erkennt dass org neuer ist als Apple
+(defun my/org-reminders-update-last-modified ()
+  (when (and (buffer-file-name)
+             (string= (buffer-file-name)
+                      (expand-file-name "~/org/reminders.org"))
+             (org-entry-get nil "EXTERNAL-ID"))
+    (org-entry-put nil "LAST-MODIFIED"
+                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
+
+(add-hook 'before-save-hook #'my/org-reminders-update-last-modified)
+
+;; after-save: CLI sync --type once als Subprocess (bidirektional, kein WebSocket nötig)
 (defun my/org-reminders-on-save ()
-  (when (string= (buffer-file-name)
-                 (expand-file-name "~/org/reminders.org"))
-    (let ((proc (start-process "org-reminders-hash" nil
-                               (executable-find "org-reminders")
-                               "update-hash"
-                               (expand-file-name "~/org/reminders.org"))))
-      (set-process-sentinel
-       proc
-       (lambda (p _)
-         (when (= (process-exit-status p) 0)
-           (org-reminders-send-message "sync-once")))))))
+  (when (and (buffer-file-name)
+             (string= (buffer-file-name)
+                      (expand-file-name "~/org/reminders.org")))
+    (start-process "org-reminders-sync" nil
+                   (executable-find "org-reminders")
+                   "sync"
+                   (expand-file-name "~/org/reminders.org")
+                   "--type" "once")))
 
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 #+end_src
