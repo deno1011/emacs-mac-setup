@@ -237,7 +237,7 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
            (if flagged "true" "false")
            (if due
                (format "r.dueDate=new Date(%s);" (json-encode (concat due "T00:00:00")))
-             "r.dueDate=undefined;"))))
+             "r.dueDate=null;"))))
     (my/apple-reminders--jxa-async script callback)))
 
 (defun my/apple-reminders-migrate-flat-headings ()
@@ -451,7 +451,7 @@ app.lists().forEach(function(l){
     if(compl[i]) continue;
     var d=dates[i];
     items.push({id:ids[i],title:names[i],notes:bodies[i]||'',
-                due:d?d.toISOString().slice(0,10):null,
+                due:(d&&d instanceof Date&&!isNaN(d)&&d.getFullYear()>1970)?d.toISOString().slice(0,10):null,
                 priority:prios[i],flagged:flags[i]});
   }
   out.push({list:l.name(),items:items});
