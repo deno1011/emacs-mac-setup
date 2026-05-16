@@ -1369,11 +1369,8 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
 
 (use-package org-reminders
   :ensure nil
+  :custom
+  (org-reminders-sync-file (expand-file-name "~/org/reminders.org"))
   :config
-  ;; Org-Datei für den bidirektionalen Sync
-  (setq org-reminders-reminders-to-org-file
-        (expand-file-name "~/org/reminders.org"))
-  ;; In org-agenda-files einbinden
-  (add-to-list 'org-agenda-files
-               (expand-file-name "~/org/reminders.org")))
+  (add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org")))
 #+end_src
