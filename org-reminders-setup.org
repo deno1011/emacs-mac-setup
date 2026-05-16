@@ -59,31 +59,23 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; before-save: LAST-MODIFIED aller Einträge auf jetzt setzen damit
-;; syncOnce() erkennt dass org neuer ist als Apple
-(defun my/org-reminders-update-last-modified ()
+;; Bei TODO-State-Änderung: LAST-MODIFIED des Eintrags sofort auf jetzt setzen
+(defun my/org-reminders-mark-entry-modified ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
-                      (expand-file-name "~/org/reminders.org")))
-    (let ((now (format-time-string "%Y-%m-%d %H:%M:%S")))
-      (org-map-entries
-       (lambda ()
-         (when (org-entry-get nil "EXTERNAL-ID")
-           (org-entry-put nil "LAST-MODIFIED" now)))
-       nil nil))))
+                      (expand-file-name "~/org/reminders.org"))
+             (org-entry-get nil "EXTERNAL-ID"))
+    (org-entry-put nil "LAST-MODIFIED"
+                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
 
-(add-hook 'before-save-hook #'my/org-reminders-update-last-modified)
+(add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
-;; after-save: CLI sync --type once als Subprocess (bidirektional, kein WebSocket nötig)
+;; after-save: sync-once via WebSocket an den laufenden CLI schicken
 (defun my/org-reminders-on-save ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org")))
-    (start-process "org-reminders-sync" nil
-                   (executable-find "org-reminders")
-                   "sync"
-                   (expand-file-name "~/org/reminders.org")
-                   "--type" "once")))
+    (org-reminders-send-message "sync-once")))
 
 (add-hook 'after-save-hook #'my/org-reminders-on-save)
 
