@@ -110,13 +110,20 @@ macOS shows a permission dialog → click *OK*. Then once:
 Problem: =org-reminders-with-sync-file= calls =save-buffer= internally — without the
 guard flag the =after-save-hook= would fire recursively (loop).
 
-Solution: =from-apple= flag is set for the entire duration of any incoming Apple message.
-Both hooks check it and skip their work when set.
+Second problem: sending =sync-once= on every save (including auto-saves with no changes)
+floods the CLI, blocking Apple→Emacs events. =sync-once= must only fire when the user
+actually changed something (=pending-sync= flag).
+
+Solution: =from-apple= flag covers the full duration of any incoming Apple message;
+=pending-sync= flag ensures =sync-once= is only sent after a real TODO state change.
 
 #+begin_src emacs-lisp :tangle yes
 ;; Flag: t while package is applying Apple→Org updates → prevents sync loop
 ;; Must be defvar (special variable) for dynamic scoping through all hook calls
 (defvar my/org-reminders--from-apple nil)
+
+;; Flag: t when a TODO state change has updated LAST-MODIFIED and needs pushing to Apple
+(defvar my/org-reminders--pending-sync nil)
 
 (with-eval-after-load 'org-reminders
   ;; Wrap the entire message handler — org-reminders-with-sync-file calls save-buffer
@@ -132,7 +139,7 @@ Both hooks check it and skip their work when set.
                   (apply orig args)))))
 
 ;; Update LAST-MODIFIED when user changes TODO state → syncOnce detects the change
-;; (skipped for package-internal Apple→Org updates to avoid loop)
+;; Sets pending-sync so the save hook knows there is something real to push
 (defun my/org-reminders-mark-entry-modified ()
   (when (and (not my/org-reminders--from-apple)
              (buffer-file-name)
@@ -140,19 +147,22 @@ Both hooks check it and skip their work when set.
                       (expand-file-name "~/org/reminders.org"))
              (org-entry-get nil "EXTERNAL-ID"))
     (org-entry-put nil "LAST-MODIFIED"
-                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
+                   (format-time-string "%Y-%m-%d %H:%M:%S"))
+    (setq my/org-reminders--pending-sync t)))
 
 (add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
-;; Send sync-once after user save — skipped for package-internal saves (from-apple = t)
-;; 1s debounce prevents rapid-fire calls
+;; Send sync-once only when pending-sync is set — prevents flooding the CLI on
+;; every auto-save, which blocks incoming Apple→Emacs events
 (defvar my/org-reminders--sync-timer nil)
 
 (defun my/org-reminders-on-save ()
-  (when (and (not my/org-reminders--from-apple)
+  (when (and my/org-reminders--pending-sync
+             (not my/org-reminders--from-apple)
              (buffer-file-name)
              (string= (buffer-file-name)
                       (expand-file-name "~/org/reminders.org")))
+    (setq my/org-reminders--pending-sync nil)
     (when my/org-reminders--sync-timer
       (cancel-timer my/org-reminders--sync-timer))
     (setq my/org-reminders--sync-timer
