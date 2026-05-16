@@ -1326,26 +1326,18 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
 
 ** Voraussetzungen
 
-- *reminders-cli*: =brew install keith/formulae/reminders-cli=
-- *websocket-bridge*: Abhängigkeit von org-reminders, nicht auf MELPA —
-  wird automatisch via =package-vc-install= installiert
-- *Python-Package*: =pip3 install websocket-bridge-python= —
-  wird beim ersten Start automatisch installiert (via =my/pip-install-and-log= aus core.org)
-- *Emacs 29+*: für =package-vc-install=
+- *org-reminders-cli*: =brew install ginqi7/formulae/org-reminders-cli= — eigenes CLI (nicht keith/reminders-cli!)
+- *websocket-bridge* + *websocket*: Emacs-Abhängigkeiten — werden automatisch installiert
 
 ** Installation & Konfiguration
 
 #+begin_src emacs-lisp :tangle yes
 ;;; Apple Reminders via org-reminders
-;;; Abhängigkeiten: reminders-cli (brew) + websocket-bridge (GitHub) + websocket-bridge-python (pip)
+;;; Abhängigkeiten: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
 
-;; reminders-cli prüfen
-(unless (executable-find "reminders")
-  (message "org-reminders: reminders-cli fehlt — brew install keith/formulae/reminders-cli"))
-
-;; Python-Abhängigkeit (websocket-bridge-python)
-(when (fboundp 'my/pip-install-and-log)
-  (my/pip-install-and-log "websocket-bridge-python"))
+;; org-reminders-cli prüfen (brew install ginqi7/formulae/org-reminders-cli)
+(unless (executable-find "org-reminders")
+  (message "org-reminders: CLI fehlt — brew install ginqi7/formulae/org-reminders-cli"))
 
 ;; quelpa: installiert GitHub-Packages und aktiviert sie sofort in der Session
 ;; (package-vc-install aktiviert nicht sofort → Kompilierungsfehler bei Abhängigkeiten)
