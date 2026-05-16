@@ -1,11 +1,15 @@
 #+TITLE: Apple Reminders — org-reminders Setup
 #+STARTUP: overview
 
-Loaded from [[file:config.org][config.org]] on macOS only (=system-type 'darwin=).
-Not loaded in Docker/Orbstack variants (=system-type 'gnu/linux=).
+*DEACTIVATED* — replaced by [[file:apple-reminders.org][apple-reminders.org]] (custom JXA/osascript implementation).
 
-Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — bidirectional sync between Apple Reminders and Org.
-Replaces the earlier =apple-reminders.org= custom implementation.
+Package [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] was evaluated but found too buggy for production use:
+- Apple→Emacs sync overwrites Emacs changes when timestamps are equal (CLI treats Apple as authoritative)
+- Emacs→Apple sync requires custom workarounds (file monitor incompatible with Emacs atomic saves)
+- Priority removal not handled (upstream bug: [[https://github.com/ginqi7/org-reminders/issues][issues]])
+- Flooding the CLI with sync-once blocks incoming Apple events
+
+This file is kept as reference. It is *not loaded* by [[file:config.org][config.org]].
 
 * Prerequisites
 
