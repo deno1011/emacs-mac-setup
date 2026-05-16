@@ -12,7 +12,8 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :config
   (setq org-directory (expand-file-name "data/org/" my/data-dir)
         org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        org-agenda-files (list (expand-file-name "data/org/" my/data-dir))
+        org-agenda-files (list (expand-file-name "data/org/" my/data-dir)
+                               (expand-file-name "~/org/reminders.org"))
         org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
@@ -1362,7 +1363,5 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
 (use-package org-reminders
   :ensure nil
   :custom
-  (org-reminders-sync-file (expand-file-name "~/org/reminders.org"))
-  :config
-  (add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org")))
+  (org-reminders-sync-file (expand-file-name "~/org/reminders.org")))
 #+end_src
