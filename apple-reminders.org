@@ -5,7 +5,7 @@
 Bidirectional integration between macOS Apple Reminders and Emacs/Org-mode.
 Uses JXA (JavaScript for Automation / osascript) directly — no third-party CLI required.
 
-Version: 1.6.13 | Loaded by: [[file:config.org][config.org]]
+Version: 1.6.14 | Loaded by: [[file:config.org][config.org]]
 
 * Overview
 :PROPERTIES:
@@ -516,25 +516,42 @@ Run once after upgrading from v1.4.x. Operates on `my/apple-reminders-sync-file'
 
 ;;; Push-only (org → Apple): called from save hook
 
+(defun my/apple-reminders--entry-hash ()
+  "Return MD5 of the current org entry's synced fields: state, title, due, priority, flagged, notes."
+  (let* ((state (or (org-get-todo-state) ""))
+         (vals  (my/apple-reminders--org-item-values)))
+    (md5 (format "%s\0%s\0%s\0%d\0%s\0%s"
+                 state
+                 (or (alist-get 'title    vals) "")
+                 (or (alist-get 'due      vals) "")
+                 (or (alist-get 'priority vals) 0)
+                 (if (alist-get 'flagged vals) "t" "f")
+                 (or (alist-get 'notes    vals) "")))))
+
 (defun my/apple-reminders--push-to-apple ()
-  "Push org → Apple only. No fetch. New items get REMINDER_ID stamped back."
+  "Push only changed org entries → Apple. Entries whose REMINDER_HASH matches
+the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamped back."
   (let* ((list-name (or my/apple-reminders-sync-list (my/apple-reminders--default-list)))
          (n-new 0) (n-updated 0)
          new-pts)
     (org-map-entries
      (lambda ()
-       (let* ((id    (org-entry-get nil "REMINDER_ID"))
-              (rlist (or (org-entry-get nil "REMINDER_LIST") list-name))
-              (state (org-get-todo-state)))
+       (let* ((id     (org-entry-get nil "REMINDER_ID"))
+              (rlist  (or (org-entry-get nil "REMINDER_LIST") list-name))
+              (state  (org-get-todo-state)))
          (cond
           ((and (null id) (member state '("TODO" "NEXT" "WAITING")))
            (push (point-marker) new-pts))
           ((and id (member state '("DONE" "CANCELLED")))
            (my/apple-reminders--complete-in-apple rlist id))
           ((and id (member state '("TODO" "NEXT" "WAITING")))
-           (my/apple-reminders--update-in-apple
-            rlist id (my/apple-reminders--org-item-values))
-           (setq n-updated (1+ n-updated))))))
+           (let* ((hash   (my/apple-reminders--entry-hash))
+                  (stored (org-entry-get nil "REMINDER_HASH")))
+             (unless (equal hash stored)
+               (my/apple-reminders--update-in-apple
+                rlist id (my/apple-reminders--org-item-values))
+               (org-set-property "REMINDER_HASH" hash)
+               (setq n-updated (1+ n-updated))))))))
      nil nil)
     (dolist (m (nreverse new-pts))
       (goto-char m)
@@ -542,8 +559,10 @@ Run once after upgrading from v1.4.x. Operates on `my/apple-reminders-sync-file'
                          list-name (my/apple-reminders--org-item-values)))
         (org-set-property "REMINDER_ID"   new-id)
         (org-set-property "REMINDER_LIST" list-name)
+        (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
         (setq n-new (1+ n-new))))
-    (message "Reminders push: %d new, %d updated." n-new n-updated)))
+    (when (or (> n-new 0) (> n-updated 0))
+      (message "Reminders push: %d new, %d updated." n-new n-updated))))
 
 ;;; Full bidirectional sync (C-c r R)
 
@@ -623,6 +642,13 @@ Run once after upgrading from v1.4.x. Operates on `my/apple-reminders-sync-file'
                   (my/apple-reminders--goto-list-heading lname)
                   (my/apple-reminders--insert-org-heading item lname)
                   (setq n-pulled (1+ n-pulled)))))))
+        ;; Stamp REMINDER_HASH for all open entries so the next save hook is a no-op
+        (org-map-entries
+         (lambda ()
+           (when (and (org-entry-get nil "REMINDER_ID")
+                      (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
+             (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))))
+         nil nil)
         (save-buffer)))
     (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
              n-done n-pushed n-pulled n-updated)))
