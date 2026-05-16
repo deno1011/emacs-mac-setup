@@ -59,15 +59,18 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
 
-;; before-save: LAST-MODIFIED des aktuellen Eintrags auf jetzt setzen damit
+;; before-save: LAST-MODIFIED aller Einträge auf jetzt setzen damit
 ;; syncOnce() erkennt dass org neuer ist als Apple
 (defun my/org-reminders-update-last-modified ()
   (when (and (buffer-file-name)
              (string= (buffer-file-name)
-                      (expand-file-name "~/org/reminders.org"))
-             (org-entry-get nil "EXTERNAL-ID"))
-    (org-entry-put nil "LAST-MODIFIED"
-                   (format-time-string "%Y-%m-%d %H:%M:%S"))))
+                      (expand-file-name "~/org/reminders.org")))
+    (let ((now (format-time-string "%Y-%m-%d %H:%M:%S")))
+      (org-map-entries
+       (lambda ()
+         (when (org-entry-get nil "EXTERNAL-ID")
+           (org-entry-put nil "LAST-MODIFIED" now)))
+       nil nil))))
 
 (add-hook 'before-save-hook #'my/org-reminders-update-last-modified)
 
