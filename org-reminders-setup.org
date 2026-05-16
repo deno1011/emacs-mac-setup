@@ -105,29 +105,34 @@ macOS shows a permission dialog → click *OK*. Then once:
                     (error nil))))))
 #+end_src
 
-* Emacs→Apple Sync (disabled — reference)
-
-This block fixes the issue where changes made in Emacs do not arrive in Apple Reminders.
-Disabled while testing the default package behavior.
+* Emacs→Apple Sync
 
 Problem: =org-reminders-with-sync-file= calls =save-buffer= internally — without the
 guard flag the =after-save-hook= would fire recursively (loop).
 
-#+begin_src emacs-lisp :tangle no
+Solution: =from-apple= flag is set for the entire duration of any incoming Apple message.
+Both hooks check it and skip their work when set.
+
+#+begin_src emacs-lisp :tangle yes
 ;; Flag: t while package is applying Apple→Org updates → prevents sync loop
+;; Must be defvar (special variable) for dynamic scoping through all hook calls
 (defvar my/org-reminders--from-apple nil)
 
 (with-eval-after-load 'org-reminders
+  ;; Wrap the entire message handler — org-reminders-with-sync-file calls save-buffer
+  ;; *after* returning from item-update-detail, so the flag must cover the full call
   (advice-add 'org-reminders-message-handle :around
               (lambda (orig &rest args)
                 (let ((my/org-reminders--from-apple t))
                   (apply orig args))))
+  ;; Suppress startup save triggered by check-sync-file
   (advice-add 'org-reminders-check-sync-file :around
               (lambda (orig &rest args)
                 (let ((my/org-reminders--from-apple t))
                   (apply orig args)))))
 
 ;; Update LAST-MODIFIED when user changes TODO state → syncOnce detects the change
+;; (skipped for package-internal Apple→Org updates to avoid loop)
 (defun my/org-reminders-mark-entry-modified ()
   (when (and (not my/org-reminders--from-apple)
              (buffer-file-name)
@@ -140,6 +145,7 @@ guard flag the =after-save-hook= would fire recursively (loop).
 (add-hook 'org-after-todo-state-change-hook #'my/org-reminders-mark-entry-modified)
 
 ;; Send sync-once after user save — skipped for package-internal saves (from-apple = t)
+;; 1s debounce prevents rapid-fire calls
 (defvar my/org-reminders--sync-timer nil)
 
 (defun my/org-reminders-on-save ()
