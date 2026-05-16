@@ -1355,6 +1355,10 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
   (quelpa-update-melpa-p nil)
   (quelpa-self-upgrade-p nil))
 
+;; websocket (MELPA) — Abhängigkeit von websocket-bridge
+(use-package websocket
+  :ensure t)
+
 ;; websocket-bridge zuerst installieren (Abhängigkeit von org-reminders)
 (unless (package-installed-p 'websocket-bridge)
   (quelpa '(websocket-bridge :fetcher github :repo "ginqi7/websocket-bridge")))
