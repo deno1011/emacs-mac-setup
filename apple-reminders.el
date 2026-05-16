@@ -795,6 +795,53 @@ If `my/apple-reminders-agenda-file' is also set, it is registered too."
 (my/apple-reminders--ensure-agenda-files)
 (add-hook 'org-agenda-mode-hook #'my/apple-reminders--ensure-agenda-files)
 
+;;; Reliable agenda navigation via REMINDER_ID (immune to stale position markers)
+
+(defun my/apple-reminders--agenda-tag-ids ()
+  "Stamp reminder-id text property on each agenda line that comes from reminders.org."
+  (let ((sync-file (expand-file-name my/apple-reminders-sync-file)))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (when-let* ((m   (get-text-property (point) 'org-hd-marker))
+                    ((buffer-live-p (marker-buffer m)))
+                    ((string= (expand-file-name
+                               (or (buffer-file-name (marker-buffer m)) ""))
+                              sync-file))
+                    (id  (with-current-buffer (marker-buffer m)
+                           (save-excursion
+                             (goto-char m)
+                             (org-entry-get nil "REMINDER_ID")))))
+          (let ((inhibit-read-only t))
+            (add-text-properties (line-beginning-position) (line-end-position)
+                                 (list 'reminder-id id))))
+        (forward-line 1)))))
+
+(add-hook 'org-agenda-finalize-hook #'my/apple-reminders--agenda-tag-ids)
+
+(defun my/apple-reminders--agenda-goto-by-id (&optional same-window)
+  "Navigate to reminder in reminders.org via REMINDER_ID.
+Falls back to standard org-agenda navigation for non-reminder items."
+  (interactive)
+  (let ((id (get-text-property (point) 'reminder-id)))
+    (if (not id)
+        (if same-window (org-agenda-switch-to) (org-agenda-goto))
+      (let ((file (expand-file-name my/apple-reminders-sync-file)))
+        (if same-window (find-file file) (find-file-other-window file))
+        (widen)
+        (goto-char (point-min))
+        (if (org-find-property "REMINDER_ID" id)
+            (progn (org-reveal) (recenter))
+          (user-error "Reminder not found — run C-c r R to sync"))))))
+
+(defun my/apple-reminders--setup-agenda-nav ()
+  (local-set-key (kbd "RET") (lambda () (interactive)
+                               (my/apple-reminders--agenda-goto-by-id t)))
+  (local-set-key (kbd "TAB") #'my/apple-reminders--agenda-goto-by-id)
+  (local-set-key (kbd "o")   #'my/apple-reminders--agenda-goto-by-id))
+
+(add-hook 'org-agenda-mode-hook #'my/apple-reminders--setup-agenda-nav)
+
 ;;; Global bindings — work from any buffer
 (global-set-key (kbd "C-c r d") #'my/apple-reminders-dashboard)
 (global-set-key (kbd "C-c r l") #'my/apple-reminders-show-lists)
