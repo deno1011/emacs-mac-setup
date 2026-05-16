@@ -893,33 +893,48 @@ If `my/apple-reminders-agenda-file' is also set, it is registered too."
 
 ;;; Reliable agenda navigation via REMINDER_ID (immune to stale position markers)
 
+(defun my/apple-reminders--agenda-id-at-point ()
+  "Return REMINDER_ID for the agenda line at point, or nil."
+  ;; Try text property first (set by finalize hook), then read from marker directly.
+  (or (get-text-property (point) 'reminder-id)
+      (let ((m (or (get-text-property (point) 'org-hd-marker)
+                   (get-text-property (point) 'org-marker))))
+        (when (and m (buffer-live-p (marker-buffer m)))
+          (with-current-buffer (marker-buffer m)
+            (save-excursion
+              (goto-char m)
+              (condition-case nil (org-entry-get nil "REMINDER_ID") (error nil))))))))
+
 (defun my/apple-reminders--agenda-tag-ids ()
   "Stamp reminder-id text property on each agenda line that comes from reminders.org."
   (let ((sync-file (expand-file-name my/apple-reminders-sync-file)))
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
-        (when-let* ((m   (get-text-property (point) 'org-hd-marker))
-                    ((buffer-live-p (marker-buffer m)))
-                    ((string= (expand-file-name
+        (let ((m (get-text-property (point) 'org-hd-marker)))
+          (when (and m
+                     (buffer-live-p (marker-buffer m))
+                     (string= (expand-file-name
                                (or (buffer-file-name (marker-buffer m)) ""))
                               sync-file))
-                    (id  (with-current-buffer (marker-buffer m)
-                           (save-excursion
-                             (goto-char m)
-                             (org-entry-get nil "REMINDER_ID")))))
-          (let ((inhibit-read-only t))
-            (add-text-properties (line-beginning-position) (line-end-position)
-                                 (list 'reminder-id id))))
+            (let ((id (with-current-buffer (marker-buffer m)
+                        (save-excursion
+                          (goto-char m)
+                          (condition-case nil
+                              (org-entry-get nil "REMINDER_ID")
+                            (error nil))))))
+              (when id
+                (let ((inhibit-read-only t))
+                  (add-text-properties (line-beginning-position) (line-end-position)
+                                       (list 'reminder-id id)))))))
         (forward-line 1)))))
 
 (add-hook 'org-agenda-finalize-hook #'my/apple-reminders--agenda-tag-ids)
 
-(defun my/apple-reminders--agenda-goto-by-id (&optional same-window)
+(defun my/apple-reminders--agenda-jump (&optional same-window)
   "Navigate to reminder in reminders.org via REMINDER_ID.
 Falls back to standard org-agenda navigation for non-reminder items."
-  (interactive)
-  (let ((id (get-text-property (point) 'reminder-id)))
+  (let ((id (my/apple-reminders--agenda-id-at-point)))
     (if (not id)
         (if same-window (org-agenda-switch-to) (org-agenda-goto))
       (let ((file (expand-file-name my/apple-reminders-sync-file)))
@@ -930,11 +945,20 @@ Falls back to standard org-agenda navigation for non-reminder items."
             (progn (org-reveal) (recenter))
           (user-error "Reminder not found — run C-c r R to sync"))))))
 
+(defun my/apple-reminders--agenda-ret  () (interactive) (my/apple-reminders--agenda-jump t))
+(defun my/apple-reminders--agenda-tab  () (interactive) (my/apple-reminders--agenda-jump nil))
+(defun my/apple-reminders--agenda-mouse-same (e)
+  (interactive "e") (mouse-set-point e) (my/apple-reminders--agenda-jump t))
+(defun my/apple-reminders--agenda-mouse-other (e)
+  (interactive "e") (mouse-set-point e) (my/apple-reminders--agenda-jump nil))
+
 (defun my/apple-reminders--setup-agenda-nav ()
-  (local-set-key (kbd "RET") (lambda () (interactive)
-                               (my/apple-reminders--agenda-goto-by-id t)))
-  (local-set-key (kbd "TAB") #'my/apple-reminders--agenda-goto-by-id)
-  (local-set-key (kbd "o")   #'my/apple-reminders--agenda-goto-by-id))
+  (local-set-key (kbd "RET")    #'my/apple-reminders--agenda-ret)
+  (local-set-key (kbd "TAB")    #'my/apple-reminders--agenda-tab)
+  (local-set-key (kbd "o")      #'my/apple-reminders--agenda-tab)
+  (local-set-key [mouse-2]      #'my/apple-reminders--agenda-mouse-same)
+  (local-set-key [down-mouse-3] #'ignore)
+  (local-set-key [mouse-3]      #'my/apple-reminders--agenda-mouse-other))
 
 (add-hook 'org-agenda-mode-hook #'my/apple-reminders--setup-agenda-nav)
 #+end_src
