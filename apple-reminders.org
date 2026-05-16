@@ -952,10 +952,31 @@ Falls back to standard org-agenda navigation for non-reminder items."
 
 (defun my/apple-reminders--agenda-ret () (interactive) (my/apple-reminders--agenda-jump t))
 (defun my/apple-reminders--agenda-tab () (interactive) (my/apple-reminders--agenda-jump nil))
+
+(defun my/apple-reminders--agenda-mouse-jump (e same-window)
+  "Navigate to reminder at mouse event E position, reading reminder-id directly
+from the event's buffer/position rather than relying on mouse-set-point side effects."
+  (let* ((posn (event-start e))
+         (win  (posn-window posn))
+         (pt   (posn-point posn)))
+    (when (and (windowp win) (numberp pt))
+      (let ((id (with-current-buffer (window-buffer win)
+                  (get-text-property pt 'reminder-id))))
+        (select-window win)
+        (if (not id)
+            (if same-window (org-agenda-switch-to) (org-agenda-goto))
+          (let ((file (expand-file-name my/apple-reminders-sync-file)))
+            (if same-window (find-file file) (find-file-other-window file))
+            (widen)
+            (goto-char (point-min))
+            (if (org-find-property "REMINDER_ID" id)
+                (progn (org-reveal) (recenter))
+              (user-error "Reminder not found — run C-c r R to sync"))))))))
+
 (defun my/apple-reminders--agenda-mouse-same (e)
-  (interactive "e") (mouse-set-point e) (my/apple-reminders--agenda-jump t))
+  (interactive "e") (my/apple-reminders--agenda-mouse-jump e t))
 (defun my/apple-reminders--agenda-mouse-other (e)
-  (interactive "e") (mouse-set-point e) (my/apple-reminders--agenda-jump nil))
+  (interactive "e") (my/apple-reminders--agenda-mouse-jump e nil))
 
 (defun my/apple-reminders--setup-agenda-nav ()
   (local-set-key (kbd "RET")    #'my/apple-reminders--agenda-ret)
