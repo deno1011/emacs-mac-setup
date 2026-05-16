@@ -19,6 +19,9 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
 ;;; Apple Reminders via org-reminders — nur macOS
 ;;; Abhängigkeiten: org-reminders-cli (brew) + websocket-bridge (GitHub) + websocket (MELPA)
 
+;; Agenda-Eintrag zuerst — damit er auch bei Ladefehlern weiter unten aktiv bleibt
+(add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org"))
+
 ;; org-reminders-cli automatisch im Hintergrund installieren falls fehlend
 (unless (executable-find "org-reminders")
   (my/brew-install-and-log "formula" "org-reminders-cli"
@@ -48,9 +51,6 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
   :ensure nil
   :custom
   (org-reminders-sync-file (expand-file-name "~/org/reminders.org")))
-
-;; reminders.org in Agenda einbinden
-(add-to-list 'org-agenda-files (expand-file-name "~/org/reminders.org"))
 
 ;; Auto-Sync starten sobald CLI verfügbar (idle damit Startup nicht blockiert)
 (when (executable-find "org-reminders")
