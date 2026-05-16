@@ -154,12 +154,16 @@ DONE/CANCELLED → completed=true. TODO/NEXT/WAITING → completed=false (reopen
   "Push heading at point to Apple if it has a REMINDER_ID. Triggered by org advice."
   (when (and (derived-mode-p 'org-mode)
              (not my/apple-reminders--syncing))
-    (ignore-errors
-      (let ((id   (org-entry-get nil "REMINDER_ID"))
-            (list (org-entry-get nil "REMINDER_LIST")))
-        (when (and id list)
-          (my/apple-reminders--update-in-apple
-           list id (my/apple-reminders--org-item-values)))))))
+    (condition-case err
+        (let ((id   (org-entry-get nil "REMINDER_ID"))
+              (list (org-entry-get nil "REMINDER_LIST")))
+          (when (and id list)
+            (my/apple-reminders--update-in-apple
+             list id (my/apple-reminders--org-item-values)
+             (lambda (out)
+               (when (and out (not (string-empty-p (string-trim out))))
+                 (message "Reminders: %s" (string-trim out)))))))
+      (error (message "Reminders push: %s" (error-message-string err))))))
 
 (advice-add 'org-priority         :after #'my/apple-reminders--maybe-push-heading)
 (advice-add 'org-deadline         :after #'my/apple-reminders--maybe-push-heading)
@@ -217,7 +221,7 @@ JSON.stringify(newId);"
         (json-parse-string (my/apple-reminders--jxa-run script))
       (error nil))))
 
-(defun my/apple-reminders--update-in-apple (list-name id vals)
+(defun my/apple-reminders--update-in-apple (list-name id vals &optional callback)
   "Push VALS alist to Apple reminder ID in LIST-NAME (async). Org wins."
   (let* ((title   (alist-get 'title    vals ""))
          (notes   (alist-get 'notes    vals ""))
@@ -234,7 +238,7 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
            (if due
                (format "r.dueDate=new Date(%s);" (json-encode (concat due "T00:00:00")))
              "r.dueDate=null;"))))
-    (my/apple-reminders--jxa-async script)))
+    (my/apple-reminders--jxa-async script callback)))
 
 (defun my/apple-reminders-migrate-flat-headings ()
   "One-time migration: move flat * TODO reminder entries under * ListName headings.
@@ -691,6 +695,30 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                       nil nil)
                      (dolist (m (nreverse done-pts))
                        (goto-char m) (org-todo "DONE") (set-marker m nil)))
+                   ;; Update priorities for existing items (Apple → org)
+                   (let (prio-updates)
+                     (org-map-entries
+                      (lambda ()
+                        (let* ((id     (org-entry-get nil "REMINDER_ID"))
+                               (aitem  (when id (gethash id apple-by-id)))
+                               (a-prio (when aitem (alist-get 'priority aitem)))
+                               (p-char (nth 3 (org-heading-components)))
+                               (o-prio (cond ((eql p-char ?A) 1)
+                                             ((eql p-char ?B) 5)
+                                             ((eql p-char ?C) 9)
+                                             (t 0))))
+                          (when (and aitem (numberp a-prio) (/= a-prio o-prio))
+                            (push (cons (point-marker)
+                                        (cond ((= a-prio 1) ?A)
+                                              ((= a-prio 5) ?B)
+                                              ((= a-prio 9) ?C)
+                                              (t 'remove)))
+                                  prio-updates))))
+                      nil nil)
+                     (dolist (upd (nreverse prio-updates))
+                       (goto-char (car upd))
+                       (org-priority (cdr upd))
+                       (set-marker (car upd) nil)))
                    (let ((known-ids (let (ids)
                                       (org-map-entries
                                        (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
