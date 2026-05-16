@@ -93,6 +93,14 @@ macOS zeigt einen Berechtigungsdialog → *OK* klicken. Danach einmalig:
                                       (org-reminders-start-auto-sync))))))
                            ;; Folgestarts: direkt auto-sync starten
                            (org-reminders-start-auto-sync)))))
+
+;; Fix: package überspringt org-priority-Aufruf wenn Apple-Priorität 0 ist (kein Wächter nötig)
+;; → bestehende Priorität im Org-Eintrag wird nie gelöscht wenn sie in Apple entfernt wird
+(with-eval-after-load 'org-reminders
+  (advice-add 'org-reminders--item-update-detail :after
+              (lambda (obj)
+                (when (= 0 (org-reminders-item-priority obj))
+                  (org-priority 'remove)))))
 #+end_src
 
 * Emacs→Apple Sync (deaktiviert — Referenz)
