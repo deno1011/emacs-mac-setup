@@ -437,7 +437,7 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                          ;; org edited → push org to Apple
                          (my/apple-reminders--update-in-apple
                           rlist id (my/apple-reminders--org-item-values))
-                         (setq n-updated (1+ n-updated))))))))))
+                         (setq n-updated (1+ n-updated)))))))))))
            nil nil)
           (dolist (m (nreverse done-pts))
             (goto-char m) (org-todo "DONE") (set-marker m nil)
