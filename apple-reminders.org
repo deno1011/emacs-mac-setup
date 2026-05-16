@@ -893,48 +893,53 @@ If `my/apple-reminders-agenda-file' is also set, it is registered too."
 
 ;;; Reliable agenda navigation via REMINDER_ID (immune to stale position markers)
 
-(defun my/apple-reminders--agenda-id-at-point ()
-  "Return REMINDER_ID for the agenda line at point, or nil."
-  ;; Try text property first (set by finalize hook), then read from marker directly.
-  (or (get-text-property (point) 'reminder-id)
-      (let ((m (or (get-text-property (point) 'org-hd-marker)
-                   (get-text-property (point) 'org-marker))))
-        (when (and m (buffer-live-p (marker-buffer m)))
-          (with-current-buffer (marker-buffer m)
-            (save-excursion
-              (goto-char m)
-              (condition-case nil (org-entry-get nil "REMINDER_ID") (error nil))))))))
-
 (defun my/apple-reminders--agenda-tag-ids ()
-  "Stamp reminder-id text property on each agenda line that comes from reminders.org."
-  (let ((sync-file (expand-file-name my/apple-reminders-sync-file)))
-    (save-excursion
-      (goto-char (point-min))
-      (while (not (eobp))
-        (let ((m (get-text-property (point) 'org-hd-marker)))
-          (when (and m
-                     (buffer-live-p (marker-buffer m))
-                     (string= (expand-file-name
-                               (or (buffer-file-name (marker-buffer m)) ""))
-                              sync-file))
-            (let ((id (with-current-buffer (marker-buffer m)
-                        (save-excursion
-                          (goto-char m)
-                          (condition-case nil
-                              (org-entry-get nil "REMINDER_ID")
-                            (error nil))))))
-              (when id
-                (let ((inhibit-read-only t))
-                  (add-text-properties (line-beginning-position) (line-end-position)
-                                       (list 'reminder-id id)))))))
-        (forward-line 1)))))
+  "Stamp reminder-id text property on each agenda line from reminders.org.
+Uses marker position first; falls back to title search when marker is stale."
+  (let* ((sync-file (expand-file-name my/apple-reminders-sync-file))
+         (sync-buf  (get-file-buffer sync-file)))
+    (when sync-buf
+      (let ((title-id (make-hash-table :test #'equal)))
+        (with-current-buffer sync-buf
+          (org-map-entries
+           (lambda ()
+             (when-let (id (org-entry-get nil "REMINDER_ID"))
+               (puthash (string-trim (org-get-heading t t t t)) id title-id)))
+           nil nil))
+        (save-excursion
+          (goto-char (point-min))
+          (while (not (eobp))
+            (let ((m (get-text-property (point) 'org-hd-marker)))
+              (when (and m (buffer-live-p (marker-buffer m))
+                         (eq (marker-buffer m) sync-buf))
+                (let ((id (or
+                           (with-current-buffer sync-buf
+                             (save-excursion
+                               (goto-char m)
+                               (condition-case nil
+                                   (org-entry-get nil "REMINDER_ID")
+                                 (error nil))))
+                           (let ((txt (get-text-property (point) 'txt)))
+                             (when txt
+                               (let (found)
+                                 (maphash (lambda (title id)
+                                            (when (and (not found) (> (length title) 3)
+                                                       (string-match-p (regexp-quote title) txt))
+                                              (setq found id)))
+                                          title-id)
+                                 found))))))
+                  (when id
+                    (let ((inhibit-read-only t))
+                      (add-text-properties (line-beginning-position) (line-end-position)
+                                           (list 'reminder-id id)))))))
+            (forward-line 1)))))))
 
 (add-hook 'org-agenda-finalize-hook #'my/apple-reminders--agenda-tag-ids)
 
 (defun my/apple-reminders--agenda-jump (&optional same-window)
   "Navigate to reminder in reminders.org via REMINDER_ID.
 Falls back to standard org-agenda navigation for non-reminder items."
-  (let ((id (my/apple-reminders--agenda-id-at-point)))
+  (let ((id (get-text-property (point) 'reminder-id)))
     (if (not id)
         (if same-window (org-agenda-switch-to) (org-agenda-goto))
       (let ((file (expand-file-name my/apple-reminders-sync-file)))
@@ -945,8 +950,8 @@ Falls back to standard org-agenda navigation for non-reminder items."
             (progn (org-reveal) (recenter))
           (user-error "Reminder not found — run C-c r R to sync"))))))
 
-(defun my/apple-reminders--agenda-ret  () (interactive) (my/apple-reminders--agenda-jump t))
-(defun my/apple-reminders--agenda-tab  () (interactive) (my/apple-reminders--agenda-jump nil))
+(defun my/apple-reminders--agenda-ret () (interactive) (my/apple-reminders--agenda-jump t))
+(defun my/apple-reminders--agenda-tab () (interactive) (my/apple-reminders--agenda-jump nil))
 (defun my/apple-reminders--agenda-mouse-same (e)
   (interactive "e") (mouse-set-point e) (my/apple-reminders--agenda-jump t))
 (defun my/apple-reminders--agenda-mouse-other (e)
@@ -960,7 +965,9 @@ Falls back to standard org-agenda navigation for non-reminder items."
   (local-set-key [down-mouse-3] #'ignore)
   (local-set-key [mouse-3]      #'my/apple-reminders--agenda-mouse-other))
 
-(add-hook 'org-agenda-mode-hook #'my/apple-reminders--setup-agenda-nav)
+;; Run on mode-hook (new buffers) AND finalize-hook (refreshes of existing buffers)
+(add-hook 'org-agenda-mode-hook     #'my/apple-reminders--setup-agenda-nav)
+(add-hook 'org-agenda-finalize-hook #'my/apple-reminders--setup-agenda-nav)
 #+end_src
 
 * Key Bindings
