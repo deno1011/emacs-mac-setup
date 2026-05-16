@@ -58,4 +58,12 @@ Ersetzt die frühere =apple-reminders.org= Eigenimplementierung.
                        (lambda ()
                          (org-reminders-check-sync-file)
                          (org-reminders-start-auto-sync))))
+
+;; Save-Hook: Emacs → Apple bei jedem Speichern von reminders.org
+(defun my/org-reminders-on-save ()
+  (when (string= (buffer-file-name)
+                 (expand-file-name "~/org/reminders.org"))
+    (org-reminders-send-message "sync-once")))
+
+(add-hook 'after-save-hook #'my/org-reminders-on-save)
 #+end_src
