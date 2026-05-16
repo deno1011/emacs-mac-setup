@@ -819,8 +819,8 @@ file are added to =org-agenda-files= so all reminders appear in =M-x org-agenda=
                        (with-current-buffer buf
                          (when (derived-mode-p 'org-agenda-mode)
                            (let ((inhibit-message t))
-                             (ignore-errors (org-agenda-redo)))))))))))))
-         (error nil)))))
+                             (ignore-errors (org-agenda-redo)))))))))))
+         (error nil))))))
 
 (defun my/apple-reminders--start-sync-timer ()
   (when (and (> my/apple-reminders-auto-sync-interval 0)
