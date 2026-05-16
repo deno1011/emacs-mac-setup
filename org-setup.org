@@ -1327,32 +1327,41 @@ Package: [[https://github.com/ginqi7/org-reminders][ginqi7/org-reminders]] — b
 ** Voraussetzungen
 
 - *reminders-cli*: =brew install keith/formulae/reminders-cli=
-  (dasselbe CLI das auch =apple-reminders.el= verwendete)
-- *Emacs 29+*: für =package-vc-install= (in Emacs integriert, kein extra Package-Manager nötig)
-- *org-mode*: bereits geladen
+- *websocket-bridge*: Abhängigkeit von org-reminders, nicht auf MELPA —
+  wird automatisch via =package-vc-install= installiert
+- *Python-Package*: =pip3 install websocket-bridge-python= —
+  wird beim ersten Start automatisch installiert (via =my/pip-install-and-log= aus core.org)
+- *Emacs 29+*: für =package-vc-install=
 
 ** Installation & Konfiguration
 
 #+begin_src emacs-lisp :tangle yes
-;;; Apple Reminders via org-reminders package
-;;; Voraussetzung: brew install keith/formulae/reminders-cli
+;;; Apple Reminders via org-reminders
+;;; Abhängigkeiten: reminders-cli (brew) + websocket-bridge (GitHub) + websocket-bridge-python (pip)
 
-;; Sicherstellen dass reminders-cli vorhanden ist
+;; reminders-cli prüfen
 (unless (executable-find "reminders")
-  (message "org-reminders: reminders-cli fehlt — bitte installieren: brew install keith/formulae/reminders-cli"))
+  (message "org-reminders: reminders-cli fehlt — brew install keith/formulae/reminders-cli"))
 
-;; Package von GitHub installieren (Emacs 29+ package-vc-install)
+;; Python-Abhängigkeit installieren (my/pip-install-and-log aus core.org)
+(when (fboundp 'my/pip-install-and-log)
+  (my/pip-install-and-log "websocket-bridge-python"))
+
+(when (fboundp 'package-vc-install)
+  ;; websocket-bridge zuerst (Abhängigkeit von org-reminders)
+  (unless (package-installed-p 'websocket-bridge)
+    (package-vc-install "https://github.com/ginqi7/websocket-bridge"))
+  ;; org-reminders selbst
+  (unless (package-installed-p 'org-reminders)
+    (package-vc-install "https://github.com/ginqi7/org-reminders")))
+
 (use-package org-reminders
   :ensure nil
-  :init
-  (unless (package-installed-p 'org-reminders)
-    (when (fboundp 'package-vc-install)
-      (package-vc-install "https://github.com/ginqi7/org-reminders")))
   :config
-  ;; Org-Datei in die Apple Reminders synchronisiert werden
+  ;; Org-Datei für den bidirektionalen Sync
   (setq org-reminders-reminders-to-org-file
         (expand-file-name "~/org/reminders.org"))
-  ;; Agenda-Datei einbinden damit Reminders im org-agenda erscheinen
+  ;; In org-agenda-files einbinden
   (add-to-list 'org-agenda-files
                (expand-file-name "~/org/reminders.org")))
 #+end_src
