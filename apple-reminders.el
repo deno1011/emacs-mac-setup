@@ -198,6 +198,21 @@ nil means use the first list returned by Apple Reminders."
                 (concat "osascript -l JavaScript -e "
                         (shell-quote-argument script)))))
 
+(defun my/apple-reminders--jxa-async (script &optional callback)
+  "Run JXA SCRIPT via osascript asynchronously.
+CALLBACK receives the stdout string when the process exits."
+  (let ((buf (generate-new-buffer " *ar-jxa*")))
+    (make-process
+     :name "ar-jxa"
+     :buffer buf
+     :command (list "osascript" "-l" "JavaScript" "-e" script)
+     :sentinel (lambda (proc _event)
+                 (unless (process-live-p proc)
+                   (let ((out (with-current-buffer buf
+                                (string-trim (buffer-string)))))
+                     (kill-buffer buf)
+                     (when callback (funcall callback out))))))))
+
 (defun my/apple-reminders--complete-in-apple (list-name id)
   "Mark Apple reminder ID in LIST-NAME as completed (async)."
   (my/apple-reminders--jxa-async
@@ -424,6 +439,7 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
         (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n")))
     (let ((my/apple-reminders--syncing t))
       (with-current-buffer (find-file-noselect file)
+        (org-save-outline-visibility t
         (let (done-pts new-pts reopen-pts apple-updates changed-positions)
           (org-map-entries
            (lambda ()
@@ -572,15 +588,14 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
                  (org-set-property "REMINDER_APPLE_MOD" m)))))
          nil nil)
         (save-buffer)
-        (org-overview)
         (dolist (m (nreverse changed-positions))
           (when (marker-position m)
             (goto-char m)
             (org-reveal)
-            (set-marker m nil)))
-        )))
+            (set-marker m nil))))
+        )
     (message "Reminders: %d←DONE  %d↑reopened  %d→Apple  %d←Apple  %d updated"
-             n-done n-reopened n-pushed n-pulled n-updated))
+             n-done n-reopened n-pushed n-pulled n-updated)))
 
 ;;; Async JXA core
 
@@ -619,21 +634,6 @@ app.lists().forEach(function(l){
 });
 JSON.stringify(out);"
   "JXA script returning all open Reminders as JSON. Uses batch property fetch for speed.")
-
-(defun my/apple-reminders--jxa-async (script &optional callback)
-  "Run JXA SCRIPT via osascript asynchronously.
-CALLBACK receives the stdout string when the process exits."
-  (let ((buf (generate-new-buffer " *ar-jxa*")))
-    (make-process
-     :name "ar-jxa"
-     :buffer buf
-     :command (list "osascript" "-l" "JavaScript" "-e" script)
-     :sentinel (lambda (proc _event)
-                 (unless (process-live-p proc)
-                   (let ((out (with-current-buffer buf
-                                (string-trim (buffer-string)))))
-                     (kill-buffer buf)
-                     (when callback (funcall callback out))))))))
 
 ;;; Render (sync, uses cache)
 
@@ -846,6 +846,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
              (when (file-exists-p file)
                (let ((my/apple-reminders--syncing t))
                  (with-current-buffer (find-file-noselect file)
+                   (org-save-outline-visibility t
                    (let (done-pts reopen-pts)
                      (org-map-entries
                       (lambda ()
@@ -968,15 +969,13 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                             (org-set-property "REMINDER_APPLE_MOD" md)))))
                     nil nil)
                    (save-buffer)
-                   ;; Restore overview fold so pull operations don't leave headings expanded
-                   (org-overview)
                    ;; Rebuild open agenda buffers so org-hd-marker stays fresh
                    (dolist (buf (buffer-list))
                      (when (buffer-live-p buf)
                        (with-current-buffer buf
                          (when (derived-mode-p 'org-agenda-mode)
                            (let ((inhibit-message t))
-                             (ignore-errors (org-agenda-redo)))))))))))
+                             (ignore-errors (org-agenda-redo)))))))))))))
          (error nil))))))
 
 (defun my/apple-reminders--start-sync-timer ()
