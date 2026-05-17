@@ -241,7 +241,9 @@ r.name=%s;r.body=%s;r.priority=%d;r.flagged=%s;%s"
            (if due
                (format "r.dueDate=new Date(%s);" (json-encode (concat due "T00:00:00")))
              "r.dueDate=null;"))))
-    (my/apple-reminders--jxa-async script callback)))
+    (if callback
+        (my/apple-reminders--jxa-async script callback)
+      (my/apple-reminders--jxa-run script))))
 
 (defun my/apple-reminders-migrate-flat-headings ()
   "One-time migration: move flat * TODO reminder entries under * ListName headings.
@@ -505,7 +507,8 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
             (let ((lname (alist-get 'list  entry))
                   (items (alist-get 'items entry)))
               (dolist (item items)
-                (when (not (member (alist-get 'id item) known-ids))
+                (when (and (not (member (alist-get 'id item) known-ids))
+                           (not (eq (alist-get 'completed item) t)))
                   (my/apple-reminders--goto-list-heading lname)
                   (push (point-marker) changed-positions)
                   (my/apple-reminders--insert-org-heading item lname)
@@ -554,11 +557,10 @@ app.lists().forEach(function(l){
       dates=rs.dueDate(),prios=rs.priority(),flags=rs.flagged(),compl=rs.completed();
   var items=[];
   for(var i=0;i<names.length;i++){
-    if(compl[i]) continue;
     var d=dates[i];
     items.push({id:ids[i],title:names[i],notes:bodies[i]||'',
                 due:(d&&d instanceof Date&&!isNaN(d)&&d.getFullYear()>1970)?(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')):null,
-                priority:prios[i],flagged:flags[i]});
+                priority:prios[i],flagged:flags[i],completed:!!compl[i]});
   }
   out.push({list:l.name(),items:items});
 });
@@ -800,11 +802,13 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                             (cond
                              ;; Apple completed → mark org DONE
                              ((and (member state '("TODO" "NEXT" "WAITING"))
-                                   (not (gethash id apple-by-id)))
+                                   (let ((a (gethash id apple-by-id)))
+                                     (or (null a) (eq (alist-get 'completed a) t))))
                               (push (point-marker) done-pts))
                              ;; Apple reopened → mark org TODO
                              ((and (member state '("DONE" "CANCELLED"))
-                                   (gethash id apple-by-id))
+                                   (let ((a (gethash id apple-by-id)))
+                                     (and a (not (eq (alist-get 'completed a) t)))))
                               (push (point-marker) reopen-pts))))))
                       nil nil)
                      (dolist (m (nreverse done-pts))
@@ -826,6 +830,7 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                         (let* ((id     (org-entry-get nil "REMINDER_ID"))
                                (aitem  (when id (gethash id apple-by-id))))
                           (when (and id aitem
+                                     (not (eq (alist-get 'completed aitem) t))
                                      (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
                             (let* ((a-prio    (or (alist-get 'priority aitem) 0))
                                    (a-due     (let ((d (alist-get 'due aitem)))
@@ -888,7 +893,8 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                        (let ((lname (alist-get 'list  entry))
                              (items (alist-get 'items entry)))
                          (dolist (item items)
-                           (when (not (member (alist-get 'id item) known-ids))
+                           (when (and (not (member (alist-get 'id item) known-ids))
+                                      (not (eq (alist-get 'completed item) t)))
                              (my/apple-reminders--goto-list-heading lname)
                              (my/apple-reminders--insert-org-heading item lname)
                              ;; Stamp hash so next save doesn't re-push what Apple just sent
