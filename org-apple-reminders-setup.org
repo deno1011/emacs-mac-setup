@@ -1,16 +1,20 @@
 #+TITLE: org-apple-reminders Setup
 #+STARTUP: overview
 
-Lädt und konfiguriert das [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] Paket für die
-bidirektionale Synchronisation zwischen org-mode und Apple Reminders.
+Loads and configures the [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] package for bidirectional
+sync between org-mode and Apple Reminders.
 
-Nur aktiv auf macOS (JXA/osascript erforderlich).
+macOS only (JXA/osascript required).
 
-* Installation
+* Installation and auto-update
 
-Installiert =org-apple-reminders= direkt von GitHub via =package-vc-install=
-(verfügbar ab Emacs 29). Sobald das Paket auf MELPA verfügbar ist, kann dieser
-Block durch =:ensure t= in der use-package-Konfiguration ersetzt werden.
+Installs =org-apple-reminders= from GitHub via =package-vc-install= (Emacs 29+).
+After installation, schedules a silent background update check 10 seconds after
+Emacs becomes idle — so the package is always at the latest =main= commit on the
+next startup, without slowing down init.
+
+Once the package is available on MELPA, replace this block with =:ensure t= in
+the use-package form below and remove the =package-vc-install= call.
 
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
@@ -18,19 +22,24 @@ Block durch =:ensure t= in der use-package-Konfiguration ersetzt werden.
     (package-vc-install
      '(org-apple-reminders
        :url "https://github.com/deno1011/org-apple-reminders"
-       :branch "main"))))
+       :branch "main")))
+  (run-with-idle-timer
+   10 nil
+   (lambda ()
+     (ignore-errors
+       (package-vc-upgrade 'org-apple-reminders)))))
 #+end_src
 
-* Konfiguration
+* Configuration
 
-Konfiguriert das Paket nach den Empfehlungen aus der README:
+Configures the package as recommended in the README:
 
-- =org-apple-reminders-sync-file= :: Die org-Datei die mit Apple Reminders
-  synchronisiert wird. Wird automatisch angelegt wenn sie noch nicht existiert.
-- =org-apple-reminders-auto-sync-interval= :: Sekunden zwischen automatischen
-  Hintergrund-Pulls (Standard: 300 = 5 Minuten).
-- =org-apple-reminders-setup= :: Startet Timer, richtet org-agenda und
-  org-capture ein. Muss einmal aufgerufen werden.
+- =org-apple-reminders-sync-file= :: The org file mirrored with Apple Reminders.
+  Created automatically on first sync.
+- =org-apple-reminders-auto-sync-interval= :: Seconds between background pulls
+  (default: 300 = 5 minutes).
+- =org-apple-reminders-setup= :: Starts the timer, registers org-agenda and
+  org-capture. Must be called once.
 
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
@@ -41,14 +50,14 @@ Konfiguriert das Paket nach den Empfehlungen aus der README:
 
     (org-apple-reminders-setup)
 
-    ;; Globale Tastenkürzel — von überall nutzbar
+    ;; Global key bindings — work from any buffer
     (global-set-key (kbd "C-c r d") #'org-apple-reminders-dashboard)
     (global-set-key (kbd "C-c r R") #'org-apple-reminders-sync)
     (global-set-key (kbd "C-c r a") #'org-apple-reminders-add)
     (global-set-key (kbd "C-c r l") #'org-apple-reminders-show-lists)
     (global-set-key (kbd "C-c r L") #'org-apple-reminders-create-list)
 
-    ;; Org-mode-spezifische Tastenkürzel
+    ;; Org-mode key bindings
     (with-eval-after-load 'org
       (define-key org-mode-map (kbd "C-c r p") #'org-apple-reminders-push-heading))))
 #+end_src
