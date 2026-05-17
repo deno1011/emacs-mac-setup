@@ -5,7 +5,7 @@
 Bidirectional integration between macOS Apple Reminders and Emacs/Org-mode.
 Uses JXA (JavaScript for Automation / osascript) directly — no third-party CLI required.
 
-Version: 1.6.16 | Loaded by: [[file:config.org][config.org]]
+Version: 1.7.0 | Loaded by: [[file:config.org][config.org]]
 
 * Overview
 :PROPERTIES:
@@ -331,6 +331,8 @@ DONE/CANCELLED → completed=true. TODO/NEXT/WAITING → completed=false (reopen
     (let ((id   (org-entry-get nil "REMINDER_ID"))
           (list (org-entry-get nil "REMINDER_LIST")))
       (when (and id list)
+        ;; Stamp hash for the new state so save hook / C-c r R can tell who last set it.
+        (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
         (cond
          ((member org-state '("DONE" "CANCELLED"))
           (my/apple-reminders--jxa-async
@@ -544,7 +546,13 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
           ((and (null id) (member state '("TODO" "NEXT" "WAITING")))
            (push (point-marker) new-pts))
           ((and id (member state '("DONE" "CANCELLED")))
-           (my/apple-reminders--complete-in-apple rlist id))
+           ;; Hash guard: only push if DONE state is new since last stamped push.
+           ;; Prevents save hook from perpetually re-closing reminders Apple reopened.
+           (let* ((cur-hash (my/apple-reminders--entry-hash))
+                  (stored   (org-entry-get nil "REMINDER_HASH")))
+             (unless (equal cur-hash stored)
+               (my/apple-reminders--complete-in-apple rlist id)
+               (org-set-property "REMINDER_HASH" cur-hash))))
           ((and id (member state '("TODO" "NEXT" "WAITING")))
            (let* ((hash   (my/apple-reminders--entry-hash))
                   (stored (org-entry-get nil "REMINDER_HASH")))
@@ -589,13 +597,13 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                           (dolist (item (alist-get 'items entry))
                             (puthash (alist-get 'id item) item ht)))
                         ht))
-         (n-done 0) (n-pushed 0) (n-pulled 0) (n-updated 0))
+         (n-done 0) (n-pushed 0) (n-pulled 0) (n-updated 0) (n-reopened 0))
     (unless (file-exists-p file)
       (with-temp-file file
         (insert "#+TITLE: Reminders\n#+STARTUP: overview\n#+TODO: TODO NEXT WAITING | DONE CANCELLED\n\n")))
     (let ((my/apple-reminders--syncing t))
       (with-current-buffer (find-file-noselect file)
-        (let (done-pts new-pts apple-updates changed-positions)
+        (let (done-pts new-pts reopen-pts apple-updates changed-positions)
           (org-map-entries
            (lambda ()
              (let* ((id    (org-entry-get nil "REMINDER_ID"))
@@ -609,7 +617,13 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                    (cond
                     ((and (member state '("DONE" "CANCELLED"))
                           apple (not (eq (alist-get 'completed apple) t)))
-                     (my/apple-reminders--complete-in-apple rlist id))
+                     ;; Hash guard: if DONE hash is current (org/sync set it), org wins.
+                     ;; If DONE hash is stale, Apple wins → reopen org.
+                     (let* ((cur-hash (my/apple-reminders--entry-hash))
+                            (stored   (org-entry-get nil "REMINDER_HASH")))
+                       (if (equal cur-hash stored)
+                           (my/apple-reminders--complete-in-apple rlist id)
+                         (push (point-marker) reopen-pts))))
                     ((and (member state '("TODO" "NEXT" "WAITING"))
                           (or (null apple) (eq (alist-get 'completed apple) t)))
                      (push (point-marker) done-pts))
@@ -677,7 +691,15 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
               (unless (eq a-flagged o-flagged)
                 (org-toggle-tag "flagged" (if a-flagged 'on 'off)))
               (setq n-updated (1+ n-updated))
-              (set-marker m nil))))
+              (set-marker m nil)))
+          ;; Apply Apple-reopen: DONE in org, open in Apple, stale hash → mark org TODO
+          (dolist (m (nreverse reopen-pts))
+            (goto-char m)
+            (push (point-marker) changed-positions)
+            (org-todo "TODO")
+            (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
+            (set-marker m nil)
+            (setq n-reopened (1+ n-reopened))))
         (let ((known-ids (let (ids)
                            (org-map-entries
                             (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
@@ -693,11 +715,11 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
                   (push (point-marker) changed-positions)
                   (my/apple-reminders--insert-org-heading item lname)
                   (setq n-pulled (1+ n-pulled)))))))
-        ;; Stamp REMINDER_HASH for all open entries so the next save hook is a no-op
+        ;; Stamp REMINDER_HASH for all synced entries (open and done) so save hook
+        ;; can tell whether state changed since this sync.
         (org-map-entries
          (lambda ()
-           (when (and (org-entry-get nil "REMINDER_ID")
-                      (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
+           (when (org-entry-get nil "REMINDER_ID")
              (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))))
          nil nil)
         (save-buffer)
@@ -708,8 +730,8 @@ the current state are skipped. New items get REMINDER_ID and REMINDER_HASH stamp
             (org-reveal)
             (set-marker m nil)))
         )))
-    (message "Reminders: %d←DONE  %d→Apple  %d←Apple  %d updated"
-             n-done n-pushed n-pulled n-updated))
+    (message "Reminders: %d←DONE  %d↑reopened  %d→Apple  %d←Apple  %d updated"
+             n-done n-reopened n-pushed n-pulled n-updated))
 #+end_src
 
 * Dashboard
@@ -1007,16 +1029,32 @@ file are added to =org-agenda-files= so all reminders appear in =M-x org-agenda=
              (when (file-exists-p file)
                (let ((my/apple-reminders--syncing t))
                  (with-current-buffer (find-file-noselect file)
-                   (let (done-pts)
+                   (let (done-pts reopen-pts)
                      (org-map-entries
                       (lambda ()
-                        (when (and (org-entry-get nil "REMINDER_ID")
-                                   (member (org-get-todo-state) '("TODO" "NEXT" "WAITING")))
-                          (unless (gethash (org-entry-get nil "REMINDER_ID") apple-by-id)
-                            (push (point-marker) done-pts))))
+                        (let* ((id    (org-entry-get nil "REMINDER_ID"))
+                               (state (org-get-todo-state)))
+                          (when id
+                            (cond
+                             ;; Apple completed → mark org DONE
+                             ((and (member state '("TODO" "NEXT" "WAITING"))
+                                   (not (gethash id apple-by-id)))
+                              (push (point-marker) done-pts))
+                             ;; Apple reopened → mark org TODO
+                             ((and (member state '("DONE" "CANCELLED"))
+                                   (gethash id apple-by-id))
+                              (push (point-marker) reopen-pts))))))
                       nil nil)
                      (dolist (m (nreverse done-pts))
-                       (goto-char m) (org-todo "DONE") (set-marker m nil)))
+                       (goto-char m)
+                       (org-todo "DONE")
+                       (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
+                       (set-marker m nil))
+                     (dolist (m (nreverse reopen-pts))
+                       (goto-char m)
+                       (org-todo "TODO")
+                       (org-set-property "REMINDER_HASH" (my/apple-reminders--entry-hash))
+                       (set-marker m nil)))
                    ;; Sync all fields from Apple → org for existing entries.
                    ;; Hash guard: only apply if org is unchanged since last push
                    ;; (cur-hash == stored REMINDER_HASH), so org edits always win.
