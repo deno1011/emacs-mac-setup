@@ -557,7 +557,7 @@ app.lists().forEach(function(l){
     if(compl[i]) continue;
     var d=dates[i];
     items.push({id:ids[i],title:names[i],notes:bodies[i]||'',
-                due:(d&&d instanceof Date&&!isNaN(d)&&d.getFullYear()>1970)?d.toISOString().slice(0,10):null,
+                due:(d&&d instanceof Date&&!isNaN(d)&&d.getFullYear()>1970)?(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')):null,
                 priority:prios[i],flagged:flags[i]});
   }
   out.push({list:l.name(),items:items});
