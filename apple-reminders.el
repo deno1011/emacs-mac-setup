@@ -311,11 +311,11 @@ Run once after upgrading from v1.4.x. Operates on `my/apple-reminders-sync-file'
 (defun my/apple-reminders--goto-list-heading (list-name)
   "Move point to end of LIST-NAME's subtree, creating the * heading if absent."
   (goto-char (point-min))
-  (if (re-search-forward (format "^\\* %s\\s-*$" (regexp-quote list-name)) nil t)
+  (if (re-search-forward (format "^\\* %s\\(?:[[:space:]]\\|$\\)" (regexp-quote list-name)) nil t)
       (org-end-of-subtree t t)
     (goto-char (point-max))
     (unless (bolp) (insert "\n"))
-    (insert (format "* %s\n" list-name)))
+    (insert (format "* %s [/]\n" list-name)))
   (unless (bolp) (insert "\n")))
 
 (defun my/apple-reminders--insert-org-heading (item list-name)
@@ -587,6 +587,13 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
                (when (stringp m)
                  (org-set-property "REMINDER_APPLE_MOD" m)))))
          nil nil)
+        (org-map-entries
+         (lambda ()
+           (unless (save-excursion (beginning-of-line)
+                                   (looking-at "[^\n]*\\[[0-9]*/[0-9]*\\]"))
+             (end-of-line) (insert " [/]"))
+           (org-update-statistics-cookies nil))
+         "LEVEL=1" nil)
         (save-buffer)
         (dolist (m (nreverse changed-positions))
           (when (marker-position m)
@@ -968,6 +975,13 @@ immediately on C-c , (priority), C-c C-d (deadline), C-c C-q (tags)."
                           (when (stringp md)
                             (org-set-property "REMINDER_APPLE_MOD" md)))))
                     nil nil)
+                   (org-map-entries
+                    (lambda ()
+                      (unless (save-excursion (beginning-of-line)
+                                              (looking-at "[^\n]*\\[[0-9]*/[0-9]*\\]"))
+                        (end-of-line) (insert " [/]"))
+                      (org-update-statistics-cookies nil))
+                    "LEVEL=1" nil)
                    (save-buffer)
                    ;; Rebuild open agenda buffers so org-hd-marker stays fresh
                    (dolist (buf (buffer-list))
