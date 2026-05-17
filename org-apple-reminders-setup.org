@@ -23,11 +23,18 @@ the use-package form below and remove the =package-vc-install= call.
      '(org-apple-reminders
        :url "https://github.com/deno1011/org-apple-reminders"
        :branch "main")))
-  (run-with-idle-timer
-   10 nil
-   (lambda ()
-     (ignore-errors
-       (package-vc-upgrade 'org-apple-reminders)))))
+  ;; Pull latest main asynchronously at startup — non-blocking, silent if offline.
+  ;; Updated code is active from the next Emacs session.
+  (when-let* ((lib (locate-library "org-apple-reminders"))
+              (dir (file-name-directory lib)))
+    (make-process
+     :name "org-ar-update"
+     :command (list "git" "-C" dir "pull" "--rebase" "--quiet")
+     :noquery t
+     :sentinel (lambda (proc _)
+                 (when (and (not (process-live-p proc))
+                            (zerop (process-exit-status proc)))
+                   (message "org-apple-reminders: updated — restart to apply"))))))
 #+end_src
 
 * Configuration
