@@ -66,5 +66,6 @@ Configures the package as recommended in the README:
 
     ;; Org-mode key bindings
     (with-eval-after-load 'org
-      (define-key org-mode-map (kbd "C-c r p") #'org-apple-reminders-push-heading))))
+      (define-key org-mode-map (kbd "C-c r p") #'org-apple-reminders-push-heading)
+      (define-key org-mode-map (kbd "C-c r D") #'org-apple-reminders-delete-reminder))))
 #+end_src
