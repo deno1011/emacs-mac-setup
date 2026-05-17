@@ -517,7 +517,7 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
                              (let ((new-mod (my/apple-reminders--update-in-apple rlist id vals)))
                                (when (stringp new-mod)
                                  (org-set-property "REMINDER_ORG_MOD" new-mod)))
-                             (setq n-updated (1+ n-updated))))))))))))))
+                             (setq n-updated (1+ n-updated)))))))))))))
            nil nil)
           (dolist (m (nreverse done-pts))
             (goto-char m)
@@ -560,7 +560,7 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
             (push (point-marker) changed-positions)
             (org-todo "TODO")
             (set-marker m nil)
-            (setq n-reopened (1+ n-reopened))))
+            (setq n-reopened (1+ n-reopened)))
         (let ((known-ids (let (ids)
                            (org-map-entries
                             (lambda () (when-let (id (org-entry-get nil "REMINDER_ID"))
@@ -592,8 +592,8 @@ New items get REMINDER_ID stamped back. REMINDER_ORG_MOD is set to Apple's post-
           (when (marker-position m)
             (goto-char m)
             (org-reveal)
-            (set-marker m nil))))
-        )
+            (set-marker m nil)))))
+        ))
     (message "Reminders: %d←DONE  %d↑reopened  %d→Apple  %d←Apple  %d updated"
              n-done n-reopened n-pushed n-pulled n-updated)))
 
