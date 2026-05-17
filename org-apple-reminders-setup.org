@@ -1,0 +1,54 @@
+#+TITLE: org-apple-reminders Setup
+#+STARTUP: overview
+
+Lädt und konfiguriert das [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] Paket für die
+bidirektionale Synchronisation zwischen org-mode und Apple Reminders.
+
+Nur aktiv auf macOS (JXA/osascript erforderlich).
+
+* Installation
+
+Installiert =org-apple-reminders= direkt von GitHub via =package-vc-install=
+(verfügbar ab Emacs 29). Sobald das Paket auf MELPA verfügbar ist, kann dieser
+Block durch =:ensure t= in der use-package-Konfiguration ersetzt werden.
+
+#+begin_src emacs-lisp :tangle yes
+(when (eq system-type 'darwin)
+  (unless (package-installed-p 'org-apple-reminders)
+    (package-vc-install
+     '(org-apple-reminders
+       :url "https://github.com/deno1011/org-apple-reminders"
+       :branch "main"))))
+#+end_src
+
+* Konfiguration
+
+Konfiguriert das Paket nach den Empfehlungen aus der README:
+
+- =org-apple-reminders-sync-file= :: Die org-Datei die mit Apple Reminders
+  synchronisiert wird. Wird automatisch angelegt wenn sie noch nicht existiert.
+- =org-apple-reminders-auto-sync-interval= :: Sekunden zwischen automatischen
+  Hintergrund-Pulls (Standard: 300 = 5 Minuten).
+- =org-apple-reminders-setup= :: Startet Timer, richtet org-agenda und
+  org-capture ein. Muss einmal aufgerufen werden.
+
+#+begin_src emacs-lisp :tangle yes
+(when (eq system-type 'darwin)
+  (use-package org-apple-reminders
+    :ensure nil
+    :config
+    (setq org-apple-reminders-sync-file "~/org/reminders.org")
+
+    (org-apple-reminders-setup)
+
+    ;; Globale Tastenkürzel — von überall nutzbar
+    (global-set-key (kbd "C-c r d") #'org-apple-reminders-dashboard)
+    (global-set-key (kbd "C-c r R") #'org-apple-reminders-sync)
+    (global-set-key (kbd "C-c r a") #'org-apple-reminders-add)
+    (global-set-key (kbd "C-c r l") #'org-apple-reminders-show-lists)
+    (global-set-key (kbd "C-c r L") #'org-apple-reminders-create-list)
+
+    ;; Org-mode-spezifische Tastenkürzel
+    (with-eval-after-load 'org
+      (define-key org-mode-map (kbd "C-c r p") #'org-apple-reminders-push-heading))))
+#+end_src
