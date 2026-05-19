@@ -48,9 +48,9 @@ Configures the package as recommended in the README:
 - =org-apple-reminders-setup= :: Starts the timer, registers org-agenda and
   org-capture, and binds the =C-c r= command map. Must be called once.
 
-The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r a= add,
-=C-c r p= push heading, =C-c r d= remove from Apple, =C-c r D= delete, …), so
-no manual =global-set-key= calls are needed.
+The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r p= /
+=C-c r m= push heading or region, =C-c r d= remove from Apple, =C-c r D=
+delete, …), so no manual =global-set-key= calls are needed.
 
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
@@ -58,6 +58,10 @@ no manual =global-set-key= calls are needed.
     :ensure nil
     :config
     (setq org-apple-reminders-sync-file "~/org/reminders.org")
+
+    ;; nil = sync all Apple Reminders lists (the default — not restricted).
+    ;; Set to a list of names to restrict, or pick interactively with `C-c r i'.
+    (setq org-apple-reminders-included-lists nil)
 
     ;; org-apple-reminders-setup installs the C-c r command map itself.
     (org-apple-reminders-setup)))
