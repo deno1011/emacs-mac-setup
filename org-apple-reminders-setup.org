@@ -46,7 +46,11 @@ Configures the package as recommended in the README:
 - =org-apple-reminders-auto-sync-interval= :: Seconds between background pulls
   (default: 300 = 5 minutes).
 - =org-apple-reminders-setup= :: Starts the timer, registers org-agenda and
-  org-capture. Must be called once.
+  org-capture, and binds the =C-c r= command map. Must be called once.
+
+The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r a= add,
+=C-c r p= push heading, =C-c r d= remove from Apple, =C-c r D= delete, …), so
+no manual =global-set-key= calls are needed.
 
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
@@ -55,17 +59,6 @@ Configures the package as recommended in the README:
     :config
     (setq org-apple-reminders-sync-file "~/org/reminders.org")
 
-    (org-apple-reminders-setup)
-
-    ;; Global key bindings — work from any buffer
-    (global-set-key (kbd "C-c r d") #'org-apple-reminders-dashboard)
-    (global-set-key (kbd "C-c r R") #'org-apple-reminders-sync)
-    (global-set-key (kbd "C-c r a") #'org-apple-reminders-add)
-    (global-set-key (kbd "C-c r l") #'org-apple-reminders-show-lists)
-    (global-set-key (kbd "C-c r L") #'org-apple-reminders-create-list)
-
-    ;; Org-mode key bindings
-    (with-eval-after-load 'org
-      (define-key org-mode-map (kbd "C-c r p") #'org-apple-reminders-push-heading)
-      (define-key org-mode-map (kbd "C-c r D") #'org-apple-reminders-delete-reminder))))
+    ;; org-apple-reminders-setup installs the C-c r command map itself.
+    (org-apple-reminders-setup)))
 #+end_src
