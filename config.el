@@ -1,5 +1,3 @@
-;; apple-reminders.org deactivated — replaced by org-apple-reminders package
-;; org-reminders-setup.org deactivated — ginqi7/org-reminders too buggy
 (defvar my/config-split-files '("core.org" "org-setup.org" "gptel-setup.org"))
 (when (eq system-type 'darwin)
   (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
