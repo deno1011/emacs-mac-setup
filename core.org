@@ -91,6 +91,8 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (use-package doom-themes
   :demand t
   :config
+  ;; Avoid theme-inheritance cycle (e.g. modus-vivendi + doom-one): disable any already-loaded themes first.
+  (mapc #'disable-theme custom-enabled-themes)
   (load-theme 'doom-one t)
   (doom-themes-org-config))
 
