@@ -17,15 +17,9 @@ GIT_EMAIL=""
 # Example: GH_USER="janedoe"
 GH_USER=""
 
-# Private GitHub repo containing setup-emacs-mac.conf (optional)
-# Repo name only — GH_USER is prepended automatically (same as GH_REPO)
-# Leave empty if you have no private conf repo
-# Example: CONF_REPO="mac-setup-conf"  →  github.com/janedoe/mac-setup-conf
-CONF_REPO=""
-
 # Name of the GitHub repo containing your Emacs config
 # Repo name only, no username — GH_USER is prepended automatically
-# Example: GH_REPO="emacs-config"  →  github.com/janedoe/emacs-config
+# Example: GH_REPO="emacs-data"  →  github.com/janedoe/emacs-data
 GH_REPO=""
 
 # Name of the Bitwarden item containing the git-crypt key

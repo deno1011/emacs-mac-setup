@@ -3,7 +3,7 @@
 # Can be run standalone at any time: bash ~/fill-config.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 TEMPLATE="$SCRIPT_DIR/setup-emacs-mac.conf.template"
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -44,8 +44,7 @@ _ASKED_NOTHING=false
 ask_value GIT_NAME            "Full name          (e.g. Jane Smith)"                   ""
 ask_value GIT_EMAIL           "Email              (e.g. jane@example.com)"             ""
 ask_value GH_USER             "GitHub username    (e.g. janedoe)"                      ""
-ask_value GH_REPO             "Emacs config repo  (e.g. emacs-config)"                 "emacs-config"
-ask_value CONF_REPO           "Private conf repo  (e.g. mac-setup-conf)"               "mac-setup-conf"
+ask_value GH_REPO             "Emacs config repo  (e.g. emacs-data)"                   "emacs-data"
 ask_value BW_FIELD            "Bitwarden field    (custom field name in all BW entries)" "Key"
 ask_value BW_ITEM             "git-crypt item     (Bitwarden entry name)"              "emacs-git-crypt-key"
 ask_value BW_GH_ITEM          "GitHub token item  (Bitwarden entry name)"              "github-cli-token"
@@ -56,6 +55,17 @@ if [ "$_HAD_MISSING" = true ]; then
   echo ""
   echo "  Config saved to $CONFIG_FILE"
   echo ""
-  grep -E "^(GIT_NAME|GIT_EMAIL|GH_USER|GH_REPO|CONF_REPO)=" "$CONFIG_FILE"
+  grep -E "^(GIT_NAME|GIT_EMAIL|GH_USER|GH_REPO)=" "$CONFIG_FILE"
   echo ""
+
+  # Sync conf to the data repo's config/ subfolder if available
+  _GH_REPO=$(_get_value "GH_REPO"); _GH_REPO="${_GH_REPO:-emacs-data}"
+  _DATA_DIR="$HOME/$_GH_REPO"
+  if [ -d "$_DATA_DIR/config" ]; then
+    cp "$CONFIG_FILE" "$_DATA_DIR/config/setup-emacs-mac.conf"
+    git -C "$_DATA_DIR" add "config/setup-emacs-mac.conf" 2>/dev/null || true
+    git -C "$_DATA_DIR" commit -m "chore: update setup-emacs-mac.conf" 2>/dev/null || true
+    echo "  Synced to ~/$_GH_REPO/config/setup-emacs-mac.conf"
+  fi
+  unset _GH_REPO _DATA_DIR
 fi

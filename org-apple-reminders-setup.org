@@ -1,0 +1,68 @@
+#+TITLE: org-apple-reminders Setup
+#+STARTUP: overview
+
+Loads and configures the [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] package for bidirectional
+sync between org-mode and Apple Reminders.
+
+macOS only (JXA/osascript required).
+
+* Installation and auto-update
+
+Installs =org-apple-reminders= from GitHub via =package-vc-install= (Emacs 29+).
+After installation, schedules a silent background update check 10 seconds after
+Emacs becomes idle — so the package is always at the latest =main= commit on the
+next startup, without slowing down init.
+
+Once the package is available on MELPA, replace this block with =:ensure t= in
+the use-package form below and remove the =package-vc-install= call.
+
+#+begin_src emacs-lisp :tangle yes
+(when (eq system-type 'darwin)
+  (unless (package-installed-p 'org-apple-reminders)
+    (package-vc-install
+     '(org-apple-reminders
+       :url "https://github.com/deno1011/org-apple-reminders"
+       :branch "main")))
+  ;; Pull latest main asynchronously at startup — non-blocking, silent if offline.
+  ;; Updated code is active from the next Emacs session.
+  (when-let* ((lib (locate-library "org-apple-reminders"))
+              (dir (file-name-directory lib)))
+    (make-process
+     :name "org-ar-update"
+     :command (list "git" "-C" dir "pull" "--rebase" "--quiet")
+     :noquery t
+     :sentinel (lambda (proc _)
+                 (when (and (not (process-live-p proc))
+                            (zerop (process-exit-status proc)))
+                   (message "org-apple-reminders: updated — restart to apply"))))))
+#+end_src
+
+* Configuration
+
+Configures the package as recommended in the README:
+
+- =org-apple-reminders-sync-file= :: The org file mirrored with Apple Reminders.
+  Created automatically on first sync.
+- =org-apple-reminders-auto-sync-interval= :: Seconds between background pulls
+  (default: 300 = 5 minutes).
+- =org-apple-reminders-setup= :: Starts the timer, registers org-agenda and
+  org-capture, and binds the =C-c r= command map. Must be called once.
+
+The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r p= /
+=C-c r m= push heading or region, =C-c r d= remove from Apple, =C-c r D=
+delete, …), so no manual =global-set-key= calls are needed.
+
+#+begin_src emacs-lisp :tangle yes
+(when (eq system-type 'darwin)
+  (use-package org-apple-reminders
+    :ensure nil
+    :config
+    (setq org-apple-reminders-sync-file "~/org/reminders.org")
+
+    ;; nil = sync all Apple Reminders lists (the default — not restricted).
+    ;; Set to a list of names to restrict, or pick interactively with `C-c r i'.
+    (setq org-apple-reminders-included-lists nil)
+
+    ;; org-apple-reminders-setup installs the C-c r command map itself.
+    (org-apple-reminders-setup)))
+#+end_src

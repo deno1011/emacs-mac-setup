@@ -32,7 +32,7 @@ _other_emacs_installed() {
 }
 
 # --- Load configuration ---
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "ERROR: Config file not found: $CONFIG_FILE"
   exit 1
@@ -97,17 +97,13 @@ if ! _other_emacs_installed; then
 
   echo "==> Removing brew packages installed by setup..."
   _pkg_remove formula bitwarden-cli
-  _pkg_remove formula gh
   _pkg_remove formula git-crypt
-
-  echo "==> Logging out GitHub CLI..."
-  gh auth logout --hostname github.com 2>/dev/null && echo "    gh auth removed." || echo "    gh not authenticated."
 
   echo "==> Clearing global git identity..."
   git config --global --unset user.email 2>/dev/null && echo "    git email cleared." || echo "    git email not set."
   git config --global --unset user.name 2>/dev/null && echo "    git name cleared." || echo "    git name not set."
 else
-  echo "  Another Emacs variant still installed — keeping shared resources (gh, iCloud repo)."
+  echo "  Another Emacs variant still installed — keeping shared resources (iCloud repo)."
 fi
 
 echo "==> Cleaning Homebrew cache..."
@@ -117,4 +113,4 @@ brew cleanup 2>/dev/null || true
 echo ""
 echo "Uninstall complete. Environment is clean."
 echo "The setup script remains at: ~/setup-emacs-docker-mac.sh"
-echo "The config file remains at:  ~/setup-emacs-mac.conf"
+echo "The config file remains at:  ~/emacs-mac-setup/setup-emacs-mac.conf"

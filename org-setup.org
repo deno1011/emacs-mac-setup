@@ -10,9 +10,11 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (use-package org
   :ensure nil
   :config
-  (setq org-directory "~/emacs-config/org"
-        org-default-notes-file "~/emacs-config/org/inbox.org"
-        org-agenda-files '("~/emacs-config/org")
+  (setq org-directory (expand-file-name "data/org/" my/data-dir)
+        org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
+        org-agenda-files (append (list (expand-file-name "data/org/" my/data-dir))
+                                 (when (eq system-type 'darwin)
+                                   (list (expand-file-name "~/org/reminders.org"))))
         org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
@@ -164,24 +166,25 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 
 * Capture Templates
 #+begin_src emacs-lisp
-(setq org-capture-templates
-      '(("i" "Inbox"     entry (file "~/emacs-config/org/inbox.org")
-         "* %?\n%U\n")
-        ("t" "Todo"      entry (file "~/emacs-config/org/refile.org")
-         "* TODO %?\n%U\n%a\n" :clock-in t :clock-resume t)
-        ("r" "Respond"   entry (file "~/emacs-config/org/refile.org")
-         "* NEXT Respond to %:from on %:subject\nSCHEDULED: %t\n%U\n%a\n"
-         :clock-in t :clock-resume t :immediate-finish t)
-        ("n" "Note"      entry (file "~/emacs-config/org/refile.org")
-         "* %? :NOTE:\n%U\n%a\n" :clock-in t :clock-resume t)
-        ("j" "Journal"   entry (file+datetree "~/emacs-config/org/diary.org")
-         "* %?\n%U\n" :clock-in t :clock-resume t)
-        ("m" "Meeting"   entry (file "~/emacs-config/org/refile.org")
-         "* MEETING with %? :MEETING:\n%U" :clock-in t :clock-resume t)
-        ("p" "Phone"     entry (file "~/emacs-config/org/refile.org")
-         "* PHONE %? :PHONE:\n%U" :clock-in t :clock-resume t)
-        ("h" "Habit"     entry (file "~/emacs-config/org/refile.org")
-         "* NEXT %?\n%U\n%a\nSCHEDULED: %(format-time-string \"%<<%Y-%m-%d %a .+1d/3d>>\")\n:PROPERTIES:\n:STYLE: habit\n:REPEAT_TO_STATE: NEXT\n:END:\n")))
+(let ((org-d (expand-file-name "data/org/" my/data-dir)))
+  (setq org-capture-templates
+        `(("i" "Inbox"     entry (file ,(expand-file-name "inbox.org"  org-d))
+           "* %?\n%U\n")
+          ("t" "Todo"      entry (file ,(expand-file-name "refile.org" org-d))
+           "* TODO %?\n%U\n%a\n" :clock-in t :clock-resume t)
+          ("r" "Respond"   entry (file ,(expand-file-name "refile.org" org-d))
+           "* NEXT Respond to %:from on %:subject\nSCHEDULED: %t\n%U\n%a\n"
+           :clock-in t :clock-resume t :immediate-finish t)
+          ("n" "Note"      entry (file ,(expand-file-name "refile.org" org-d))
+           "* %? :NOTE:\n%U\n%a\n" :clock-in t :clock-resume t)
+          ("j" "Journal"   entry (file+datetree ,(expand-file-name "diary.org"  org-d))
+           "* %?\n%U\n" :clock-in t :clock-resume t)
+          ("m" "Meeting"   entry (file ,(expand-file-name "refile.org" org-d))
+           "* MEETING with %? :MEETING:\n%U" :clock-in t :clock-resume t)
+          ("p" "Phone"     entry (file ,(expand-file-name "refile.org" org-d))
+           "* PHONE %? :PHONE:\n%U" :clock-in t :clock-resume t)
+          ("h" "Habit"     entry (file ,(expand-file-name "refile.org" org-d))
+           "* NEXT %?\n%U\n%a\nSCHEDULED: %(format-time-string \"%<<%Y-%m-%d %a .+1d/3d>>\")\n:PROPERTIES:\n:STYLE: habit\n:REPEAT_TO_STATE: NEXT\n:END:\n"))))
 #+end_src
 
 * Refile Settings
@@ -523,6 +526,10 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 
 * Clocking
 #+begin_src emacs-lisp
+(require 'org-clock)
+(unless (file-exists-p org-clock-persist-file)
+  (make-directory (file-name-directory org-clock-persist-file) t)
+  (write-region "" nil org-clock-persist-file))
 (org-clock-persistence-insinuate)
 (setq org-clock-history-length 23)
 (setq org-clock-in-resume t)
@@ -844,7 +851,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (setq org-agenda-skip-scheduled-if-done t)
 (setq org-agenda-skip-timestamp-if-done t)
 (setq org-agenda-include-diary nil)
-(setq org-agenda-diary-file "~/emacs-config/org/diary.org")
+(setq org-agenda-diary-file (expand-file-name "data/org/diary.org" my/data-dir))
 (setq org-agenda-insert-diary-extract-time t)
 (setq org-agenda-text-search-extra-files '(agenda-archives))
 (setq org-agenda-repeating-timestamp-show-all t)
@@ -1313,3 +1320,7 @@ sequenceDiagram
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src
+
+* Apple Reminders
+
+Konfiguriert in [[file:org-reminders-setup.org][org-reminders-setup.org]] — wird von [[file:config.org][config.org]] nur auf macOS geladen.

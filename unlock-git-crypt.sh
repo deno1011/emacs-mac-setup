@@ -1,13 +1,14 @@
 #!/bin/bash
 set -e
 
-CONFIG_FILE="$HOME/setup-emacs-mac.conf"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
 source "$CONFIG_FILE"
 
 ICLOUD_REPO_PATH="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO"
 
 echo "==> Unlocking Bitwarden..."
-source "$HOME/bw-unlock.sh"
+source "$SCRIPT_DIR/bw-unlock.sh"
 bw_ensure_session || exit 1
 
 echo "==> Fetching git-crypt key from Bitwarden (field: $BW_FIELD)..."
@@ -20,6 +21,10 @@ fi
 
 echo "==> Unlocking git-crypt repo..."
 echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey
+if ! git -C "$ICLOUD_REPO_PATH" diff --quiet; then
+  echo "    Restoring data/org/ to clean state (encrypted blobs — safe to discard)..."
+  git -C "$ICLOUD_REPO_PATH" checkout -- data/org/ 2>/dev/null || true
+fi
 git -C "$ICLOUD_REPO_PATH" crypt unlock /tmp/gckey
 rm -f /tmp/gckey
 
