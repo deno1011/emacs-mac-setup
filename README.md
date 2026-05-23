@@ -468,6 +468,11 @@ The package currently contains the extracted Emacs/gptel runtime: backend
 registration, local Ollama/Qwen defaults, prompt directives, web helpers,
 response execution, tools, workspace context, and the experimental planner loop.
 
+Package development is literate: edit
+`gptel-agent-runtime.org` in the package repo, then tangle
+`gptel-agent-runtime.el`. The `.el` file is the generated package artifact used
+by `package-vc-install`; it should not be the primary development target.
+
 ### Backends
 
 Multiple AI backends are configured by the package and switchable from Emacs:
