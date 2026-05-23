@@ -2839,3 +2839,164 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   (setq gptel-use-tools t)
   (setq gptel-tools (my/gptel-tools-all)))
 #+end_src
+
+* Planner Loop
+
+This section implements the autonomous loop that orchestrates tasks, plans,
+and tool executions. It wires the previously defined skeletons into a
+functional agent.
+
+** Runtime Controller
+
+The controller manages the lifecycle of an agent session, ensuring iterations
+stay within bounds and results are persisted.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar gptel-agent-runtime--current-session nil
+  "The active agent session object.")
+
+(defun gptel-agent-runtime-start (goal &optional role)
+  "Start a new autonomous agent session to achieve GOAL with ROLE."
+  (interactive "sAgent Goal: ")
+  (let* ((task (gptel-agent-runtime-create-task "Main Task" goal))
+         (session (gptel-agent-runtime-session-create
+                   :id (format "session-%s" (format-time-string "%Y%m%d%H%M%S"))
+                   :role (or role gptel-agent-runtime-default-role)
+                   :root-task task
+                   :current-task task
+                   :iteration 0
+                   :started-at (gptel-agent-runtime--timestamp)
+                   :updated-at (gptel-agent-runtime--timestamp))))
+    (setq gptel-agent-runtime--current-session session)
+    (message "Agent session started: %s" (gptel-agent-runtime-session-id session))
+    (gptel-agent-runtime--step)))
+
+(defun gptel-agent-runtime--step ()
+  "Execute one iteration of the agent loop."
+  (let ((session gptel-agent-runtime--current-session))
+    (if (>= (gptel-agent-runtime-session-iteration session)
+            gptel-agent-runtime-max-iterations)
+        (message "Agent reached maximum iterations.")
+      (setf (gptel-agent-runtime-session-iteration session)
+            (1+ (gptel-agent-runtime-session-iteration session)))
+      (gptel-agent-runtime--observe-and-plan))))
+
+(defun gptel-agent-runtime--observe-and-plan ()
+  "Current state: Agent observes workspace and requests a plan."
+  (let* ((session gptel-agent-runtime--current-session)
+         (task    (gptel-agent-runtime-session-current-task session))
+         (ctx     (my/workspace-context-string)))
+    (message "Agent [%s] is planning..." (gptel-agent-runtime-session-id session))
+    (gptel-request
+     (format "GOAL: %s\n\nCONTEXT:\n%s" (gptel-agent-runtime-task-goal task) ctx)
+     :system (alist-get 'emacs-planner gptel-directives)
+     :callback (lambda (response info)
+                 (if (not response)
+                     (message "Planner Error: No response from LLM")
+                   (gptel-agent-runtime--handle-plan-response response session))))))
+
+(defun gptel-agent-runtime--handle-plan-response (response session)
+  "Parse LLM RESPONSE into steps and transition to ACT phase."
+  (let* ((steps (gptel-agent-runtime--parse-plan response))
+         (task  (gptel-agent-runtime-session-current-task session))
+         (plan  (gptel-agent-runtime-create-plan task steps)))
+    ;; Log the planning result
+    (push (format "Iteration %d: Plan created with %d steps."
+                  (gptel-agent-runtime-session-iteration session)
+                  (length steps))
+          (gptel-agent-runtime-session-decisions session))
+    ;; Store the plan in task notes
+    (setf (gptel-agent-runtime-task-notes task) plan)
+    (message "Plan ready (%d steps). Transitioning to ACT phase." (length steps))
+    (gptel-agent-runtime--act)))
+
+(defun gptel-agent-runtime--parse-plan (text)
+  "Parse TEXT (bulleted list) into a list of gptel-agent-runtime-plan-step structs."
+  (let (steps)
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      ;; Regex matches the example format in the emacs-planner directive
+      (while (re-search-forward "^- TITLE: \(.*\)\n  RATIONALE: \(.*\)\n  TOOL: \(.*\)" nil t)
+        (push (gptel-agent-runtime-create-plan-step
+               (match-string 1)
+               (match-string 2)
+               (match-string 3))
+              steps)))
+    (nreverse steps)))
+
+(defun gptel-agent-runtime--act ()
+  "Execute the next step in the plan with tool dispatch and reflection."
+  (let* ((session gptel-agent-runtime--current-session)
+         (task    (gptel-agent-runtime-session-current-task session))
+         (plan    (gptel-agent-runtime-task-notes task))
+         (step    (gptel-agent-runtime-next-plan-step plan)))
+    (if (not step)
+        (gptel-agent-runtime--finalize-task task session)
+      (message "Agent [%s] executing: %s"
+               (gptel-agent-runtime-session-id session)
+               (gptel-agent-runtime-plan-step-title step))
+      (let ((tool-name (gptel-agent-runtime-plan-step-suggested-tool step)))
+        (gptel-agent-runtime--dispatch-action tool-name step session)))))
+
+(defun gptel-agent-runtime--dispatch-action (tool-name step session)
+  "Execute TOOL-NAME and capture the result for reflection."
+  (condition-case err
+      (let* ((tool (cl-find tool-name (my/gptel-tools-all)
+                            :key (lambda (t) (if (fboundp 'gptel-tool-name)
+                                                (gptel-tool-name t)
+                                              (plist-get t :name)))
+                            :test #'equal))
+             (result-str (if tool
+                            (gptel-agent-runtime--call-native-tool tool step)
+                          (gptel-agent-runtime--fallback-execution tool-name step))))
+        (gptel-agent-runtime--reflect step result-str session))
+    (error
+     (gptel-agent-runtime--handle-execution-error step err session))))
+
+(defun gptel-agent-runtime--reflect (step result session)
+  "Observe the RESULT of STEP and decide if the plan needs adaptation."
+  (let ((observation (format "Step '%s' produced:\n%s"
+                             (gptel-agent-runtime-plan-step-title step)
+                             result)))
+    (push observation (gptel-agent-runtime-session-observations session))
+    (setf (gptel-agent-runtime-plan-step-status step) 'done)
+    (setf (gptel-agent-runtime-plan-step-result step) result)
+    
+    (message "Reflecting on result...")
+    ;; Here we trigger the LLM to verify the result
+    (gptel-request
+     (format "GOAL: %s\nOBSERVATION: %s\n\nDid this step succeed? What is the next logical action?"
+             (gptel-agent-runtime-task-goal (gptel-agent-runtime-session-current-task session))
+             observation)
+     :system "You are an Agent Critic. Analyze the result and confirm if we should continue or re-plan."
+     :callback (lambda (response info)
+                 (message "Reflection: %s" response)
+                 (gptel-agent-runtime--step)))))
+
+(defun gptel-agent-runtime--finalize-task (task session)
+  "Handle completion of the current task."
+  (setf (gptel-agent-runtime-task-status task) 'completed)
+  (if (gptel-agent-runtime-task-parent-id task)
+      (message "Sub-task completed. Returning to parent context.")
+    (message "Goal achieved: %s" (gptel-agent-runtime-task-goal task))
+    (gptel-agent-runtime-memory-write-session session)))
+
+(defun gptel-agent-runtime--call-native-tool (tool step)
+  "Execute a native gptel TOOL. (Stub for actual parameter extraction)"
+  (format "Executed native tool: %s" (if (fboundp 'gptel-tool-name) (gptel-tool-name tool) (plist-get tool :name))))
+
+(defun gptel-agent-runtime--fallback-execution (name step)
+  "Attempt to execute NAME as an elisp function or shell command."
+  (if (fboundp (intern-soft name))
+      (format "Executed elisp: %s" (funcall (intern name)))
+    (format "Error: Unknown tool or function: %s" name)))
+
+(defun gptel-agent-runtime--handle-execution-error (step err session)
+  (let ((err-msg (error-message-string err)))
+    (push (format "Error in '%s': %s" (gptel-agent-runtime-plan-step-title step) err-msg)
+          (gptel-agent-runtime-session-tool-results session))
+    (setf (gptel-agent-runtime-plan-step-status step) 'failed)
+    (message "Execution failed: %s. Re-planning..." err-msg)
+    (run-with-timer 1 nil #'gptel-agent-runtime--step)))
+#+end_src
