@@ -55,7 +55,8 @@ open "$HOME/Applications/GUI OrbStack Emacs.app"   # OrbStack
 
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `deno1011/emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org`, `setup-emacs-mac.conf.template` |
+| `deno1011/emacs-mac-setup` | public | All setup, uninstall, and utility scripts. Also: `init.el`, `config.org` (index), `core.org`, `org-setup.org`, `gptel-setup.org` loader, `setup-emacs-mac.conf.template` |
+| `deno1011/gptel-agent-runtime` | public | Standalone Emacs/gptel AI runtime package. Installed from Git by `gptel-setup.org`; intended to become MELPA-ready later. |
 
 **Your repos** (created under your own GitHub account during bootstrap):
 
@@ -81,7 +82,7 @@ Scripts download to whatever folder you run `bootstrap.sh` from.
 | `config.org` | Emacs config index — entry point linking to the three config files below |
 | `core.org` | Base config: UI, font, version control, protected files, auto-commit, startup sync |
 | `org-setup.org` | Org mode: agenda, capture templates, tags, clocking, export, LaTeX |
-| `gptel-setup.org` | AI assistant: gptel backends, tools, claude-executor, workspace context |
+| `gptel-setup.org` | Thin loader that installs/updates `deno1011/gptel-agent-runtime` via `package-vc-install` |
 | `fill-config.sh` | Interactive guided config fill |
 | `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
 | `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
@@ -454,33 +455,69 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 
 ## AI Integration
 
-The configuration includes a fully wired AI assistant inside Emacs via **gptel**, extended with a custom **claude-executor** layer that makes AI responses executable — not just readable.
+The setup now loads the AI assistant through a separate package:
+
+[`deno1011/gptel-agent-runtime`](https://github.com/deno1011/gptel-agent-runtime)
+
+`gptel-setup.org` is intentionally only a thin loader. It installs the package
+from Git with `package-vc-install`, schedules a quiet background `git pull`, and
+then requires the package. This keeps the installer repo small while the AI
+runtime can evolve independently and later be prepared for MELPA.
+
+The package currently contains the extracted Emacs/gptel runtime: backend
+registration, local Ollama/Qwen defaults, prompt directives, web helpers,
+response execution, tools, workspace context, and the experimental planner loop.
 
 ### Backends
 
-Multiple AI backends are pre-configured and switchable at any time (`M-x gptel-send` or `C-c RET`):
+Multiple AI backends are configured by the package and switchable from Emacs:
 
 | Backend | Models |
 |---|---|
 | **Claude** (Anthropic) | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
 | **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
-| **LM Studio** | Any local model loaded in LM Studio |
+| **LM Studio** | Local OpenAI-compatible models |
+| **MLX** | Local Apple Silicon models |
+| **Ollama** | Local models, defaulting to active Ollama model or `qwen2.5-coder:7b` |
 
 API keys are stored in Bitwarden and loaded at startup via `secrets.el` — never hardcoded.
 
-### Executable Responses (claude-executor)
+### Package Loader
 
-Claude can act on Emacs state silently via gptel tools, or produce visible code blocks that are automatically executed:
+The loader follows the same pattern as `org-apple-reminders-setup.org`:
+
+```elisp
+(unless (package-installed-p 'gptel-agent-runtime)
+  (package-vc-install
+   '(gptel-agent-runtime
+     :url "https://github.com/deno1011/gptel-agent-runtime"
+     :branch "main")))
+
+(use-package gptel-agent-runtime
+  :ensure nil
+  :demand t)
+```
+
+`main` is the current auto-update branch. The package repo also has a `stable`
+branch pointing to the current version; it can later become the slower-moving
+install target.
+
+### Executable Responses
+
+The package contains a response executor compatibility layer. AI responses can
+produce visible Org blocks that are automatically executed:
 
 | Method | What happens |
 |---|---|
-| `run_elisp` tool | Claude calls it silently — Emacs action executes, no code block appears in the buffer |
+| `run_elisp` tool | Emacs action executes silently, no code block appears in the buffer |
 | `` #+begin_src elisp :AUTORUN `` | Executed immediately — code block visible; runs any Emacs command, edits buffers, opens files |
 | `` #+begin_src python/R/gnuplot :results output `` | Executed via org-babel, output inserted inline |
 | `` #+begin_src python/R/gnuplot :file name.png `` | Executed and result displayed as an inline image |
 | `` #+begin_src sh :results output `` | Shell command executed, output inserted |
 
-This means you can ask Claude to "add a TODO to inbox.org", "plot sin(x) from 0 to 2π", or "set the font size to 14" and it happens directly — no copy-pasting.
+This means you can ask the assistant to "add a TODO to inbox.org", "plot sin(x)
+from 0 to 2π", or "set the font size to 14" and the package provides the hooks
+and tools needed to perform the action directly.
 
 ### Graph and Diagram Generation
 
@@ -496,11 +533,12 @@ Supported renderers for inline output:
 | plantuml | UML diagrams |
 | LaTeX / dvipng | Inline math, rendered equations |
 
-All diagrams appear inline in the org buffer after Claude responds — no external viewer needed.
+Diagrams appear inline in the Org buffer when the model emits proper `:file`
+Org Babel blocks and local dependencies such as `gnuplot` are installed.
 
 ### Org-mode Tools
 
-Claude has access to live Emacs state via gptel tools:
+The package exposes live Emacs state via gptel tools:
 
 | Tool | What it does |
 |---|---|
@@ -522,15 +560,25 @@ Claude has access to live Emacs state via gptel tools:
 | `get_buffer_content` | Returns the content of an open buffer |
 | `org_export` | Exports an org file to PDF, HTML, or other formats |
 
-`run_elisp` is the primary tool for silent Emacs actions — Claude calls it instead of writing `:AUTORUN` code blocks when no visible code is needed. Combined with the other tools, Claude can query your tasks, reason about them, and update your org files in a single response.
+`run_elisp` is the primary tool for silent Emacs actions. Combined with the
+other tools, the assistant can query tasks, reason about them, and update Org
+files in a single response.
 
 ### LaTeX in Responses
 
-LaTeX fragments in Claude responses are rendered automatically as math images in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
+LaTeX fragments in responses are rendered by the Org setup. The runtime package
+focuses on gptel/tool/executor behavior.
 
 ### Local Models
 
-LM Studio (or any OpenAI-compatible local server) can be selected as backend. The same executor runs on local model responses, but local models follow the custom block conventions less reliably than Claude — graph generation and `:AUTORUN` work best with Claude.
+Local backends include LM Studio, MLX, and Ollama. Ollama startup/model
+selection is handled by the package; if a model is already running, it is
+preferred, otherwise the default is `qwen2.5-coder:7b`.
+
+Local models follow custom block/tool conventions less reliably than Claude or
+other stronger cloud models. The package has some compatibility/repair hooks,
+but the next architectural step is stricter structured-output and tool-call
+handling inside `gptel-agent-runtime`.
 
 ---
 
