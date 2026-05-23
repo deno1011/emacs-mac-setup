@@ -1490,6 +1490,31 @@ log in *Assistant Execution Results* and delete the temp file."
     (display-buffer result-buf)
     (delete-file tmp-file)))
 
+(defun claude-executor--file-output-block-p (block)
+  "Return non-nil when BLOCK should be executed by Org Babel for file output."
+  (let ((lang (plist-get block :lang))
+        (header (plist-get block :header)))
+    (or (string-match-p "\\_<:file\\_>" header)
+        (member lang '("gnuplot" "dot" "plantuml" "mermaid")))))
+
+(defun claude-executor--execute-org-babel-file-block (block)
+  "Execute BLOCK with Org Babel and display generated images inline."
+  (save-excursion
+    (goto-char (plist-get block :begin))
+    (let ((org-confirm-babel-evaluate nil))
+      (condition-case err
+          (progn
+            (org-babel-execute-src-block)
+            (when (derived-mode-p 'org-mode)
+              (org-display-inline-images t t)))
+        (error
+         (with-current-buffer (get-buffer-create "*Assistant Execution Results*")
+           (goto-char (point-max))
+           (insert (format "\n=== org-babel file block error [%s] ===\n%s\n"
+                           (format-time-string "%H:%M:%S")
+                           (error-message-string err)))
+           (display-buffer (current-buffer))))))))
+
 (defun claude-executor--execute-babel-block (block)
   "Execute a Babel block.
 Checks `claude-executor-allowed-languages' and optionally
@@ -1497,11 +1522,19 @@ Checks `claude-executor-allowed-languages' and optionally
   (let ((lang (plist-get block :lang))
         (body (plist-get block :body)))
     (when (member lang claude-executor-allowed-languages)
-      (if claude-executor-confirm-before-execute
-          (when (yes-or-no-p
-                 (format "Execute block (%s):\n%s\n?" lang body))
-            (claude-executor--do-execute lang body))
-        (claude-executor--do-execute lang body)))))
+      (cond
+       ((claude-executor--file-output-block-p block)
+        (if claude-executor-confirm-before-execute
+            (when (yes-or-no-p
+                   (format "Execute file-output block (%s)?\n%s\n" lang body))
+              (claude-executor--execute-org-babel-file-block block))
+          (claude-executor--execute-org-babel-file-block block)))
+       (claude-executor-confirm-before-execute
+        (when (yes-or-no-p
+               (format "Execute block (%s):\n%s\n?" lang body))
+          (claude-executor--do-execute lang body)))
+       (t
+        (claude-executor--do-execute lang body))))))
 #+end_src
 
 ** Exec-Tag Execution
@@ -1870,6 +1903,36 @@ inspection. If tool calling is unavailable, emit executable Org blocks."
                        t t))))))
 #+end_src
 
+*** Planner Directive: =emacs-planner=
+
+Structured planner prompt used only by the autonomous runtime. It must not
+replace the normal assistant prompt for direct user-facing output.
+
+#+begin_src elisp :tangle yes
+(setq gptel-directives
+      (append gptel-directives
+              '((emacs-planner
+                 . "You are the planner for an Emacs agent runtime.
+Return only a structured plan. Do not answer conversationally.
+
+Output one or more steps in exactly this format:
+- TITLE: short action title
+  RATIONALE: why this step is needed
+  TOOL: tool_name
+
+For requests whose main goal is user-visible output in the current buffer,
+including math, LaTeX, functions, plots, graphs, diagrams, inline images,
+explanations, or formatted text, use exactly one step:
+- TITLE: Render the requested answer inline
+  RATIONALE: The user wants visible Org output, not an autonomous tool plan.
+  TOOL: direct_response
+
+For web/current information use TOOL: web_search first.
+For file inspection use TOOL: read_file or search_files.
+For Emacs automation use TOOL: run_elisp.
+Never invent tool names unless no registered tool applies."))))
+#+end_src
+
 *** Full Directive: =emacs-assistant= (Default)
 
 Detailed variant with examples for window management, TODO insertion,
@@ -2218,7 +2281,8 @@ plus API key/model and the mode activation.
 
 ;;; --- Allowed Babel Languages --------------------------------------
 (setq claude-executor-allowed-languages
-      '("python" "sh" "bash" "elisp" "R" "ruby" "js"))
+      '("python" "sh" "bash" "elisp" "R" "ruby" "js"
+        "gnuplot" "dot" "plantuml" "mermaid"))
 
 ;;; --- Pattern-Based Auto Commands (example commented out) ----------
 ;; (setq claude-executor-auto-commands
@@ -2855,6 +2919,9 @@ stay within bounds and results are persisted.
 (defvar gptel-agent-runtime--current-session nil
   "The active agent session object.")
 
+(defvar gptel-agent-runtime--origin-buffer nil
+  "Buffer where the current agent session should render user-visible output.")
+
 (defun gptel-agent-runtime-start (goal &optional role)
   "Start a new autonomous agent session to achieve GOAL with ROLE."
   (interactive "sAgent Goal: ")
@@ -2868,6 +2935,7 @@ stay within bounds and results are persisted.
                    :started-at (gptel-agent-runtime--timestamp)
                    :updated-at (gptel-agent-runtime--timestamp))))
     (setq gptel-agent-runtime--current-session session)
+    (setq gptel-agent-runtime--origin-buffer (current-buffer))
     (message "Agent session started: %s" (gptel-agent-runtime-session-id session))
     (gptel-agent-runtime--step)))
 
@@ -2917,7 +2985,9 @@ stay within bounds and results are persisted.
       (insert text)
       (goto-char (point-min))
       ;; Regex matches the example format in the emacs-planner directive
-      (while (re-search-forward "^- TITLE: \(.*\)\n  RATIONALE: \(.*\)\n  TOOL: \(.*\)" nil t)
+      (while (re-search-forward
+              "^[[:space:]]*- TITLE: \\(.+\\)\n[[:space:]]+RATIONALE: \\(.+\\)\n[[:space:]]+TOOL: \\(.+\\)"
+              nil t)
         (push (gptel-agent-runtime-create-plan-step
                (match-string 1)
                (match-string 2)
@@ -2942,17 +3012,48 @@ stay within bounds and results are persisted.
 (defun gptel-agent-runtime--dispatch-action (tool-name step session)
   "Execute TOOL-NAME and capture the result for reflection."
   (condition-case err
-      (let* ((tool (cl-find tool-name (my/gptel-tools-all)
-                            :key (lambda (t) (if (fboundp 'gptel-tool-name)
-                                                (gptel-tool-name t)
-                                              (plist-get t :name)))
-                            :test #'equal))
-             (result-str (if tool
-                            (gptel-agent-runtime--call-native-tool tool step)
-                          (gptel-agent-runtime--fallback-execution tool-name step))))
-        (gptel-agent-runtime--reflect step result-str session))
+      (if (equal tool-name "direct_response")
+          (gptel-agent-runtime--direct-response step session)
+        (let* ((tool (cl-find tool-name (my/gptel-tools-all)
+                              :key (lambda (tool)
+                                     (if (fboundp 'gptel-tool-name)
+                                         (gptel-tool-name tool)
+                                       (plist-get tool :name)))
+                              :test #'equal))
+               (result-str (if tool
+                               (gptel-agent-runtime--call-native-tool tool step)
+                             (gptel-agent-runtime--fallback-execution tool-name step))))
+          (gptel-agent-runtime--reflect step result-str session)))
     (error
      (gptel-agent-runtime--handle-execution-error step err session))))
+
+(defun gptel-agent-runtime--direct-response (step session)
+  "Render the current task directly in the origin buffer using assistant rules."
+  (let* ((task (gptel-agent-runtime-session-current-task session))
+         (goal (gptel-agent-runtime-task-goal task))
+         (buffer (or (and (buffer-live-p gptel-agent-runtime--origin-buffer)
+                          gptel-agent-runtime--origin-buffer)
+                     (current-buffer)))
+         (directive (my/gptel-directive-for-current-runtime))
+         (system-message (alist-get directive gptel-directives)))
+    (message "Agent [%s] rendering direct response via %s..."
+             (gptel-agent-runtime-session-id session)
+             directive)
+    (gptel-request
+     goal
+     :system system-message
+     :callback
+     (lambda (response _info)
+       (if (not response)
+           (message "Direct response failed: no response from LLM")
+         (with-current-buffer buffer
+           (let ((beg (point-max)))
+             (goto-char beg)
+             (unless (bolp) (insert "\n"))
+             (insert response "\n")
+             (run-hook-with-args 'gptel-post-response-functions beg (point))))
+         (setf (gptel-agent-runtime-plan-step-status step) 'done)
+         (gptel-agent-runtime--finalize-task task session))))))
 
 (defun gptel-agent-runtime--reflect (step result session)
   "Observe the RESULT of STEP and decide if the plan needs adaptation."
