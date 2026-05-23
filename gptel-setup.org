@@ -150,6 +150,40 @@ Planned values include `assistant', `planner', `executor', `reviewer', and
                  (const :tag "Memory curator" memory-curator)
                  symbol)
   :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-default-local-model 'qwen2.5-coder:7b
+  "Default local model selected for gptel when Ollama is available."
+  :type 'symbol
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-default-local-model-label
+  "Qwen 2.5 Coder 7B (Ollama)"
+  "Display label for `gptel-agent-runtime-default-local-model'."
+  :type 'string
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-auto-start-ollama t
+  "When non-nil, start the Ollama server automatically if it is not running."
+  :type 'boolean
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-ollama-command "ollama"
+  "Command used to start and manage Ollama."
+  :type 'string
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-ollama-host "localhost:11434"
+  "Host and port used by the local Ollama server."
+  :type 'string
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-ollama-models-directory nil
+  "Optional directory for Ollama model storage.
+When non-nil it is exported as OLLAMA_MODELS before starting Ollama. This lets
+the server find models downloaded to a non-default location."
+  :type '(choice (const :tag "Use Ollama default" nil)
+                 directory)
+  :group 'gptel-agent-runtime)
 #+end_src
 
 ** Agent State Model
@@ -576,6 +610,70 @@ they only need to be set by the time of the first request.
 (defvar my/gptel-backends nil
   "Alist of (DISPLAY-NAME . (BACKEND . MODEL)) for all backends.")
 
+(defvar my/gptel-ollama-backend nil
+  "The registered Ollama backend, when Ollama is installed.")
+
+(defun gptel-agent-runtime--ollama-url (&optional path)
+  "Return the local Ollama URL for PATH."
+  (format "http://%s%s"
+          gptel-agent-runtime-ollama-host
+          (or path "")))
+
+(defun gptel-agent-runtime-ollama-running-p ()
+  "Return non-nil when the configured Ollama server responds."
+  (condition-case nil
+      (let ((buf (url-retrieve-synchronously
+                  (gptel-agent-runtime--ollama-url "/api/tags") t t 1)))
+        (when buf
+          (kill-buffer buf)
+          t))
+    (error nil)))
+
+(defun gptel-agent-runtime-start-ollama-if-needed ()
+  "Start Ollama in the background if configured and not already running."
+  (when (and gptel-agent-runtime-auto-start-ollama
+             (executable-find gptel-agent-runtime-ollama-command)
+             (not (gptel-agent-runtime-ollama-running-p)))
+    (let ((process-environment (copy-sequence process-environment)))
+      (when gptel-agent-runtime-ollama-models-directory
+        (setenv "OLLAMA_MODELS"
+                (expand-file-name gptel-agent-runtime-ollama-models-directory)))
+      (start-process "ollama-serve" "*ollama-serve*"
+                     gptel-agent-runtime-ollama-command "serve"))))
+
+(defun my/gptel-model-id (model)
+  "Return the symbol model id from MODEL, tolerating gptel metadata forms."
+  (cond
+   ((symbolp model) model)
+   ((and (consp model) (symbolp (car model))) (car model))
+   ((and (vectorp model) (> (length model) 0) (symbolp (aref model 0)))
+    (aref model 0))
+   (t model)))
+
+(defun my/gptel-backend-model-symbols (backend)
+  "Return BACKEND model ids as symbols, tolerating list/vector metadata."
+  (when (and backend (fboundp 'gptel-backend-models))
+    (mapcar #'my/gptel-model-id
+            (append (gptel-backend-models backend) nil))))
+
+(defun gptel-agent-runtime-use-default-local-model ()
+  "Select the configured default local Ollama model when available."
+  (interactive)
+  (gptel-agent-runtime-start-ollama-if-needed)
+  (when my/gptel-ollama-backend
+    (let ((model gptel-agent-runtime-default-local-model))
+      (unless (member model (my/gptel-backend-model-symbols my/gptel-ollama-backend))
+        (when (fboundp 'gptel-backend-models)
+          (setf (gptel-backend-models my/gptel-ollama-backend)
+                (append (gptel-backend-models my/gptel-ollama-backend)
+                        (list `(,model :capabilities (tool-use json)))))))
+      (setq gptel-backend my/gptel-ollama-backend
+            gptel-model model)
+      (my/gptel-sync-directive-for-current-runtime)
+      (my/gptel-sync-tools)
+      (message "gptel default local model: %s (%s)"
+               gptel-agent-runtime-default-local-model-label model))))
+
 ;; -- Anthropic / Claude -----------------------------------------------
 (let ((backend (gptel-make-anthropic "Claude"
                   :stream t
@@ -660,21 +758,25 @@ they only need to be set by the time of the first request.
 ;; Only activated when `ollama' is found in PATH.
 ;; Install models first: ollama pull <name>
 (when (executable-find "ollama")
+  (gptel-agent-runtime-start-ollama-if-needed)
   (let ((backend (gptel-make-ollama "Ollama"
                    :stream t
+                   :host gptel-agent-runtime-ollama-host
                    :models '((llama3.2 :capabilities (tool-use json))
                               (mistral :capabilities (tool-use json))
                               phi3
                               (qwen2.5 :capabilities (tool-use json))
                               (qwen2.5-coder:7b :capabilities (tool-use json))
                               (deepseek-r1 :capabilities (tool-use json))))))
+    (setq my/gptel-ollama-backend backend)
     (setq my/gptel-backends
           (append my/gptel-backends
                   `(("Llama 3.2 (Ollama)"    ,backend . llama3.2)
                     ("Mistral (Ollama)"       ,backend . mistral)
                     ("DeepSeek R1 (Ollama)"   ,backend . deepseek-r1)
                     ("Qwen 2.5 Coder 7B (Ollama)" ,backend . qwen2.5-coder:7b)
-                    ("Qwen 2.5 (Ollama)"      ,backend . qwen2.5))))))
+                    ("Qwen 2.5 (Ollama)"      ,backend . qwen2.5))))
+    (gptel-agent-runtime-use-default-local-model)))
 #+end_src
 
 *** Helper Functions
@@ -708,8 +810,15 @@ Overwrites an existing entry with the same name."
 
 (defun my/gptel-local-runtime-p ()
   "Return non-nil when the active gptel backend/model is local."
-  (string-match-p my/gptel-local-runtime-pattern
-                  (format "%S %S" gptel-backend gptel-model)))
+  (let ((backend-name (condition-case nil
+                          (if (and (boundp 'gptel-backend)
+                                   (fboundp 'gptel-backend-name))
+                              (format "%s" (gptel-backend-name gptel-backend))
+                            (format "%S" gptel-backend))
+                        (error (format "%S" gptel-backend))))
+        (model-name (format "%S" (my/gptel-model-id gptel-model))))
+    (string-match-p my/gptel-local-runtime-pattern
+                    (concat backend-name " " model-name))))
 
 (defun my/gptel-directive-for-current-runtime ()
   "Return the directive symbol for the active gptel backend/model."
@@ -748,7 +857,7 @@ gptel--known-tools is a two-level alist: (category . ((name . struct) ...))."
                    my/gptel-backends nil t))
          (entry   (assoc choice my/gptel-backends))
          (backend (cadr entry))
-         (model   (cddr entry))
+         (model   (my/gptel-model-id (cddr entry)))
          (directive (my/gptel-directive-for-choice choice))
          (system-message (alist-get directive gptel-directives)))
     ;; Set globally (applies to new gptel sessions)
