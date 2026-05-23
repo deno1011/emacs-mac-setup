@@ -3,6 +3,544 @@
 
 Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+* Package Readiness
+
+This file currently serves as the live Emacs configuration for the local AI
+assistant. It should also be written so that the reusable parts can later be
+extracted into a separate package and published through MELPA or another
+package archive.
+
+The long-term package candidate is named ~gptel-agent-runtime~. Until the
+package is extracted, this Org file remains the source of truth. Generated
+~.el~ files are load artifacts, not the development target.
+
+** Extraction Boundary
+
+The future package should contain only reusable agent infrastructure:
+
+- gptel backend and model selection helpers
+- native tool registry and tool activation helpers
+- planner/executor/runtime loop
+- safety and confirmation policy
+- workspace context collection
+- persistent memory adapters
+- package-level customization groups
+
+Personal configuration should remain outside the package:
+
+- concrete API keys or secret loading
+- private file paths
+- user-specific org agenda files
+- local Homebrew/package installation side effects
+- highly personal prompts that mention one user's workflow
+
+** Naming Policy
+
+Reusable code should move toward these prefixes:
+
+| Kind | Prefix |
+|------+--------|
+| Public functions/variables | ~gptel-agent-runtime-~ |
+| Private helpers | ~gptel-agent-runtime--~ |
+| Legacy local wrappers | ~my/gptel-~ |
+| Current executor compatibility layer | ~claude-executor-~ |
+
+The existing ~my/gptel-*~ and ~claude-executor-*~ names are kept for current
+config compatibility. New reusable code should prefer the package prefix unless
+it is intentionally local-only.
+
+** MELPA Readiness Rules
+
+Before extraction, package code should satisfy these constraints:
+
+- no automatic shell package installation from package load
+- no destructive actions enabled by default
+- no personal paths or account names in reusable code
+- all behavior configurable via ~defgroup~ and ~defcustom~
+- clear public/private function prefixes
+- package headers and dependencies declared in the extracted ~.el~ file
+- tests or reproducible smoke checks for core parsing/tool-dispatch behavior
+
+** Module Extraction Map
+
+This map keeps the live configuration aligned with the future package layout.
+When code becomes reusable, move it toward the target module rather than adding
+more unrelated helpers to one large file.
+
+| Current section | Future package module | Notes |
+|-----------------+-----------------------+-------|
+| Package Readiness / Runtime Core | ~gptel-agent-runtime-core.el~ | Customization groups, shared state, public entry points. |
+| Multi-Backend Configuration | ~gptel-agent-runtime-backends.el~ | Reusable backend registration helpers; personal model choices stay local. |
+| Image Capture & Multimodal | ~gptel-agent-runtime-media.el~ | Reusable image attachment helpers; OS package installation stays local. |
+| Web & Image Helpers | ~gptel-agent-runtime-web.el~ | Fetch/search/extract helpers with timeouts and safe defaults. |
+| Response Executor | ~gptel-agent-runtime-executor.el~ | Needs safety hardening before package extraction. |
+| GPtel Directives | ~gptel-agent-runtime-prompts.el~ | Reusable prompt fragments only; personal workflow prompts stay local. |
+| Workspace Context | ~gptel-agent-runtime-context.el~ | Context collectors and relevance scoring. |
+| AI Tools | ~gptel-agent-runtime-tools.el~ | Tool definitions, registry helpers, activation policy. |
+| Future planner loop | ~gptel-agent-runtime-agent.el~ | Observe/plan/act/reflect loop. |
+| Future memory layer | ~gptel-agent-runtime-memory.el~ | Episodic memory, project memory, strategy recall. |
+| Future tests | ~test/gptel-agent-runtime-*.el~ | ERT tests and smoke fixtures. |
+
+** Package Metadata
+
+This metadata is harmless in the live config and gives later extraction a
+stable customization group and naming anchor.
+
+#+begin_src emacs-lisp
+(require 'cl-lib)
+
+(defgroup gptel-agent-runtime nil
+  "Emacs-native agent runtime built on top of gptel."
+  :group 'applications
+  :prefix "gptel-agent-runtime-")
+
+(defconst gptel-agent-runtime-package-name "gptel-agent-runtime"
+  "Candidate package name for the reusable AI agent runtime.")
+
+(defconst gptel-agent-runtime-public-prefix "gptel-agent-runtime-"
+  "Public symbol prefix reserved for reusable package code.")
+
+(defconst gptel-agent-runtime-private-prefix "gptel-agent-runtime--"
+  "Private helper prefix reserved for reusable package internals.")
+#+end_src
+
+** Runtime Core
+
+This section defines the package-shaped configuration surface for future
+agentic behavior. These options are intentionally conservative: they establish
+names, defaults, and safety expectations without enabling a long-running agent
+loop yet.
+
+#+begin_src emacs-lisp
+(defcustom gptel-agent-runtime-enabled nil
+  "When non-nil, enable the experimental agent runtime layer.
+This switch is reserved for the future planner/executor loop. Existing gptel
+chat, tools, and Response Executor behavior do not depend on it yet."
+  :type 'boolean
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-max-iterations 8
+  "Maximum number of observe/plan/act iterations in one agent run.
+The limit prevents runaway loops once the planner/executor loop is added."
+  :type 'integer
+  :safe #'integerp
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-require-confirmation-for-risky-actions t
+  "When non-nil, require confirmation before risky tool actions.
+Risk classification will be implemented in the safety layer. The default is
+intentionally conservative for package-readiness."
+  :type 'boolean
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-memory-directory
+  (expand-file-name "gptel-agent-runtime/" user-emacs-directory)
+  "Directory for future persistent agent memory and session state."
+  :type 'directory
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-default-role 'assistant
+  "Default role used by future agent sessions.
+Planned values include `assistant', `planner', `executor', `reviewer', and
+`memory-curator'."
+  :type '(choice (const :tag "Assistant" assistant)
+                 (const :tag "Planner" planner)
+                 (const :tag "Executor" executor)
+                 (const :tag "Reviewer" reviewer)
+                 (const :tag "Memory curator" memory-curator)
+                 symbol)
+  :group 'gptel-agent-runtime)
+#+end_src
+
+** Agent State Model
+
+The runtime needs explicit state before it can become a real agent. These
+structures describe what an agent session is working on without starting any
+autonomous loop. Later sections can persist, inspect, and update this state.
+
+#+begin_src emacs-lisp
+(cl-defstruct (gptel-agent-runtime-task
+               (:constructor gptel-agent-runtime-task-create))
+  "A single high-level task handled by the future agent runtime."
+  id
+  title
+  goal
+  status
+  parent-id
+  children
+  created-at
+  updated-at
+  notes)
+
+(cl-defstruct (gptel-agent-runtime-session
+               (:constructor gptel-agent-runtime-session-create))
+  "State for one future agent run."
+  id
+  role
+  root-task
+  current-task
+  iteration
+  observations
+  decisions
+  tool-results
+  started-at
+  updated-at)
+
+(defun gptel-agent-runtime--timestamp ()
+  "Return an ISO-like local timestamp for runtime state."
+  (format-time-string "%Y-%m-%dT%H:%M:%S%z"))
+
+(defun gptel-agent-runtime-create-task (title goal &optional parent-id)
+  "Create a task object with TITLE, GOAL, and optional PARENT-ID."
+  (let ((now (gptel-agent-runtime--timestamp)))
+    (gptel-agent-runtime-task-create
+     :id (format "task-%s" (format-time-string "%Y%m%d%H%M%S%N"))
+     :title title
+     :goal goal
+     :status 'new
+     :parent-id parent-id
+     :children nil
+     :created-at now
+     :updated-at now
+     :notes nil)))
+
+(defun gptel-agent-runtime-create-session (root-task &optional role)
+  "Create a session around ROOT-TASK using ROLE or the default role."
+  (let ((now (gptel-agent-runtime--timestamp)))
+    (gptel-agent-runtime-session-create
+     :id (format "session-%s" (format-time-string "%Y%m%d%H%M%S%N"))
+     :role (or role gptel-agent-runtime-default-role)
+     :root-task root-task
+     :current-task root-task
+     :iteration 0
+     :observations nil
+     :decisions nil
+     :tool-results nil
+     :started-at now
+     :updated-at now)))
+#+end_src
+
+** Safety Layer
+
+Autonomy should grow only behind explicit safety rules. This layer classifies
+actions and centralizes confirmation decisions. It is not yet wired into the
+existing tools; it provides the package-ready policy surface that future tool
+dispatch will call.
+
+#+begin_src emacs-lisp
+(defcustom gptel-agent-runtime-protected-paths
+  nil
+  "List of files or directories that agent tools must not modify.
+Entries are expanded with `expand-file-name'. A directory protects all files
+below it. This package-level list supplements local guards such as
+`my/gptel-protected-files'."
+  :type '(repeat file)
+  :group 'gptel-agent-runtime)
+
+(defcustom gptel-agent-runtime-risk-confirmation-level 'write
+  "Minimum action risk that requires confirmation.
+Allowed values are `safe', `read', `write', `shell', and `destructive'."
+  :type '(choice (const :tag "Safe" safe)
+                 (const :tag "Read" read)
+                 (const :tag "Write" write)
+                 (const :tag "Shell" shell)
+                 (const :tag "Destructive" destructive))
+  :group 'gptel-agent-runtime)
+
+(defconst gptel-agent-runtime--risk-order
+  '((safe . 0)
+    (read . 1)
+    (write . 2)
+    (shell . 3)
+    (destructive . 4))
+  "Internal ordering for action risk levels.")
+
+(defun gptel-agent-runtime--risk-value (risk)
+  "Return numeric value for RISK."
+  (or (alist-get risk gptel-agent-runtime--risk-order) 4))
+
+(defun gptel-agent-runtime-risk-at-least-p (risk threshold)
+  "Return non-nil when RISK is at least THRESHOLD."
+  (>= (gptel-agent-runtime--risk-value risk)
+      (gptel-agent-runtime--risk-value threshold)))
+
+(defun gptel-agent-runtime--path-under-directory-p (path directory)
+  "Return non-nil when PATH is inside DIRECTORY."
+  (let ((path (file-truename (expand-file-name path)))
+        (directory (file-name-as-directory
+                    (file-truename (expand-file-name directory)))))
+    (string-prefix-p directory path)))
+
+(defun gptel-agent-runtime-protected-path-p (path)
+  "Return non-nil when PATH is protected by runtime or local policy."
+  (let ((expanded (expand-file-name path)))
+    (or (and (fboundp 'my/gptel-protected-p)
+             (my/gptel-protected-p expanded))
+        (cl-some
+         (lambda (protected)
+           (let ((p (expand-file-name protected)))
+             (if (file-directory-p p)
+                 (gptel-agent-runtime--path-under-directory-p expanded p)
+               (string= (file-truename expanded)
+                        (file-truename p)))))
+         gptel-agent-runtime-protected-paths))))
+
+(defun gptel-agent-runtime-confirmation-required-p (risk)
+  "Return non-nil when an action with RISK requires confirmation."
+  (and gptel-agent-runtime-require-confirmation-for-risky-actions
+       (gptel-agent-runtime-risk-at-least-p
+        risk gptel-agent-runtime-risk-confirmation-level)))
+#+end_src
+
+** Tool Registry Abstraction
+
+The current file registers tools directly with ~gptel-make-tool~. The package
+will eventually need a registry that can describe tools before activation:
+category, risk, whether a tool is local-only, and the underlying gptel tool
+object. This abstraction is intentionally additive and does not alter existing
+tool registration yet.
+
+#+begin_src emacs-lisp
+(cl-defstruct (gptel-agent-runtime-tool
+               (:constructor gptel-agent-runtime-tool-create))
+  "Metadata for a tool known to the future agent runtime."
+  name
+  category
+  risk
+  description
+  package-ready-p
+  local-only-p
+  gptel-tool
+  notes)
+
+(defvar gptel-agent-runtime-tool-registry nil
+  "List of `gptel-agent-runtime-tool' entries registered for agent use.")
+
+(defun gptel-agent-runtime-register-tool
+    (name category risk description &rest plist)
+  "Register tool metadata.
+NAME is a string or symbol. CATEGORY and RISK are symbols. DESCRIPTION is a
+human-readable summary. PLIST may include :package-ready-p, :local-only-p,
+:gptel-tool, and :notes."
+  (let* ((tool-name (if (symbolp name) (symbol-name name) name))
+         (entry (gptel-agent-runtime-tool-create
+                 :name tool-name
+                 :category category
+                 :risk risk
+                 :description description
+                 :package-ready-p (plist-get plist :package-ready-p)
+                 :local-only-p (plist-get plist :local-only-p)
+                 :gptel-tool (plist-get plist :gptel-tool)
+                 :notes (plist-get plist :notes))))
+    (setq gptel-agent-runtime-tool-registry
+          (cons entry
+                (cl-remove tool-name gptel-agent-runtime-tool-registry
+                           :key #'gptel-agent-runtime-tool-name
+                           :test #'equal)))
+    entry))
+
+(defun gptel-agent-runtime-find-tool (name)
+  "Return registered tool metadata for NAME, or nil."
+  (let ((tool-name (if (symbolp name) (symbol-name name) name)))
+    (cl-find tool-name gptel-agent-runtime-tool-registry
+             :key #'gptel-agent-runtime-tool-name
+             :test #'equal)))
+
+(defun gptel-agent-runtime-tools-by-category (category)
+  "Return all registered tools in CATEGORY."
+  (cl-remove-if-not
+   (lambda (tool)
+     (eq (gptel-agent-runtime-tool-category tool) category))
+   gptel-agent-runtime-tool-registry))
+#+end_src
+
+** Action Result Model
+
+Agent loops become brittle when every tool returns a different shape. The future
+executor should normalize results so the planner can reason about success,
+failure, changed files, warnings, and whether reflection is needed.
+
+#+begin_src emacs-lisp
+(cl-defstruct (gptel-agent-runtime-action-result
+               (:constructor gptel-agent-runtime-action-result-create))
+  "Normalized result of one agent action or tool call."
+  status
+  tool
+  output
+  error
+  warnings
+  changed-files
+  changed-buffers
+  reflection-needed-p
+  metadata)
+
+(defun gptel-agent-runtime-result-ok
+    (&key tool output warnings changed-files changed-buffers metadata)
+  "Create a successful action result."
+  (gptel-agent-runtime-action-result-create
+   :status 'ok
+   :tool tool
+   :output output
+   :warnings warnings
+   :changed-files changed-files
+   :changed-buffers changed-buffers
+   :reflection-needed-p nil
+   :metadata metadata))
+
+(defun gptel-agent-runtime-result-error
+    (&key tool error output warnings metadata)
+  "Create a failed action result."
+  (gptel-agent-runtime-action-result-create
+   :status 'error
+   :tool tool
+   :output output
+   :error error
+   :warnings warnings
+   :changed-files nil
+   :changed-buffers nil
+   :reflection-needed-p t
+   :metadata metadata))
+
+(defun gptel-agent-runtime-result-pending-reflection-p (result)
+  "Return non-nil when RESULT should trigger a reflection step."
+  (or (eq (gptel-agent-runtime-action-result-status result) 'error)
+      (gptel-agent-runtime-action-result-reflection-needed-p result)))
+#+end_src
+
+** Planner Skeleton
+
+This is the inactive shape of the future observe/plan/act/reflect loop. It
+does not call an LLM or execute tools yet. The purpose is to define stable
+objects and helper functions before wiring in model calls.
+
+#+begin_src emacs-lisp
+(cl-defstruct (gptel-agent-runtime-plan-step
+               (:constructor gptel-agent-runtime-plan-step-create))
+  "One planned step in a future agent run."
+  id
+  title
+  rationale
+  suggested-tool
+  risk
+  status
+  result)
+
+(cl-defstruct (gptel-agent-runtime-plan
+               (:constructor gptel-agent-runtime-plan-create))
+  "A plan associated with a runtime task."
+  id
+  task-id
+  status
+  steps
+  created-at
+  updated-at)
+
+(defun gptel-agent-runtime-create-plan (task &optional steps)
+  "Create a plan for TASK with optional STEPS."
+  (let ((now (gptel-agent-runtime--timestamp)))
+    (gptel-agent-runtime-plan-create
+     :id (format "plan-%s" (format-time-string "%Y%m%d%H%M%S%N"))
+     :task-id (gptel-agent-runtime-task-id task)
+     :status 'draft
+     :steps steps
+     :created-at now
+     :updated-at now)))
+
+(defun gptel-agent-runtime-create-plan-step
+    (title rationale &optional suggested-tool risk)
+  "Create one draft plan step."
+  (gptel-agent-runtime-plan-step-create
+   :id (format "step-%s" (format-time-string "%Y%m%d%H%M%S%N"))
+   :title title
+   :rationale rationale
+   :suggested-tool suggested-tool
+   :risk (or risk 'safe)
+   :status 'draft
+   :result nil))
+
+(defun gptel-agent-runtime-plan-complete-p (plan)
+  "Return non-nil when every step in PLAN is done."
+  (cl-every
+   (lambda (step)
+     (eq (gptel-agent-runtime-plan-step-status step) 'done))
+   (gptel-agent-runtime-plan-steps plan)))
+
+(defun gptel-agent-runtime-next-plan-step (plan)
+  "Return the first non-done step in PLAN."
+  (cl-find-if
+   (lambda (step)
+     (not (memq (gptel-agent-runtime-plan-step-status step)
+                '(done skipped cancelled))))
+   (gptel-agent-runtime-plan-steps plan)))
+#+end_src
+
+** Memory Skeleton
+
+The first memory layer should be boring and inspectable: plain files under a
+configured directory, with one file per session. Vector search and strategy
+retrieval can be layered on later after the storage shape is stable.
+
+#+begin_src emacs-lisp
+(defcustom gptel-agent-runtime-memory-format 'sexp
+  "Storage format for future runtime memory files.
+Only `sexp' is implemented at this stage because it is easy to inspect from
+Emacs and safe to evolve while the data model is still changing."
+  :type '(choice (const :tag "S-expression" sexp))
+  :group 'gptel-agent-runtime)
+
+(defun gptel-agent-runtime-memory-ensure-directory ()
+  "Ensure `gptel-agent-runtime-memory-directory' exists and return it."
+  (make-directory gptel-agent-runtime-memory-directory t)
+  gptel-agent-runtime-memory-directory)
+
+(defun gptel-agent-runtime-memory-session-path (session)
+  "Return the memory file path for SESSION."
+  (expand-file-name
+   (concat (gptel-agent-runtime-session-id session) ".el")
+   (gptel-agent-runtime-memory-ensure-directory)))
+
+(defun gptel-agent-runtime--struct-to-data (object)
+  "Convert known runtime struct OBJECT into printable data."
+  (cond
+   ((gptel-agent-runtime-task-p object)
+    `(:type task
+      :id ,(gptel-agent-runtime-task-id object)
+      :title ,(gptel-agent-runtime-task-title object)
+      :goal ,(gptel-agent-runtime-task-goal object)
+      :status ,(gptel-agent-runtime-task-status object)
+      :parent-id ,(gptel-agent-runtime-task-parent-id object)
+      :children ,(gptel-agent-runtime-task-children object)
+      :created-at ,(gptel-agent-runtime-task-created-at object)
+      :updated-at ,(gptel-agent-runtime-task-updated-at object)
+      :notes ,(gptel-agent-runtime-task-notes object)))
+   ((gptel-agent-runtime-session-p object)
+    `(:type session
+      :id ,(gptel-agent-runtime-session-id object)
+      :role ,(gptel-agent-runtime-session-role object)
+      :root-task ,(gptel-agent-runtime--struct-to-data
+                   (gptel-agent-runtime-session-root-task object))
+      :current-task ,(gptel-agent-runtime--struct-to-data
+                      (gptel-agent-runtime-session-current-task object))
+      :iteration ,(gptel-agent-runtime-session-iteration object)
+      :observations ,(gptel-agent-runtime-session-observations object)
+      :decisions ,(gptel-agent-runtime-session-decisions object)
+      :tool-results ,(gptel-agent-runtime-session-tool-results object)
+      :started-at ,(gptel-agent-runtime-session-started-at object)
+      :updated-at ,(gptel-agent-runtime-session-updated-at object)))
+   (t object)))
+
+(defun gptel-agent-runtime-memory-write-session (session)
+  "Write SESSION to its memory file and return the file path."
+  (let ((path (gptel-agent-runtime-memory-session-path session))
+        (print-length nil)
+        (print-level nil))
+    (with-temp-file path
+      (insert ";;; gptel-agent-runtime session memory -*- mode: emacs-lisp; -*-\n")
+      (prin1 (gptel-agent-runtime--struct-to-data session) (current-buffer))
+      (insert "\n"))
+    path))
+#+end_src
+
 * AI Assistant
 
 ** gptel Base Setup
@@ -10,8 +548,18 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 #+begin_src emacs-lisp
 (use-package gptel
   :ensure t
+  :demand t
   :config
   (setq gptel-default-mode 'org-mode))
+
+;; Provider constructors are defined in provider modules, not always in the
+;; base gptel feature. Require them before backend construction so partial
+;; reloads with M-x load-file cannot stop before tools are registered.
+(require 'gptel)
+(require 'gptel-anthropic nil t)
+(require 'gptel-openai nil t)
+(require 'gptel-ollama nil t)
+(require 'gptel-gemini nil t)
 #+end_src
 
 ** Multi-Backend Configuration
@@ -88,32 +636,9 @@ they only need to be set by the time of the first request.
                   ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
                   ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
   ;; Default: LM Studio (local, private, free)
-  ;; If server is offline: C-c M → select Claude or ChatGPT
+  ;; If server is offline: C-c M → select another backend/model.
   (setq gptel-backend backend
         gptel-model   'mistralai/ministral-3-14b-reasoning))
-
-;; -- Ollama (local, OpenAI-compatible, Intel + Apple Silicon) --------
-;; Install: brew install ollama
-;; Start:   ollama serve
-;; Models:  ollama pull qwen2.5:14b  (recommended for Intel 64GB)
-;;          ollama pull qwen2.5:7b   (faster)
-;;          ollama pull qwen2.5:32b  (best quality, slower on Intel)
-(let ((backend (gptel-make-openai "Ollama"
-                  :stream t
-                  :protocol "http"
-                  :host "localhost:11434"
-                  :endpoint "/v1/chat/completions"
-                  :key "ollama"
-                  :models '(llama3.1:8b
-                            qwen2.5:7b
-                            qwen2.5:14b
-                            qwen2.5:32b))))
-  (setq my/gptel-backends
-        (append my/gptel-backends
-                `(("Llama 3.1 8B (Ollama)"  ,backend . llama3.1:8b)
-                  ("Qwen2.5 7B (Ollama)"    ,backend . qwen2.5:7b)
-                  ("Qwen2.5 14B (Ollama)"   ,backend . qwen2.5:14b)
-                  ("Qwen2.5 32B (Ollama)"   ,backend . qwen2.5:32b)))))
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
@@ -137,12 +662,18 @@ they only need to be set by the time of the first request.
 (when (executable-find "ollama")
   (let ((backend (gptel-make-ollama "Ollama"
                    :stream t
-                   :models '(llama3.2 mistral phi3 qwen2.5 deepseek-r1))))
+                   :models '((llama3.2 :capabilities (tool-use json))
+                              (mistral :capabilities (tool-use json))
+                              phi3
+                              (qwen2.5 :capabilities (tool-use json))
+                              (qwen2.5-coder:7b :capabilities (tool-use json))
+                              (deepseek-r1 :capabilities (tool-use json))))))
     (setq my/gptel-backends
           (append my/gptel-backends
                   `(("Llama 3.2 (Ollama)"    ,backend . llama3.2)
                     ("Mistral (Ollama)"       ,backend . mistral)
                     ("DeepSeek R1 (Ollama)"   ,backend . deepseek-r1)
+                    ("Qwen 2.5 Coder 7B (Ollama)" ,backend . qwen2.5-coder:7b)
                     ("Qwen 2.5 (Ollama)"      ,backend . qwen2.5))))))
 #+end_src
 
@@ -161,6 +692,54 @@ Overwrites an existing entry with the same name."
 *** Model Switcher
 
 #+begin_src emacs-lisp
+(defvar my/gptel-local-model-pattern
+  "\\(Ollama\\|LM Studio\\|MLX\\)"
+  "Regexp matching model display names that should use the local directive.")
+
+(defvar my/gptel-local-runtime-pattern
+  "\\(Ollama\\|LM Studio\\|MLX\\|qwen2\\.5\\|qwen3\\|llama\\|mistral\\|deepseek-r1\\)"
+  "Regexp matching active backend/model values that should use the local directive.")
+
+(defun my/gptel-directive-for-choice (choice)
+  "Return the directive symbol that should be used for model CHOICE."
+  (if (string-match-p my/gptel-local-model-pattern choice)
+      'emacs-local-assistant
+    'emacs-assistant))
+
+(defun my/gptel-local-runtime-p ()
+  "Return non-nil when the active gptel backend/model is local."
+  (string-match-p my/gptel-local-runtime-pattern
+                  (format "%S %S" gptel-backend gptel-model)))
+
+(defun my/gptel-directive-for-current-runtime ()
+  "Return the directive symbol for the active gptel backend/model."
+  (if (my/gptel-local-runtime-p)
+      'emacs-local-assistant
+    'emacs-assistant))
+
+(defun my/gptel-sync-directive-for-current-runtime ()
+  "Set `gptel--system-message' according to the active backend/model."
+  (let* ((directive (my/gptel-directive-for-current-runtime))
+         (system-message (alist-get directive gptel-directives)))
+    (when system-message
+      (setq-local gptel--system-message system-message))
+    directive))
+
+(defun my/gptel-tools-all ()
+  "Return list of all registered gptel-tool structs.
+gptel--known-tools is a two-level alist: (category . ((name . struct) ...))."
+  (when (and (boundp 'gptel--known-tools)
+             (fboundp 'gptel-tool-p))
+    (cl-loop for (_cat . tools) in gptel--known-tools
+             append (cl-loop for (_name . tool) in tools
+                             when (gptel-tool-p tool) collect tool))))
+
+(defun my/gptel-sync-tools ()
+  "Enable all registered gptel tools in the current buffer."
+  (when (boundp 'gptel--known-tools)
+    (setq-local gptel-use-tools t)
+    (setq-local gptel-tools (my/gptel-tools-all))))
+
 (defun my/gptel-select-model ()
   "Select backend+model — sets globally AND in the active gptel buffer."
   (interactive)
@@ -169,17 +748,23 @@ Overwrites an existing entry with the same name."
                    my/gptel-backends nil t))
          (entry   (assoc choice my/gptel-backends))
          (backend (cadr entry))
-         (model   (cddr entry)))
+         (model   (cddr entry))
+         (directive (my/gptel-directive-for-choice choice))
+         (system-message (alist-get directive gptel-directives)))
     ;; Set globally (applies to new gptel sessions)
     (setq gptel-backend backend
           gptel-model   model)
+    (when system-message
+      (setq gptel--system-message system-message))
     ;; Switch all running gptel buffers as well
     (dolist (buf (buffer-list))
       (when (buffer-local-value 'gptel-mode buf)
         (with-current-buffer buf
           (setq-local gptel-backend backend
-                      gptel-model   model))))
-    (message "→ %s  (%s)" choice model)))
+                      gptel-model   model)
+          (when system-message
+            (setq-local gptel--system-message system-message)))))
+    (message "→ %s  (%s, directive: %s)" choice model directive)))
 
 ;; C-c M  — quick model switch in the current buffer
 (global-set-key (kbd "C-c M") #'my/gptel-select-model)
@@ -192,6 +777,54 @@ Overwrites an existing entry with the same name."
   "Show the active gptel model in the mode line."
   (when (bound-and-true-p gptel-mode)
     (format " [%s]" gptel-model)))
+
+(defun my/gptel-current-directive-name ()
+  "Return the directive symbol that matches the current system message."
+  (let ((current (and (boundp 'gptel--system-message) gptel--system-message)))
+    (car (seq-find (lambda (entry)
+                     (equal (cdr entry) current))
+                   gptel-directives))))
+
+(defun my/gptel-status ()
+  "Display active gptel backend, model, directive, and tool count."
+  (interactive)
+  (message "gptel model=%s directive=%s use-tools=%s tools=%s web-tools=%s backend=%s"
+           (if (boundp 'gptel-model) gptel-model "<unset>")
+           (or (my/gptel-current-directive-name) "<custom/unknown>")
+           (if (boundp 'gptel-use-tools) gptel-use-tools "<unset>")
+           (if (boundp 'gptel-tools) (length gptel-tools) 0)
+           (if (boundp 'gptel-tools)
+               (cl-count-if
+                (lambda (tool)
+                  (member (gptel-tool-name tool)
+                          '("web_search" "web_fetch_text"
+                            "web_extract_images" "web_fetch_image")))
+                gptel-tools)
+             0)
+           (if (boundp 'gptel-backend) gptel-backend "<unset>")))
+
+(defun my/gptel-sync-and-status ()
+  "Synchronize the directive for the active runtime and display status."
+  (interactive)
+  (let ((directive (my/gptel-sync-directive-for-current-runtime)))
+    (my/gptel-sync-tools)
+    (message "gptel model=%s synced-directive=%s use-tools=%s tools=%s web-tools=%s backend=%s"
+             (if (boundp 'gptel-model) gptel-model "<unset>")
+             directive
+             (if (boundp 'gptel-use-tools) gptel-use-tools "<unset>")
+             (if (boundp 'gptel-tools) (length gptel-tools) 0)
+             (if (boundp 'gptel-tools)
+                 (cl-count-if
+                  (lambda (tool)
+                    (member (gptel-tool-name tool)
+                            '("web_search" "web_fetch_text"
+                              "web_extract_images" "web_fetch_image")))
+                  gptel-tools)
+               0)
+             (if (boundp 'gptel-backend) gptel-backend "<unset>"))))
+
+(global-set-key (kbd "C-c G s") #'my/gptel-status)
+(global-set-key (kbd "C-c G S") #'my/gptel-sync-and-status)
 
 (unless (member '(:eval (my/gptel-mode-line)) mode-line-format)
   (setq mode-line-format
@@ -222,7 +855,7 @@ the OpenAI wire format.
 * Image Capture & Multimodal
 
 Pipeline for bringing images from iPhone (via Universal Clipboard) into the
-gptel buffer, automatically attaching them to Claude's next request
+gptel buffer, automatically attaching them to the next model request
 and rendering them inline.
 
 ** Overview
@@ -239,7 +872,7 @@ and rendering them inline.
 |    6 | Simultaneously the image is attached to gptel's multimodal    |
 |      | context (~gptel-add-file~)                                    |
 |    7 | You type your question ("Solve the tasks") + send             |
-|    8 | Claude (Vision) sees image + text, responds                   |
+|    8 | Selected vision-capable model sees image + text and responds    |
 
 *** Prerequisites
 
@@ -247,7 +880,7 @@ and rendering them inline.
 - iCloud Universal Clipboard active on iPhone and Mac (Settings
   → General → AirPlay & Handoff → Universal Clipboard)
 - gptel >= 0.9 with multimodal support (present in your setup)
-- Vision-capable model (Opus/Sonnet/Haiku 4.x — ~claude-opus-4-7~ in your case)
+- Vision-capable model, such as Claude, GPT, Gemini, or another backend supported by gptel
 
 ** External-Tool Auto-Install (pngpaste / xclip)
 
@@ -448,11 +1081,11 @@ In a ~M-x gptel~ buffer:
 2. Place cursor in the gptel buffer, ~C-c i~, press Enter at the name prompt
 3. Image appears inline, status line: "Image inserted + attached to gptel"
 4. Type: "Please solve all tasks from the image step by step."
-5. ~C-c RET~ (gptel-send) → Claude responds with solutions + LaTeX + optional plots
+5. ~C-c RET~ (gptel-send) → The assistant responds with solutions + LaTeX + optional plots
 
-* Web & Image Helpers for Claude
+* Web & Image Helpers for AI Models
 
-Small elisp library that Claude can call via AUTORUN/Babel-elisp to
+Small elisp library that the assistant can call via AUTORUN/Babel-elisp to
 fetch web pages, filter search results and display images inline in the
 current buffer.
 
@@ -483,7 +1116,7 @@ Prerequisites: Emacs with libxml2 (built into ~emacs-mac@30exp~ and
   :type 'integer
   :group 'claude-executor)
 
-(defcustom my/web-user-agent "Emacs/Claude-Helper"
+(defcustom my/web-user-agent "Emacs-Gptel-Agent-Helper"
   "User-Agent string for web requests."
   :type 'string
   :group 'claude-executor)
@@ -566,7 +1199,7 @@ Returns local path."
   (let* ((ext  (or (file-name-extension (url-filename
                                           (url-generic-parse-url url)))
                    "png"))
-         (base (format "claude-img-%s" (format-time-string "%s%N")))
+         (base (format "gptel-img-%s" (format-time-string "%s%N")))
          (path (expand-file-name (concat base "." ext)
                                  (or dir temporary-file-directory))))
     (url-copy-file url path t)
@@ -588,7 +1221,7 @@ Returns local path."
 ** Inline Insert into Current Buffer
 
 Appends the image **at the end of the current narrowing region** (i.e.
-for AUTORUN: at the end of the Claude response), regardless of cursor position.
+for AUTORUN: at the end of the assistant response), regardless of cursor position.
 
 #+begin_src emacs-lisp
 (defun my/insert-image-inline (file-or-url)
@@ -640,9 +1273,9 @@ Extract and insert the first image from a page:
 ,#+end_src
 #+end_example
 
-* Claude Executor
+* Response Executor
 
-Connects [[https://github.com/karthink/gptel][gptel]] with auto-execution hooks so Claude can directly trigger
+Connects [[https://github.com/karthink/gptel][gptel]] with auto-execution hooks so the assistant can directly trigger
 actions in Emacs (open agenda, insert TODOs, manage windows, open files, …)
 — and execute arbitrary code blocks in responses.
 
@@ -651,7 +1284,7 @@ actions in Emacs (open agenda, insert TODOs, manage windows, open files, …)
 *** Three Execution Mechanisms
 
 1. *AUTORUN elisp blocks* — primary mechanism for Emacs control.
-   Claude responds with ~#+begin_src elisp :AUTORUN ... #+end_src~.
+   The assistant responds with ~#+begin_src elisp :AUTORUN ... #+end_src~.
    The hook finds, evaluates and logs the result.
 2. *Exec tags* — ~<!-- exec: COMMAND -->~ in responses triggers
    individual shell calls (with confirmation).
@@ -680,7 +1313,7 @@ gptel-post-response-functions
                 always active while mode is on:
                 finds :AUTORUN elisp blocks
                 → whitelist check (optional)
-                → safe-eval with logging in *Claude Actions*
+                → safe-eval with logging in *Assistant Actions*
 #+end_example
 
 *** Security
@@ -695,7 +1328,7 @@ gptel-post-response-functions
 
 ** Package Dependencies
 
-We require [[https://github.com/karthink/gptel][gptel]] as the frontend for the Claude API.
+We require [[https://github.com/karthink/gptel][gptel]] as the frontend for the selected model backend.
 
 #+begin_src elisp :tangle yes
 (use-package gptel
@@ -708,15 +1341,17 @@ All switches defined centrally — visible via
 ~M-x customize-group RET claude-executor RET~.
 
 #+begin_src elisp :tangle yes
-;;; claude-executor.el — Auto-execution hooks for Claude in Emacs
+;;; claude-executor.el — Auto-execution hooks for AI model responses in Emacs
 
 (require 'org)
 (require 'ob)
 (require 'cl-lib)
 
 (defgroup claude-executor nil
-  "Auto-execution of code blocks in Claude responses."
-  :group 'claude)
+  "Auto-execution of code blocks in assistant responses.
+The `claude-executor' symbol prefix is kept for compatibility with earlier
+configuration versions; the implementation is model-neutral."
+  :group 'gptel-agent-runtime)
 
 ;;; --- General Switches ----------------------------------------------
 
@@ -764,7 +1399,7 @@ Currently AUTORUN execution is coupled to `claude-executor-mode' and
 
 (defcustom claude-executor-elisp-tag "AUTORUN"
   "Tag that marks automatic elisp execution.
-Claude must write ~#+begin_src elisp :AUTORUN~ in responses.
+The assistant must write ~#+begin_src elisp :AUTORUN~ in responses.
 Can be renamed via this custom variable (e.g. \"RUN\")."
   :type 'string
   :group 'claude-executor)
@@ -773,7 +1408,7 @@ Can be renamed via this custom variable (e.g. \"RUN\")."
   "Optional whitelist of allowed functions for AUTORUN eval.
 - nil  → no restriction (any elisp call is allowed).
 - list → AUTORUN code that calls a function not in the list is
-        rejected and logged in *Claude Actions*."
+        rejected and logged in *Assistant Actions*."
   :type '(repeat symbol)
   :group 'claude-executor)
 #+end_src
@@ -782,7 +1417,7 @@ Can be renamed via this custom variable (e.g. \"RUN\")."
 
 Finds ~#+begin_src LANG ... #+end_src~ in the response, writes the
 body to a temp file, calls the respective language CLI and logs to
-the buffer ~*Claude Execution Results*~.
+the buffer ~*Assistant Execution Results*~.
 
 *** Find Block
 
@@ -835,10 +1470,10 @@ Returns a list of plists with :lang, :header, :body, :begin, :end."
 #+begin_src elisp :tangle yes
 (defun claude-executor--do-execute (lang body)
   "Write BODY to a temp file, call the matching language CLI,
-log in *Claude Execution Results* and delete the temp file."
+log in *Assistant Execution Results* and delete the temp file."
   (let* ((ext        (or (claude-executor--lang-extension lang) ""))
          (tmp-file   (make-temp-file "claude-exec-" nil ext))
-         (result-buf (get-buffer-create "*Claude Execution Results*")))
+         (result-buf (get-buffer-create "*Assistant Execution Results*")))
     (with-temp-file tmp-file
       (insert body))
     (with-current-buffer result-buf
@@ -887,10 +1522,10 @@ Allows individual shell commands via HTML comment in the response:
 
 (defun claude-executor-run-command (command)
   "Execute COMMAND in the shell.
-Output goes to the buffer *Claude Commands*.
+Output goes to the buffer *Assistant Commands*.
 Also callable interactively: M-x or C-c C-x c."
   (interactive "sCommand: ")
-  (let ((result-buf (get-buffer-create "*Claude Commands*")))
+  (let ((result-buf (get-buffer-create "*Assistant Commands*")))
     (with-current-buffer result-buf
       (goto-char (point-max))
       (insert (format "\n$ %s\n" command))
@@ -901,11 +1536,11 @@ Also callable interactively: M-x or C-c C-x c."
 
 ** AUTORUN Elisp Blocks
 
-Primary mechanism for Emacs control. Claude marks executable elisp
+Primary mechanism for Emacs control. The assistant marks executable elisp
 blocks with the tag from ~claude-executor-elisp-tag~ (default
 "AUTORUN"). The hook finds them, optionally checks against the
 whitelist, evaluates them with error handling and logs results/errors
-in ~*Claude Actions*~.
+in ~*Assistant Actions*~.
 
 *** Find Block
 
@@ -959,8 +1594,8 @@ If no whitelist is set → t (all allowed)."
 - Whitelist violation → ⚠ entry, no eval.
 - Success             → ✓ entry with result.
 - Error               → ✗ entry with error message.
-Logs go to the buffer *Claude Actions*."
-  (let ((log-buf (get-buffer-create "*Claude Actions*")))
+Logs go to the buffer *Assistant Actions*."
+  (let ((log-buf (get-buffer-create "*Assistant Actions*")))
     (cond
      ((not (claude-executor--whitelist-allows-p code))
       (with-current-buffer log-buf
@@ -1029,7 +1664,7 @@ Respects `claude-executor-confirm-before-execute'."
     (dolist (code (claude-executor--find-autorun-blocks))
       (if claude-executor-confirm-before-execute
           (when (yes-or-no-p
-                 (format "Claude wants to execute:\n%s\nAllow?" code))
+                 (format "The assistant wants to execute:\n%s\nAllow?" code))
             (claude-executor--safe-eval code))
         (claude-executor--safe-eval code)))))
 #+end_src
@@ -1076,7 +1711,7 @@ AUTORUN) on ~gptel-post-response-functions~ so that
   "Keymap for `claude-executor-mode'.")
 
 (define-minor-mode claude-executor-mode
-  "Global mode for automatic execution of Claude responses.
+  "Global mode for automatic execution of assistant responses.
 Activates the response and AUTORUN hooks on
 `gptel-post-response-functions'."
   :lighter " CE"
@@ -1088,19 +1723,19 @@ Activates the response and AUTORUN hooks on
                   #'claude-executor-response-hook)
         (add-hook 'gptel-post-response-functions
                   #'claude-executor-autorun-hook)
-        (message "Claude Executor activated."))
+        (message "Response Executor activated."))
     (remove-hook 'gptel-post-response-functions
                  #'claude-executor-response-hook)
     (remove-hook 'gptel-post-response-functions
                  #'claude-executor-autorun-hook)
-    (message "Claude Executor deactivated.")))
+    (message "Response Executor deactivated.")))
 
 (provide 'claude-executor)
 #+end_src
 
 ** GPtel Directives
 
-System prompts that explain the conventions to Claude.
+System prompts that explain the conventions to the selected model.
 Both directives are registered in ~gptel-directives~; the active one is
 ~emacs-assistant~ (see below).
 
@@ -1112,17 +1747,127 @@ alternative system prompt (switchable via ~gptel-system-prompt~).
 #+begin_src elisp :tangle yes
 (setq gptel-directives
       (append gptel-directives
-              '((assistant . "You are an Emacs assistant.
+              `((assistant . ,(format "You are an Emacs assistant.
 When the user wants to perform an action in Emacs, respond with a
 ,#+begin_src elisp :AUTORUN
 (your-elisp-code-here)
 ,#+end_src
 block. It is executed automatically.
 For org-mode TODO in inbox.org:
-  (find-file \"~/emacs-config/org/inbox.org\")
+  (find-file \"%s\")
   (goto-char (point-max))
   (insert \"* TODO Task\")
-For arbitrary M-x commands use call-interactively or funcall."))))
+For arbitrary M-x commands use call-interactively or funcall."
+                                      (expand-file-name "data/org/inbox.org" my/data-dir))))))
+#+end_src
+
+*** Local Directive: =emacs-local-assistant=
+
+Short directive for local models such as Qwen/Ollama. Local models often follow
+short, explicit instructions better than long policy prompts. This directive is
+model-neutral but optimized for executable Org output and inline graphs.
+
+#+begin_src elisp :tangle yes
+(let* ((data-d (directory-file-name my/data-dir)))
+  (setq gptel-directives
+        (append gptel-directives
+                `((emacs-local-assistant
+                   . ,(replace-regexp-in-string
+                       "~/emacs-data" data-d
+                       "You are an Emacs assistant running inside Emacs.
+Always answer in English.
+
+MOST IMPORTANT:
+- If the user asks to check the internet, current rules, latest facts, laws,
+  prices, versions, dates, schools, or regulations, DO NOT apologize and DO NOT
+  say you cannot access the internet.
+- First produce executable web lookup output. If native tool calling works, call
+  web_search and then web_fetch_text. If native tool calling does not work, write
+  this exact kind of Org block:
+,#+begin_src elisp :results output
+(dolist (r (my/web-search-ddg \"QUERY HERE\" 5))
+  (princ (format \"- [[%s][%s]]\\n\" (cdr r) (car r))))
+,#+end_src
+- After search results are visible, fetch official/primary URLs with
+  my/web-text or web_fetch_text and cite the URLs in the answer.
+
+CRITICAL RULES:
+- Never say you cannot create, display, execute, or render code/graphs.
+- Never say you cannot browse, search the internet, or access current
+  information. Use the web tools or executable Elisp web helpers.
+- Never tell the user to press keys, export manually, or run commands manually.
+- Produce executable Org-mode blocks when an action, calculation, graph, file,
+  shell command, or Emacs operation is requested.
+- Use concise responses. Do the requested work directly.
+
+ORG EXECUTION RULES:
+- Emacs action: use an elisp block with :AUTORUN.
+- Text/code output: use a source block with :results output.
+- Graphs/images/diagrams: use a source block with :file.
+- Internet/current facts: use web_search first, then web_fetch_text on official
+  or primary sources. If native tool calls are unavailable, emit an elisp
+  :results output block calling my/web-search-ddg and my/web-text.
+- For every :file image block, include the Org result link form immediately after
+  the block when the filename is known:
+  #+RESULTS:
+  [[file:name.png]]
+- Org renders image links inline; the post-response hook also calls inline image
+  display after executing :file blocks.
+- Never write a bare #+begin_src block without :AUTORUN, :results output, or :file.
+
+INLINE MATH AND GRAPHS:
+- For any math function, include the formula as LaTeX.
+- For any 2D function, include a gnuplot block with :file.
+- For any 3D function, include a gnuplot splot block with :file.
+- Use detailed plot settings by default: pngcairo terminal, high samples,
+  high isosamples for 3D, grid/labels, and a readable palette.
+- The graph file should be a PNG with a simple local filename.
+
+Example 3D graph response:
+$f(x,y)=\\sin(\\sqrt{x^2+y^2})$
+
+,#+begin_src gnuplot :file graph3d.png
+set terminal pngcairo size 1200,900 enhanced font \"Arial,12\"
+set samples 160
+set isosamples 160
+set hidden3d
+set pm3d at s depthorder
+set palette rgbformulae 33,13,10
+set view 58,32
+set grid
+set xlabel \"x\"
+set ylabel \"y\"
+set zlabel \"f(x,y)\"
+splot [-8:8][-8:8] sin(sqrt(x*x+y*y)) with pm3d title \"f(x,y)=sin(sqrt(x^2+y^2))\"
+,#+end_src
+
+,#+RESULTS:
+[[file:graph3d.png]]
+
+WEB SEARCH:
+- Questions containing "current", "latest", "today", "check online",
+  "internet", laws, school rules, prices, dates, or versions require web
+  lookup before answering.
+- Prefer official sources, then cite the URLs used.
+- Search example when native tool calling is unavailable:
+,#+begin_src elisp :results output
+(dolist (r (my/web-search-ddg "Abitur private Gymnasium München Bayern aktuelle Regeln" 5))
+  (princ (format "- [[%s][%s]]\n" (cdr r) (car r))))
+,#+end_src
+
+- Fetch example:
+,#+begin_src elisp :results output
+(princ (my/web-text "https://www.km.bayern.de/" 6000))
+,#+end_src
+
+ORG FILES:
+- Org directory: ~/emacs-data/data/org/
+- New tasks usually go to inbox.org.
+- Do not overwrite config.org, init.el, or config.el.
+
+If the selected backend supports tool calling, prefer tools for multi-step
+inspection. If tool calling is unavailable, emit executable Org blocks."
+                       t t))))))
 #+end_src
 
 *** Full Directive: =emacs-assistant= (Default)
@@ -1131,9 +1876,13 @@ Detailed variant with examples for window management, TODO insertion,
 opening files. Set as the default system prompt.
 
 #+begin_src elisp :tangle yes
-(setq gptel-directives
-      (append gptel-directives
-              '((emacs-assistant . "You are an Emacs assistant running directly inside the live Emacs instance.
+(let* ((data-d (directory-file-name my/data-dir)))
+  (setq gptel-directives
+        (append gptel-directives
+                `((emacs-assistant
+                   . ,(replace-regexp-in-string
+                       "~/emacs-data" data-d
+                       "You are an Emacs assistant running directly inside the live Emacs instance.
 Always respond in English. Execute actions directly without explaining.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1154,7 +1903,8 @@ The tools will return an error if you try — do not retry with a different path
 ════════════════════════════════════════════════
 WORKSPACE LAYOUT
 ════════════════════════════════════════════════
-Org directory : ~/emacs-config/org/
+Org directory : ~/emacs-data/data/org/
+
   inbox.org        — capture all new tasks here first
   Erledigen.org    — main task list
   Gewohnheiten.org — habits tracker
@@ -1170,18 +1920,21 @@ HOW EXECUTION WORKS
 After EVERY response three hooks run automatically:
 
   Hook A — :AUTORUN blocks
-    #+begin_src elisp :AUTORUN → executed immediately via eval.
+    ,#+begin_src elisp :AUTORUN → executed immediately via eval.
     Has access to the entire live Emacs state.
-    Result goes to *Claude Actions* (not visible in the buffer).
+    Result goes to *Assistant Actions* (not visible in the buffer).
 
   Hook B — :results output blocks  (auto-execute = t, active)
-    #+begin_src LANG :results output → executed via shell/interpreter.
+    ,#+begin_src LANG :results output → executed via shell/interpreter.
     Output appears as #+RESULTS: directly below the block.
     Allowed languages: python sh bash elisp R ruby js
 
   Hook C — :file blocks  (always active, even without auto-execute)
-    #+begin_src LANG :file NAME.png → executed via org-babel-execute-src-block.
+    ,#+begin_src LANG :file NAME.png → executed via org-babel-execute-src-block.
     The generated image appears immediately inline in the buffer.
+    The Org result link is the inline image placeholder:
+      ,#+RESULTS:
+      [[file:NAME.png]]
     Trigger: language IN {gnuplot dot plantuml mermaid R}
              OR header contains \":file <name>\"
 
@@ -1205,10 +1958,11 @@ DECISION TREE — WHICH BLOCK FOR WHAT
 
   Graph / plot / diagram / image?
     → #+begin_src LANG :file name.png
+    → include #+RESULTS: followed by [[file:name.png]]
     No :AUTORUN needed — Hook C handles it automatically.
 
   Multi-step task needing intermediate results?
-    → Use native tools (Claude/GPT-4o only — see NATIVE TOOLS below)
+    → Use native tools when the selected backend supports tool calling
 
 PREFER tools over :AUTORUN when:
   • The user says "open", "go to", "switch", "insert", "add", "close"
@@ -1217,7 +1971,7 @@ PREFER tools over :AUTORUN when:
   • The buffer should stay clean (only the answer lands here, not code blocks)
 
 ════════════════════════════════════════════════
-NATIVE TOOLS (Claude & GPT-4o only)
+NATIVE TOOLS (when supported by the selected backend)
 ════════════════════════════════════════════════
 When tool calling is active you have these Emacs-native tools.
 Use them for multi-step tasks where you need results before deciding next action.
@@ -1245,6 +1999,11 @@ Use them for multi-step tasks where you need results before deciding next action
 
   org_export          — export org to: html / pdf / md / reveal / beamer
 
+  web_search          — search the internet and return title/URL results
+  web_fetch_text      — fetch a web page as readable text
+  web_extract_images  — extract image URLs from a web page
+  web_fetch_image     — download an image and return the local file path
+
 ════════════════════════════════════════════════
 MATHEMATICS — ALWAYS INLINE, ALWAYS COMPLETE
 ════════════════════════════════════════════════
@@ -1255,19 +2014,32 @@ For EVERY mathematical question, immediately and without being asked:
      Display: $$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
 
 2. ALWAYS INCLUDE A GRAPH when a function appears.
-   Default choice: gnuplot (fast, no Python import needed):
+   Default choice: gnuplot (fast, no Python import needed).
+   Use pngcairo plus explicit samples so plots are smooth and detailed:
    ,#+begin_src gnuplot :file graph.png
-   set terminal png size 900,600
+   set terminal pngcairo size 1200,800 enhanced font \"Arial,12\"
+   set samples 1000
    set xlabel \"x\"; set ylabel \"f(x)\"; set grid; set zeroaxis lw 2
-   plot [-3:4] x**2 + 3**(x-1) title \"f(x) = x^2 + 3^(x-1)\" lw 2
+   plot [-3:4] x**2 + 3**(x-1) title \"f(x) = x^2 + 3^(x-1)\" lw 3
    ,#+end_src
+
+   ,#+RESULTS:
+   [[file:graph.png]]
 
    3D function with gnuplot:
    ,#+begin_src gnuplot :file graph3d.png
-   set terminal png size 900,700
-   set hidden3d; set pm3d depthorder
-   splot [-5:5][-5:5] sin(sqrt(x**2+y**2)) title \"f(x,y)\"
+   set terminal pngcairo size 1200,900 enhanced font \"Arial,12\"
+   set samples 160; set isosamples 160
+   set hidden3d; set pm3d at s depthorder
+   set palette rgbformulae 33,13,10
+   set view 58,32
+   set grid
+   set xlabel \"x\"; set ylabel \"y\"; set zlabel \"f(x,y)\"
+   splot [-5:5][-5:5] sin(sqrt(x**2+y**2)) with pm3d title \"f(x,y)\"
    ,#+end_src
+
+   ,#+RESULTS:
+   [[file:graph3d.png]]
 
    Complex plot with matplotlib (always use Agg backend!):
    ,#+begin_src python :results file graphics :file plot.png
@@ -1304,12 +2076,12 @@ EMACS ACTIONS (AUTORUN examples)
 ════════════════════════════════════════════════
 Open file:
 ,#+begin_src elisp :AUTORUN
-(find-file \"~/emacs-config/org/inbox.org\")
+(find-file \"~/emacs-data/data/org/inbox.org\")
 ,#+end_src
 
 Insert TODO:
 ,#+begin_src elisp :AUTORUN
-(with-current-buffer (find-file-noselect \"~/emacs-config/org/inbox.org\")
+(with-current-buffer (find-file-noselect \"~/emacs-data/data/org/inbox.org\")
   (goto-char (point-max))
   (insert \"\n* TODO New task\")
   (save-buffer))
@@ -1405,13 +2177,14 @@ When the user attaches an image:
 4. No separate document — everything inline here.
 
 Example:
-** Task 1: $x^2 + 4x - 5 = 0$
+,** Task 1: $x^2 + 4x - 5 = 0$
 $(x+5)(x-1)=0 \\Rightarrow x_1=-5,\\; x_2=1$
 ,#+begin_src gnuplot :file parabola.png
 set terminal png size 800,500
 set xlabel \"x\"; set ylabel \"y\"; set grid; set zeroaxis lw 2
 plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
-,#+end_src"))))
+,#+end_src"
+                       t t))))))
 #+end_src
 
 *** Set Default Directive
@@ -1424,8 +2197,7 @@ plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
 ;; Also set emacs-assistant for each new gptel session
 (add-hook 'gptel-mode-hook
           (lambda ()
-            (setq-local gptel--system-message
-                        (alist-get 'emacs-assistant gptel-directives))))
+            (my/gptel-sync-directive-for-current-runtime)))
 
 #+end_src
 
@@ -1441,7 +2213,7 @@ plus API key/model and the mode activation.
 
 ;; Automatically execute Babel blocks, exec-tags, auto-commands.
 ;; t = every Babel block with :results output / :file etc. runs directly
-;; after a Claude response and produces visible output (or an image).
+;; after an assistant response and produces visible output (or an image).
 (setq claude-executor-auto-execute t)
 
 ;;; --- Allowed Babel Languages --------------------------------------
@@ -1484,7 +2256,7 @@ In the gptel buffer:
 Add "Buy milk" as a TODO in inbox.org
 #+end_example
 
-Claude responds with an AUTORUN block:
+The assistant responds with an AUTORUN block:
 
 #+begin_example
 ,#+begin_src elisp :AUTORUN
@@ -1496,13 +2268,13 @@ Claude responds with an AUTORUN block:
 #+end_example
 
 → Hook detects =AUTORUN= → (optional confirmation) → eval → entry in
-~*Claude Actions*~.
+~*Assistant Actions*~.
 
 *** AUTORUN: Open Agenda
 
 You ask: "Show me the agenda for this week".
 
-Claude responds:
+The assistant responds:
 
 #+begin_example
 ,#+begin_src elisp :AUTORUN
@@ -1512,13 +2284,13 @@ Claude responds:
 
 *** Exec-Tag: Shell Command
 
-Claude responds with:
+The assistant responds with:
 
 #+begin_example
 <!-- exec: ls -la ~/projects -->
 #+end_example
 
-→ Executed (with confirmation), output in ~*Claude Commands*~.
+→ Executed (with confirmation), output in ~*Assistant Commands*~.
 Requires: ~claude-executor-auto-execute~ = t.
 
 *** Babel: Execute a Python Snippet
@@ -1532,7 +2304,7 @@ print("hello")
 #+end_example
 
 → With ~claude-executor-auto-execute~ = t: temp file → ~python3~ →
-output in ~*Claude Execution Results*~.
+output in ~*Assistant Execution Results*~.
 
 ** Known Inconsistencies / TODOs
 
@@ -1641,9 +2413,14 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   "When non-nil, inject workspace context into every gptel-send call.")
 
 (defun my/gptel--inject-context (orig-fn &rest args)
-  "Around advice for `gptel-send': prepend workspace context to system prompt."
+  "Around advice for `gptel-send': sync directive and prepend workspace context."
   (if (not my/gptel-context-enabled)
-      (apply orig-fn args)
+      (progn
+        (my/gptel-sync-directive-for-current-runtime)
+        (my/gptel-sync-tools)
+        (apply orig-fn args))
+    (my/gptel-sync-directive-for-current-runtime)
+    (my/gptel-sync-tools)
     (let* ((ctx   (my/workspace-context-string))
            (orig  gptel--system-message)
            (gptel--system-message (if (and ctx (not (string-empty-p ctx)))
@@ -1680,7 +2457,7 @@ Each entry is a plist with :state :heading :file :deadline :tags."
   (gptel-make-tool
    :name "read_org_file"
    :description "Read the contents of an org file. Path relative to ~ is accepted."
-   :args '((:name "path" :type string :description "File path, e.g. ~/emacs-config/org/todo.org"))
+   :args '((:name "path" :type string :description "Org file path, e.g. ~/emacs-data/data/org/todo.org — use your actual data dir"))
    :function (lambda (path)
                (let ((p (expand-file-name path)))
                  (if (file-exists-p p)
@@ -1843,20 +2620,23 @@ Each entry is a plist with :state :heading :file :deadline :tags."
    :args '((:name "code" :type string :description "Elisp expression(s) to evaluate"))
    :function (lambda (code)
                (condition-case err
-                   (cl-letf (((symbol-function 'write-file)
-                              (lambda (file &rest args)
-                                (if (my/gptel-protected-p (expand-file-name file))
-                                    (error "write-file blocked by run_elisp: %s is protected" file)
-                                  (apply #'write-file file args))))
-                             ((symbol-function 'set-visited-file-name)
-                              (lambda (file &rest args)
-                                (if (and file (not (string-empty-p file))
-                                         (my/gptel-protected-p (expand-file-name file)))
-                                    (error "set-visited-file-name blocked by run_elisp: %s is protected" file)
-                                  (apply #'set-visited-file-name file args)))))
-                     (let ((result (eval (car (read-from-string
-                                               (concat "(progn " code ")"))))))
-                       (format "%S" result)))
+                   (let ((orig-write-file (symbol-function 'write-file))
+                         (orig-set-visited-file-name
+                          (symbol-function 'set-visited-file-name)))
+                     (cl-letf (((symbol-function 'write-file)
+                                (lambda (file &rest args)
+                                  (if (my/gptel-protected-p (expand-file-name file))
+                                      (error "write-file blocked by run_elisp: %s is protected" file)
+                                    (apply orig-write-file file args))))
+                               ((symbol-function 'set-visited-file-name)
+                                (lambda (file &rest args)
+                                  (if (and file (not (string-empty-p file))
+                                           (my/gptel-protected-p (expand-file-name file)))
+                                      (error "set-visited-file-name blocked by run_elisp: %s is protected" file)
+                                    (apply orig-set-visited-file-name file args)))))
+                       (let ((result (eval (car (read-from-string
+                                                 (concat "(progn " code ")"))))))
+                         (format "%S" result))))
                  (error (format "Error: %s" err))))))
 #+end_src
 
@@ -1989,18 +2769,73 @@ Each entry is a plist with :state :heading :file :deadline :tags."
                        (error (format "Export error: %s" err)))))))))
 #+end_src
 
+** Web Tools
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'gptel
+  ;; web_search — search the public web and return org links
+  (gptel-make-tool
+   :name "web_search"
+   :description "Search the internet. Use this for current/latest information, laws, regulations, prices, dates, versions, and anything the user asks to check online."
+   :args '((:name "query" :type string :description "Search query")
+           (:name "limit" :type integer :description "Maximum number of results, default 5"))
+   :function (lambda (query limit)
+               (condition-case err
+                   (let ((results (my/web-search-ddg query (or limit 5))))
+                     (if results
+                         (mapconcat
+                          (lambda (r)
+                            (format "- [[%s][%s]]" (cdr r) (car r)))
+                          results "\n")
+                       "No search results found."))
+                 (error (format "Error: %s" err)))))
+
+  ;; web_fetch_text — fetch a page as readable text
+  (gptel-make-tool
+   :name "web_fetch_text"
+   :description "Fetch a URL and return readable text extracted from the page. Use after web_search to inspect official/primary sources before answering."
+   :args '((:name "url" :type string :description "URL to fetch")
+           (:name "max_chars" :type integer :description "Maximum characters to return, default 6000"))
+   :function (lambda (url max-chars)
+               (condition-case err
+                   (my/web-text url (or max-chars 6000))
+                 (error (format "Error: %s" err)))))
+
+  ;; web_extract_images — list image URLs from a page
+  (gptel-make-tool
+   :name "web_extract_images"
+   :description "Extract image URLs from a web page."
+   :args '((:name "url" :type string :description "URL to inspect")
+           (:name "limit" :type integer :description "Maximum number of images, default 10"))
+   :function (lambda (url limit)
+               (condition-case err
+                   (let ((images (my/web-extract-images url (or limit 10))))
+                     (if images
+                         (mapconcat #'identity images "\n")
+                       "No images found."))
+                 (error (format "Error: %s" err)))))
+
+  ;; web_fetch_image — download an image locally
+  (gptel-make-tool
+   :name "web_fetch_image"
+   :description "Download an image URL and return the local file path."
+   :args '((:name "url" :type string :description "Image URL")
+           (:name "directory" :type string :description "Optional target directory"))
+   :function (lambda (url directory)
+               (condition-case err
+                   (my/web-fetch-image
+                    url
+                    (when (and directory (not (string-empty-p directory)))
+                      (expand-file-name directory)))
+                 (error (format "Error: %s" err))))))
+#+end_src
+
 ** Tool Activation
 
 #+begin_src emacs-lisp :tangle yes
-(defun my/gptel-tools-all ()
-  "Return list of all registered gptel-tool structs.
-gptel--known-tools is a two-level alist: (category . ((name . struct) ...))."
-  (cl-loop for (_cat . tools) in gptel--known-tools
-           append (cl-loop for (_name . tool) in tools
-                           when (gptel-tool-p tool) collect tool)))
-
 (with-eval-after-load 'gptel
   ;; Set globally — all tools are registered by this point since this section
   ;; is the last with-eval-after-load 'gptel block in config.el.
+  (setq gptel-use-tools t)
   (setq gptel-tools (my/gptel-tools-all)))
 #+end_src
