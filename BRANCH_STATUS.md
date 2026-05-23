@@ -19,11 +19,9 @@ not be used as the direct base for the next implementation steps.
 
 Current work continues in:
 
-- `deno1011/emacs:gptel-agent-runtime`
+- `deno1011/emacs-mac-setup:gptel-agent-runtime`
 
-Reusable setup changes should be copied or cherry-picked back into
-`deno1011/emacs-mac-setup` only after they are validated in the live private
-Emacs config.
+This new branch incorporates the refined agentic logic and the Planner Loop while respecting the current private data repo layout.
 
 If this branch is resumed later, first rebase it onto `stable` or start a fresh
 setup branch from `stable`, then cherry-pick only the still-relevant gptel
