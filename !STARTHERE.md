@@ -7,17 +7,17 @@
 Open **Terminal**, `cd` to the folder where you want the scripts, then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
-chmod +x bootstrap.sh
-./bootstrap.sh main
-```
-
-For the tested default release, use the same command from the `stable` branch:
-
-```bash
 curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
 chmod +x bootstrap.sh
 ./bootstrap.sh stable
+```
+
+For development testing, use the same pattern with another branch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh main
 ```
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  
