@@ -20,26 +20,18 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 | GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
 | `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
 | Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
+| Ollama + `qwen2.5-coder:7b` | Installed, started, and pulled for the default local gptel agent setup |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
 **Run in Terminal:**
 
 ```bash
-# 1. Download all scripts — always lands in ~/emacs-mac-setup/
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+# Download bootstrap and install the tested stable branch.
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh stable
 
-# 2. Only needed if GitHub was not yet authenticated during bootstrap:
-bash ~/emacs-mac-setup/fill-config.sh   # interactive guided config fill
-# or manually:
-open ~/emacs-mac-setup/setup-emacs-mac.conf   # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
-
-# 3. Install — pick one variant (all scripts are in ~/emacs-mac-setup/)
-bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
-bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
-bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
-bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh          # isolated in OrbStack, no XQuartz needed
-
-# 4. Start Emacs
+# Start Emacs after setup completes.
 open "/Applications/Plus Emacs.app"                # Plus
 open "/Applications/Yamamoto Emacs.app"            # Yamamoto
 open "$HOME/Applications/GUI Docker Emacs.app"     # Docker
@@ -79,7 +71,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `config.org` | Emacs config index — entry point linking to the three config files below |
 | `core.org` | Base config: UI, font, version control, protected files, auto-commit, startup sync |
 | `org-setup.org` | Org mode: agenda, capture templates, tags, clocking, export, LaTeX |
-| `gptel-setup.org` | AI assistant: gptel backends, tools, claude-executor, workspace context |
+| `gptel-setup.org` | AI assistant loader: installs `gptel-agent-runtime`, selects the default local model, and keeps setup-specific AI defaults small |
 | `fill-config.sh` | Interactive guided config fill |
 | `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
 | `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
@@ -471,23 +463,29 @@ required. `C-c r R` triggers a full bidirectional sync.
 
 ## AI Integration
 
-The configuration includes a fully wired AI assistant inside Emacs via **gptel**, extended with a custom **claude-executor** layer that makes AI responses executable — not just readable.
+The configuration includes a local-first AI assistant inside Emacs via
+**gptel** and the standalone
+[`gptel-agent-runtime`](https://github.com/deno1011/gptel-agent-runtime)
+package. The setup repo keeps only installation and local defaults; the runtime
+package owns tools, directives, memory, tracing, routing, and agent behavior.
 
 ### Backends
 
-Multiple AI backends are pre-configured and switchable at any time (`M-x gptel-send` or `C-c RET`):
+Multiple AI backends are pre-configured and switchable with `C-c M`:
 
 | Backend | Models |
 |---|---|
+| **Ollama** | `qwen2.5-coder:7b` is the default local model and is pulled during setup |
 | **Claude** (Anthropic) | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
 | **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
 | **LM Studio** | Any local model loaded in LM Studio |
 
 API keys are stored in Bitwarden and loaded at startup via `secrets.el` — never hardcoded.
 
-### Executable Responses (claude-executor)
+### Executable Responses and Tools
 
-Claude can act on Emacs state silently via gptel tools, or produce visible code blocks that are automatically executed:
+The assistant can act on Emacs state silently via gptel tools, or produce visible
+Org Babel code blocks that are rendered inline:
 
 | Method | What happens |
 |---|---|
@@ -497,7 +495,9 @@ Claude can act on Emacs state silently via gptel tools, or produce visible code 
 | `` #+begin_src python/R/gnuplot :file name.png `` | Executed and result displayed as an inline image |
 | `` #+begin_src sh :results output `` | Shell command executed, output inserted |
 
-This means you can ask Claude to "add a TODO to inbox.org", "plot sin(x) from 0 to 2π", or "set the font size to 14" and it happens directly — no copy-pasting.
+This means you can ask the assistant to "add a TODO to inbox.org", "plot sin(x)
+from 0 to 2 pi", or "set the font size to 14" and it can do the work directly,
+subject to the runtime safety policy.
 
 ### Graph and Diagram Generation
 
@@ -517,7 +517,7 @@ All diagrams appear inline in the org buffer after Claude responds — no extern
 
 ### Org-mode Tools
 
-Claude has access to live Emacs state via gptel tools:
+The assistant has access to live Emacs state via gptel tools:
 
 | Tool | What it does |
 |---|---|
@@ -539,15 +539,20 @@ Claude has access to live Emacs state via gptel tools:
 | `get_buffer_content` | Returns the content of an open buffer |
 | `org_export` | Exports an org file to PDF, HTML, or other formats |
 
-`run_elisp` is the primary tool for silent Emacs actions — Claude calls it instead of writing `:AUTORUN` code blocks when no visible code is needed. Combined with the other tools, Claude can query your tasks, reason about them, and update your org files in a single response.
+`run_elisp` is the primary tool for silent Emacs actions. Combined with the
+other tools, the assistant can query tasks, reason about them, and update org
+files in one interaction when policy allows it.
 
 ### LaTeX in Responses
 
-LaTeX fragments in Claude responses are rendered automatically as math images in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
+LaTeX fragments in assistant responses are rendered automatically as math images
+in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
 
 ### Local Models
 
-LM Studio (or any OpenAI-compatible local server) can be selected as backend. The same executor runs on local model responses, but local models follow the custom block conventions less reliably than Claude — graph generation and `:AUTORUN` work best with Claude.
+Ollama is the default local backend. Setup installs Ollama, starts the server,
+and pulls `qwen2.5-coder:7b` with visible terminal progress. LM Studio or any
+OpenAI-compatible local server can still be selected as a backend.
 
 ---
 
@@ -615,28 +620,32 @@ This section is for the repo owner testing changes before promoting them to `sta
 ### Reinstall from `stable` (new-user path)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh stable
 ```
 
-Bootstrap downloads all scripts from `stable`, configures Bitwarden + GitHub auth, then prompts you to run a setup script.
+Bootstrap downloads all scripts from `stable`, configures Bitwarden + GitHub
+auth, installs emacs-plus, and prepares the default local Ollama model.
 
 ### Reinstall from `main` (dev/testing path)
 
-Bootstrap always pulls `stable` scripts — use it for first-time machine setup only. For testing `main` changes, work with the local clone directly:
+Each branch's `!STARTHERE.md` should pass its own branch to `bootstrap.sh`.
+`bootstrap.sh` still defaults to `stable` when no branch is provided, but branch
+testing should be explicit:
 
 ```bash
-# Refresh scripts from main
-cd /tmp/emacs-mac-setup && git pull origin main
-
-# Run setup directly (brew / gh / Bitwarden already installed)
-bash setup-emacs-native-plus-mac.sh
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh main
 ```
 
-Or from scratch on a fresh machine:
+Any feature branch can be tested the same way:
 
 ```bash
-git clone -b main https://github.com/deno1011/emacs-mac-setup.git /tmp/emacs-mac-setup
-bash /tmp/emacs-mac-setup/setup-emacs-native-plus-mac.sh
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/feature/my-branch/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh feature/my-branch
 ```
 
 ### Session tags and rollback

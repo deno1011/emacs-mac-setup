@@ -46,6 +46,17 @@ BW_GH_ITEM=""
 # Example: BW_ANTHROPIC_ITEM="anthropic-api-key"
 BW_ANTHROPIC_ITEM=""
 
+# Local AI defaults for first-install gptel agent setup.
+# Ollama is installed with Homebrew when LOCAL_AI_INSTALL_OLLAMA is true.
+# The model pull can take a while; setup prints Ollama's progress in Terminal.
+LOCAL_AI_PROVIDER="ollama"
+LOCAL_AI_INSTALL_OLLAMA="true"
+LOCAL_AI_START_OLLAMA="true"
+LOCAL_AI_PULL_MODEL="true"
+LOCAL_AI_DEFAULT_MODEL="qwen2.5-coder:7b"
+# Optional custom model storage. Leave empty for Ollama's default location.
+OLLAMA_MODELS_DIR=""
+
 # Name of the local Docker image (only relevant for the Docker setup)
 # Example: DOCKER_IMAGE="emacs-dev"
 DOCKER_IMAGE="emacs-dev"
