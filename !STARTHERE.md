@@ -5,7 +5,9 @@
 Open **Terminal** and run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh
 ```
 
 Bootstrap guides you through config and Bitwarden setup, then **automatically starts the emacs-plus install** after a 5-second countdown.
