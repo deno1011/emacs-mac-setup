@@ -7,7 +7,7 @@
 Open **Terminal**, `cd` to the folder where you want the scripts, then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
 chmod +x bootstrap.sh
 ./bootstrap.sh
 ```
