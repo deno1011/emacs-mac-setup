@@ -45,15 +45,16 @@ the use-package form below and remove the =package-vc-install= call.
             (dir (file-name-directory lib)))
   (run-with-idle-timer
    10 nil
-   (lambda ()
+   (lambda (update-dir)
      (make-process
       :name "gptel-agent-runtime-update"
-      :command (list "git" "-C" dir "pull" "--rebase" "--quiet")
+      :command (list "git" "-C" update-dir "pull" "--rebase" "--quiet")
       :noquery t
       :sentinel (lambda (proc _)
                   (when (and (not (process-live-p proc))
                              (zerop (process-exit-status proc)))
-                    (message "gptel-agent-runtime: updated — restart to apply")))))))
+                    (message "gptel-agent-runtime: updated — restart to apply")))))
+   dir))
 #+end_src
 
 * Configuration
