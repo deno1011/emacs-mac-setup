@@ -1,6 +1,6 @@
 # Start Here
 
-> A one-command setup that turns a fresh Mac into a fully configured Emacs environment — org-mode, LSP, LaTeX, graphs, and Claude AI built in, synced to iCloud and ready in under 20 minutes.
+> A one-command setup that turns a fresh Mac into a fully configured Emacs environment — org-mode, LSP, LaTeX, graphs, and local gptel agent support built in, synced to iCloud and ready to use.
 
 ## Open Terminal and Run
 
@@ -9,13 +9,15 @@ Open **Terminal**, `cd` to the folder where you want the scripts, then run:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
 chmod +x bootstrap.sh
-./bootstrap.sh
+./bootstrap.sh main
 ```
 
-If you already have a private config repo, pass it as the first argument:
+For the tested default release, use the same command from the `stable` branch:
 
 ```bash
-./bootstrap.sh your-github-user/your-private-config-repo
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh stable
 ```
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  
@@ -31,7 +33,9 @@ See [README.md](README.md) for full documentation.
 | All setup scripts | always | downloaded to the current folder |
 | `gh` (GitHub CLI) | GitHub mode | needed to access your private config repo |
 | `bitwarden-cli` | GitHub mode | used to fetch your GitHub token and API keys |
+| Ollama | default local AI mode | installed if missing |
+| `qwen2.5-coder:7b` | default local AI mode | pulled with visible terminal progress |
 
-> **GitHub mode** is active when you pass a private config repo (`bootstrap.sh user/repo`) or have `GH_USER` set in your config file.
+> **GitHub mode** is active when bootstrap finds or you enter a GitHub user and your config file has `GH_USER` set.
 
-After bootstrap completes, run one of the setup scripts it downloaded to install Emacs itself.
+After bootstrap completes, it starts the emacs-plus setup automatically.
