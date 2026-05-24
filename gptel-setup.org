@@ -35,7 +35,7 @@ Defaults:
 - model label in =C-c M=: =Qwen 2.5 Coder 7B (Ollama)=
 
 #+begin_src emacs-lisp :tangle yes
-(defvar my/gptel-agent-package-branch "main"
+(defvar my/gptel-agent-package-branch "stable"
   "Git branch used for `gptel-agent-runtime' during package-vc installation.
 Use \"stable\" for release installs and a feature branch for branch testing.")
 
