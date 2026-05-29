@@ -1316,7 +1316,13 @@ sequenceDiagram
   (org-agenda-to-appt))
 
 (add-hook 'org-finalize-agenda-hook 'bh/org-agenda-to-appt 'append)
-(bh/org-agenda-to-appt)
+;; At load time, swallow any agenda-scan failure so a single malformed
+;; entry (e.g. when an agenda file is mid-recover from auto-save)
+;; doesn't abort the rest of org-setup.org. Future interactive / hook
+;; calls still surface errors normally.
+(condition-case _err
+    (bh/org-agenda-to-appt)
+  (error (message "bh/org-agenda-to-appt: skipped at load -- %S" _err)))
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src
