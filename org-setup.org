@@ -1338,7 +1338,7 @@ Pattern based on Karpathy's LLM Wiki gist
   :ensure t
   :init (setq org-roam-v2-ack t)
   :custom
-  (org-roam-directory (expand-file-name "~/emacs/wiki/emacs/wiki"))
+  (org-roam-directory (expand-file-name "~/emacs/wiki/emacs"))
   (org-roam-db-location (expand-file-name "~/emacs/wiki/emacs/.org-roam.db"))
   (org-roam-completion-everywhere t)
   :bind (("C-c n l" . org-roam-buffer-toggle)
