@@ -1316,9 +1316,37 @@ sequenceDiagram
   (org-agenda-to-appt))
 
 (add-hook 'org-finalize-agenda-hook 'bh/org-agenda-to-appt 'append)
-(bh/org-agenda-to-appt)
+;; At load time, swallow any agenda-scan failure so a single malformed
+;; entry (e.g. when an agenda file is mid-recover from auto-save)
+;; doesn't abort the rest of org-setup.org. Future interactive / hook
+;; calls still surface errors normally.
+(condition-case _err
+    (bh/org-agenda-to-appt)
+  (error (message "bh/org-agenda-to-appt: skipped at load -- %S" _err)))
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
+#+end_src
+
+* Org-Roam — Wiki Backbone
+Persistent, LLM-maintained Emacs knowledge wiki at =~/emacs/wiki/emacs/=.
+Schema and operations defined in [[file:~/emacs/wiki/emacs/WIKI.org][WIKI.org]].
+Pattern based on Karpathy's LLM Wiki gist
+(https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+#+begin_src emacs-lisp
+(use-package org-roam
+  :ensure t
+  :init (setq org-roam-v2-ack t)
+  :custom
+  (org-roam-directory (expand-file-name "~/emacs/wiki/emacs/wiki"))
+  (org-roam-db-location (expand-file-name "~/emacs/wiki/emacs/.org-roam.db"))
+  (org-roam-completion-everywhere t)
+  :bind (("C-c n l" . org-roam-buffer-toggle)
+         ("C-c n f" . org-roam-node-find)
+         ("C-c n i" . org-roam-node-insert)
+         ("C-c n c" . org-roam-capture))
+  :config
+  (org-roam-db-autosync-mode))
 #+end_src
 
 * Apple Reminders
