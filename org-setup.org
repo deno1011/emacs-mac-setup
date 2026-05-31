@@ -1327,6 +1327,28 @@ sequenceDiagram
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src
 
+* Org-Roam — Wiki Backbone
+Persistent, LLM-maintained Emacs knowledge wiki at =~/emacs/wiki/emacs/=.
+Schema and operations defined in [[file:~/emacs/wiki/emacs/WIKI.org][WIKI.org]].
+Pattern based on Karpathy's LLM Wiki gist
+(https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+#+begin_src emacs-lisp
+(use-package org-roam
+  :ensure t
+  :init (setq org-roam-v2-ack t)
+  :custom
+  (org-roam-directory (expand-file-name "~/emacs/wiki/emacs/wiki"))
+  (org-roam-db-location (expand-file-name "~/emacs/wiki/emacs/.org-roam.db"))
+  (org-roam-completion-everywhere t)
+  :bind (("C-c n l" . org-roam-buffer-toggle)
+         ("C-c n f" . org-roam-node-find)
+         ("C-c n i" . org-roam-node-insert)
+         ("C-c n c" . org-roam-capture))
+  :config
+  (org-roam-db-autosync-mode))
+#+end_src
+
 * Apple Reminders
 
 Konfiguriert in [[file:org-reminders-setup.org][org-reminders-setup.org]] — wird von [[file:config.org][config.org]] nur auf macOS geladen.
