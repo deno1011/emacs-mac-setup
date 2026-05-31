@@ -84,12 +84,12 @@ This block runs after =gptel-agent-runtime= has loaded. It:
 1. Ensures =gptel= itself is installed and configured for Org mode.
 2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
    =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
-3. Registers Anthropic, OpenAI, LM Studio, MLX, and Ollama backends with
-   the model lists previously embedded in the package.
-4. Sets a preliminary default model (LM Studio Ministral, matching the
-   prior package behavior) and then asks the runtime to switch to local
-   Ollama. Cloud models remain registered for manual switching, but the
-   runtime/planner default stays local.
+3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
+   MLX, and Ollama backends with their respective model lists.
+4. If =GEMINI_API_KEY= is set, sets the interactive default to Gemini 2.5
+   Flash. Otherwise falls back to the prior local-Ollama default. The
+   autonomous runtime/planner default remains local regardless, so
+   planning never silently depends on a cloud key.
 
 This section carries the API keys and machine preferences, keeping the
 runtime package reusable across machines.
@@ -134,14 +134,58 @@ runtime package reusable across machines.
                   ("o3-mini"      ,backend . o3-mini)
                   ("o4-mini"      ,backend . o4-mini)))))
 
-;; -- Google Gemini (commented until a key is available) -------------
-;; (let ((backend (gptel-make-gemini "Gemini"
-;;                  :stream t
-;;                  :key (lambda () (getenv "GEMINI_API_KEY")))))
-;;   (setq my/gptel-backends
-;;         (append my/gptel-backends
-;;                 `(("Gemini 2.0 Flash" ,backend . gemini-2.0-flash)
-;;                   ("Gemini 2.5 Pro"   ,backend . gemini-2.5-pro)))))
+;; -- Google Gemini (free tier: https://aistudio.google.com/apikey) --
+;; Set GEMINI_API_KEY in secrets.el: (setenv "GEMINI_API_KEY" "...")
+;; Free tier quotas vary per model (2.0 Flash has the most generous limits).
+(let ((backend (gptel-make-gemini "Gemini"
+                 :stream t
+                 :key (lambda () (getenv "GEMINI_API_KEY")))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Gemini 2.5 Pro"     ,backend . gemini-2.5-pro)
+                  ("Gemini 2.5 Flash"   ,backend . gemini-2.5-flash)
+                  ("Gemini 2.0 Flash"   ,backend . gemini-2.0-flash)))))
+
+;; -- Groq (free tier: https://console.groq.com/keys) ----------------
+;; OpenAI-compatible. Set GROQ_API_KEY in secrets.el.
+;; Very fast inference (~500 tok/s on Llama 70B).
+(let ((backend (gptel-make-openai "Groq"
+                 :stream t
+                 :host "api.groq.com"
+                 :endpoint "/openai/v1/chat/completions"
+                 :key (lambda () (getenv "GROQ_API_KEY"))
+                 :models '(llama-3.3-70b-versatile
+                           llama-3.1-8b-instant
+                           mixtral-8x7b-32768
+                           qwen-qwq-32b))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Llama 3.3 70B (Groq)"   ,backend . llama-3.3-70b-versatile)
+                  ("Llama 3.1 8B (Groq)"    ,backend . llama-3.1-8b-instant)
+                  ("Mixtral 8x7B (Groq)"    ,backend . mixtral-8x7b-32768)
+                  ("Qwen QwQ 32B (Groq)"    ,backend . qwen-qwq-32b)))))
+
+;; -- GitHub Models (free dev tier: https://github.com/marketplace/models) -
+;; Set GITHUB_TOKEN in secrets.el to a fine-grained PAT with "models" permission.
+;; Tight per-day quotas; intended for dev/test. Model catalog changes — verify
+;; IDs at github.com/marketplace/models if a call returns 404.
+(let ((backend (gptel-make-openai "GitHub Models"
+                 :stream t
+                 :host "models.inference.ai.azure.com"
+                 :endpoint "/chat/completions"
+                 :key (lambda () (getenv "GITHUB_TOKEN"))
+                 :models '(gpt-4o
+                           gpt-4o-mini
+                           Meta-Llama-3.1-405B-Instruct
+                           Mistral-Large-2411
+                           Phi-3.5-mini-instruct))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("GPT-4o (GitHub)"            ,backend . gpt-4o)
+                  ("GPT-4o-mini (GitHub)"       ,backend . gpt-4o-mini)
+                  ("Llama 3.1 405B (GitHub)"    ,backend . Meta-Llama-3.1-405B-Instruct)
+                  ("Mistral Large (GitHub)"     ,backend . Mistral-Large-2411)
+                  ("Phi 3.5 Mini (GitHub)"      ,backend . Phi-3.5-mini-instruct)))))
 
 ;; -- LM Studio (local, OpenAI-compatible) ----------------------------
 ;; LM Studio must be running: Sidebar -> Local Server -> Start Server
@@ -221,6 +265,19 @@ runtime package reusable across machines.
   ;; silently depend on a cloud key for planning.
   (when (fboundp 'gptel-agent-runtime-use-default-local-model)
     (gptel-agent-runtime-use-default-local-model)))
+
+;; -- Interactive default: Gemini 2.5 Flash if key available ---------
+;; Runs LAST so it overrides the Ollama-local promotion above. The
+;; autonomous runtime/planner still defaults to local via
+;; `gptel-agent-runtime-default-local-model'; this only affects fresh
+;; gptel buffers opened by the user interactively.
+(when (getenv "GEMINI_API_KEY")
+  (when-let* ((entry (assoc "Gemini 2.5 Flash" my/gptel-backends))
+              (backend (cadr entry))
+              (model (cddr entry)))
+    (setq gptel-backend backend
+          gptel-model   model)
+    (message "gptel interactive default: Gemini 2.5 Flash")))
 #+end_src
 
 * Wiki Maintainer Directive
