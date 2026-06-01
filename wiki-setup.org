@@ -172,6 +172,41 @@ If SLUG is omitted, derived from the URL's last path component."
     (my/wiki-ingest dest)))
 #+end_src
 
+** Ingest buffer or region — capture in-flight text
+
+For anything already on screen — a scratch buffer, a chat transcript,
+notes you typed up, or a marked region inside a larger document. Saves
+to =raw/<slug>.<ext>= (extension picked from buffer mode) and chains
+into =my/wiki-ingest=. If the region is active, only that selection is
+saved; otherwise the whole buffer.
+
+#+begin_src emacs-lisp
+(defun my/wiki-ingest-buffer (slug)
+  "Save the current buffer (or active region) into raw/<SLUG>.<ext> and ingest.
+Extension is .org if the buffer is in org-mode, otherwise .md. If a
+region is active, only the region is saved; otherwise the whole buffer."
+  (interactive
+   (list (let ((default (when (buffer-file-name)
+                          (file-name-base (buffer-file-name)))))
+           (read-string
+            (format "Slug%s: "
+                    (if default (format " (default %s)" default) ""))
+            nil nil default))))
+  (when (or (null slug) (string-empty-p slug))
+    (user-error "Slug required"))
+  (let* ((raw-dir (expand-file-name "raw/" my/wiki-base-dir))
+         (ext (if (derived-mode-p 'org-mode) ".org" ".md"))
+         (dest (expand-file-name (concat slug ext) raw-dir))
+         (start (if (use-region-p) (region-beginning) (point-min)))
+         (end   (if (use-region-p) (region-end)       (point-max))))
+    (unless (file-directory-p raw-dir)
+      (make-directory raw-dir t))
+    (write-region start end dest)
+    (message "Saved %s to %s"
+             (if (use-region-p) "region" "buffer") dest)
+    (my/wiki-ingest dest)))
+#+end_src
+
 ** Open — ad-hoc query buffer
 
 Open a wiki-maintainer buffer for asking questions against the existing
@@ -215,18 +250,20 @@ The agent reports findings only — never auto-fixes."
 All wiki helpers live under the =C-c n= prefix that org-roam already uses,
 in uppercase to avoid colliding with org-roam's lowercase bindings.
 
-| Key       | Command            | Purpose                            |
-|-----------+--------------------+------------------------------------|
-| =C-c n I= | my/wiki-ingest     | Ingest a file from raw/            |
-| =C-c n M= | my/wiki-import     | iMport: copy a file into raw/ + ingest |
-| =C-c n U= | my/wiki-ingest-url | Download URL + ingest              |
-| =C-c n Q= | my/wiki-open       | Query the wiki                     |
-| =C-c n L= | my/wiki-lint       | Lint the wiki                      |
+| Key       | Command                | Purpose                                |
+|-----------+------------------------+----------------------------------------|
+| =C-c n I= | my/wiki-ingest         | Ingest a file from raw/                |
+| =C-c n M= | my/wiki-import         | iMport: copy a file into raw/ + ingest |
+| =C-c n U= | my/wiki-ingest-url     | Download URL + ingest                  |
+| =C-c n B= | my/wiki-ingest-buffer  | Save current Buffer (or region) + ingest |
+| =C-c n Q= | my/wiki-open           | Query the wiki                         |
+| =C-c n L= | my/wiki-lint           | Lint the wiki                          |
 
 #+begin_src emacs-lisp
 (global-set-key (kbd "C-c n I") #'my/wiki-ingest)
 (global-set-key (kbd "C-c n M") #'my/wiki-import)
 (global-set-key (kbd "C-c n U") #'my/wiki-ingest-url)
+(global-set-key (kbd "C-c n B") #'my/wiki-ingest-buffer)
 (global-set-key (kbd "C-c n Q") #'my/wiki-open)
 (global-set-key (kbd "C-c n L") #'my/wiki-lint)
 #+end_src
