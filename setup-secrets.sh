@@ -37,13 +37,27 @@ else
   fi
   source "$SCRIPT_DIR/bw-unlock.sh"
   bw_ensure_session || exit 1
-  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD")
-  if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "ERROR: Key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM, field: $BW_FIELD)."
-    echo "       Create the entry and run again."
-    exit 1
+
+  echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
+
+  # --- Anthropic ---
+  ANTHROPIC_API_KEY=$(bw_ensure_api_key \
+                        "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
+                        "Anthropic API key" \
+                        "https://console.anthropic.com/settings/keys")
+  if [ -n "$ANTHROPIC_API_KEY" ]; then
+    printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
   fi
-  printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$EMACS_SECRETS"
+
+  # --- Gemini (free tier — default gptel backend) ---
+  GEMINI_API_KEY=$(bw_ensure_api_key \
+                     "$BW_GEMINI_ITEM" "$BW_FIELD" \
+                     "Gemini API key (free)" \
+                     "https://aistudio.google.com/apikey")
+  if [ -n "$GEMINI_API_KEY" ]; then
+    printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
+  fi
+
   echo "==> secrets.el written to $EMACS_SECRETS."
   echo "    Restart Emacs for the change to take effect."
 fi

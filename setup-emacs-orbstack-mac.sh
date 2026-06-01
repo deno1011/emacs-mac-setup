@@ -257,17 +257,29 @@ if [[ "$BW_AVAILABLE" == true ]]; then
     "
     _SECRETS_MISSING=$(orbu bash -c "[ -e ~/.emacs.d/secrets.el ] && echo 'exists' || echo 'missing'")
     if [[ "$_SECRETS_MISSING" == "missing" ]]; then
-        ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
+        _SEC_TMP=$(mktemp)
+        echo ";; secrets.el — API keys (not tracked in git)" > "$_SEC_TMP"
+
+        ANTHROPIC_API_KEY=$(bw_ensure_api_key \
+                              "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
+                              "Anthropic API key" \
+                              "https://console.anthropic.com/settings/keys")
         if [[ -n "$ANTHROPIC_API_KEY" ]]; then
-            _SEC_TMP=$(mktemp)
-            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SEC_TMP"
-            orbu bash -c "mkdir -p ~/.emacs.d"
-            orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
-            rm -f "$_SEC_TMP"
-            echo "API key written to secrets.el from Bitwarden."
-        else
-            warn "Anthropic API key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM)."
+            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$_SEC_TMP"
         fi
+
+        GEMINI_API_KEY=$(bw_ensure_api_key \
+                           "$BW_GEMINI_ITEM" "$BW_FIELD" \
+                           "Gemini API key (free)" \
+                           "https://aistudio.google.com/apikey")
+        if [[ -n "$GEMINI_API_KEY" ]]; then
+            printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$_SEC_TMP"
+        fi
+
+        orbu bash -c "mkdir -p ~/.emacs.d"
+        orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
+        rm -f "$_SEC_TMP"
+        echo "secrets.el written into OrbStack VM."
     fi
 fi
 
