@@ -453,28 +453,11 @@ if [ -n "$_OLD_REPO" ]; then
 fi
 unset _OLD_REPO
 
-# --- config.org: only copy if missing (user-managed) ---
-if docker exec "$DOCKER_CONTAINER" test -f "/home/emacs/${GH_REPO}/config/config.org" 2>/dev/null; then
-  skip "config.org (user-managed — not overwritten)"
-else
-  echo "==> Copying starter config.org into container..."
-  docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
-  if [ -f "$SCRIPT_DIR/config.org" ]; then
-    docker cp "$SCRIPT_DIR/config.org" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config/config.org"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config/config.org"
-  else
-    echo "WARN: config.org not found in script dir — Emacs will use built-in defaults."
-  fi
-fi
-# Modular config files are setup-managed — always update from SCRIPT_DIR
-for _CF in core.org org-setup.org gptel-setup.org; do
-  if [ -f "$SCRIPT_DIR/$_CF" ]; then
-    docker cp "$SCRIPT_DIR/$_CF" "$DOCKER_CONTAINER:/home/emacs/${GH_REPO}/config/$_CF"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "/home/emacs/${GH_REPO}/config/$_CF"
-    echo "==> $_CF updated in container."
-  fi
-done
-unset _CF
+# --- Ensure the config directory exists; files self-bootstrap on first Emacs run ---
+# config.org + split files are fetched from emacs-mac-setup/stable on
+# first launch via init.el's my/ensure-config-file-from-url. No docker
+# cp from SCRIPT_DIR needed.
+docker exec "$DOCKER_CONTAINER" bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
 
 echo "==> Verifying container..."
 docker exec "$DOCKER_CONTAINER" emacs --version

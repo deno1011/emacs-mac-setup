@@ -283,24 +283,12 @@ if [ -n "$GH_USER" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
-    # Modular config files are setup-managed — always overwrite from SCRIPT_DIR
-    _CF_CHANGED=false
-    for _CF in core.org org-setup.org gptel-setup.org; do
-      if [ -f "$SCRIPT_DIR/$_CF" ]; then
-        if ! diff -q "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF" &>/dev/null; then
-          cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
-          git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
-          echo "==> $_CF updated in repo."
-          _CF_CHANGED=true
-        fi
-      fi
-    done
-    if [ "$_CF_CHANGED" = true ]; then
-      git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
-        commit -m "chore: update modular config files" 2>/dev/null || true
-      git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
-    fi
-    unset _CF _CF_CHANGED
+    # Config files (config.org + the split files) self-bootstrap from
+    # emacs-mac-setup/stable on first Emacs run via init.el's
+    # my/ensure-config-file-from-url, and via config.org's own
+    # my/ensure-config-file for the split files. No cp from this
+    # script needed — keeps the setup script narrow and the bootstrap
+    # logic in one place.
   else
     echo "==> Cloning repo to iCloud..."
     if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
@@ -311,13 +299,9 @@ if [ -n "$GH_USER" ]; then
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
     mkdir -p "$ICLOUD_REPO_PATH/config" "$ICLOUD_REPO_PATH/data/org"
-    if [ ! -f "$ICLOUD_REPO_PATH/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-      cp "$SCRIPT_DIR/config.org"      "$ICLOUD_REPO_PATH/config/config.org"
-      cp "$SCRIPT_DIR/core.org"        "$ICLOUD_REPO_PATH/config/core.org"        2>/dev/null || true
-      cp "$SCRIPT_DIR/org-setup.org"   "$ICLOUD_REPO_PATH/config/org-setup.org"   2>/dev/null || true
-      cp "$SCRIPT_DIR/gptel-setup.org" "$ICLOUD_REPO_PATH/config/gptel-setup.org" 2>/dev/null || true
-      echo "    Config files copied to config/ subfolder."
-    fi
+    # config.org and the split files (core/org-setup/gptel-setup/wiki-setup/
+    # org-apple-reminders-setup) self-bootstrap from emacs-mac-setup/stable
+    # on first Emacs run via init.el. No cp from SCRIPT_DIR needed.
 
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
     git -C "$ICLOUD_REPO_PATH" config user.name "$GIT_NAME"
@@ -389,26 +373,16 @@ HOOKEOF
   git -C "$ICLOUD_REPO_PATH" commit -m "chore: update setup-emacs-mac.conf" \
     -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" 2>/dev/null || true
 
-# --- Local mode: config.org from scripts folder ---
+# --- Local mode: config.org self-bootstraps on first Emacs run -----
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
     mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
     echo "==> ~/${GH_REPO}/ created."
   fi
-  if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
-    echo "==> config.org copied to ~/${GH_REPO}/config/."
-  elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
-    skip "config.org (user-managed — not overwritten)"
-  else
-    echo "WARN: No config.org found — Emacs will start with basic setup."
-  fi
-  # Modular files are setup-managed — always update like init.el
-  for _CF in core.org org-setup.org gptel-setup.org; do
-    [ -f "$SCRIPT_DIR/$_CF" ] && cp "$SCRIPT_DIR/$_CF" "$EMACS_CONFIG_DIR/config/$_CF" \
-      && echo "==> $_CF updated."
-  done
-  unset _CF
+  # config.org and the split files self-bootstrap from emacs-mac-setup/
+  # stable on first Emacs run via init.el's my/ensure-config-file-from-url.
+  # No cp from SCRIPT_DIR needed — single source of truth for the
+  # bootstrap logic lives in init.el.
 fi
 
 echo "==> Populating ~/.emacs.d/config-readonly/..."
