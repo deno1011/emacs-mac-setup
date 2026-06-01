@@ -350,6 +350,12 @@ else
 fi
 
 # --- secrets.el ---
+# Both API keys use the same flow:
+#   1. Load from Bitwarden if the item exists.
+#   2. If not, prompt the user interactively, then SAVE the entered
+#      key to Bitwarden (creating the item) so future installs find it.
+#   3. Either way, write a (setenv ...) line to secrets.el.
+# Symmetric — no key is special-cased.
 if [ -f "$EMACS_SECRETS" ]; then
   skip "secrets.el"
 else
@@ -357,30 +363,27 @@ else
   if [ -n "$GH_USER" ] && [ -n "$BW_SESSION" ]; then
     echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
 
-    echo "==> Fetching Anthropic API key from Bitwarden..."
-    ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
+    ANTHROPIC_API_KEY=$(bw_ensure_api_key \
+                          "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
+                          "Anthropic API key" \
+                          "https://console.anthropic.com/settings/keys")
     if [ -n "$ANTHROPIC_API_KEY" ]; then
       printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
-      echo "    Anthropic key written."
     else
-      echo "    Anthropic key not found in Bitwarden — leaving placeholder."
-      echo ";; ANTHROPIC_API_KEY: add as a Bitwarden item named '$BW_ANTHROPIC_ITEM'" >> "$EMACS_SECRETS"
+      echo ";; ANTHROPIC_API_KEY: add Bitwarden item '$BW_ANTHROPIC_ITEM' and re-run setup" >> "$EMACS_SECRETS"
     fi
 
-    echo "==> Fetching Gemini API key from Bitwarden (free tier — default model)..."
-    GEMINI_API_KEY=$(bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD") || true
+    GEMINI_API_KEY=$(bw_ensure_api_key \
+                       "$BW_GEMINI_ITEM" "$BW_FIELD" \
+                       "Gemini API key (free)" \
+                       "https://aistudio.google.com/apikey")
     if [ -n "$GEMINI_API_KEY" ]; then
       printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
-      echo "    Gemini key written — Gemini 2.0 Flash will be the default model in gptel."
     else
-      echo "    Gemini key not found in Bitwarden — to enable free Gemini default:"
-      echo "      1. Get a key at https://aistudio.google.com/apikey (free)"
-      echo "      2. Add to Bitwarden as item named '$BW_GEMINI_ITEM'"
-      echo "      3. Re-run this setup script or edit ~/.emacs.d/secrets.el manually"
-      echo ";; GEMINI_API_KEY: add as a Bitwarden item named '$BW_GEMINI_ITEM'" >> "$EMACS_SECRETS"
+      echo ";; GEMINI_API_KEY: add Bitwarden item '$BW_GEMINI_ITEM' and re-run setup" >> "$EMACS_SECRETS"
     fi
 
-    echo "    secrets.el written."
+    echo "==> secrets.el written."
   else
     echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
     echo "==> secrets.el created (empty — no GitHub/Bitwarden configured)."
