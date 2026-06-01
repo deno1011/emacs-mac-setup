@@ -2,7 +2,7 @@
 # Bootstrap: Downloads all Emacs setup scripts from GitHub.
 # Usage: bash bootstrap.sh [branch]
 # Example: bash bootstrap.sh stable
-# GitHub user is detected automatically (gh session → Bitwarden → interactive prompt).
+# GitHub user is detected from an existing gh session or requested interactively.
 
 set -e
 
