@@ -19,10 +19,14 @@ LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 the wiki lives inside whatever GH_REPO the user chose at install time
 (~/emacs/ by default; ~/emacs-data/ etc. for custom installs).")
 
-(defvar my/wiki-preferred-model "Claude Sonnet 4.6"
+(defvar my/wiki-preferred-model nil
   "Label in `my/gptel-backends' used for wiki sessions opened by the
-helpers in this file. Sonnet is reliable + cheap; bump to 'Claude Opus 4.7'
-for harder ingests, or set to nil to inherit the buffer's default backend.")
+helpers in this file.
+
+nil means inherit the normal gptel backend/model selected during setup
+(for example Gemini 2.0 Flash on a fresh install).  Set this to a label
+from `my/gptel-backends' only when the wiki should deliberately use a
+different model for a specific workflow.")
 #+end_src
 
 * First-time Bootstrap
