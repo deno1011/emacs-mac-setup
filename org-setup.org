@@ -548,11 +548,14 @@ in the default views.
 
 #+begin_src emacs-lisp
 (defvar my/-agenda-scan-roots
-  '("data/org/" "wiki/emacs/")
+  '("data/org/" "wiki/")
   "Subdirectories of `my/data-dir' scanned for agenda-relevant .org files.
 Limited on purpose — including the whole ~/emacs/ tree (config/, top-level,
 etc.) bloated the dispatcher to ~20-second initialization. Add a dir
-here and call M-x my/refresh-agenda-files if you need more coverage.")
+here and call M-x my/refresh-agenda-files if you need more coverage.
+
+=wiki/= covers any sub-domain (wiki/emacs/, wiki/work/, wiki/research/,
+etc.). New sub-wikis are picked up automatically.")
 
 (defvar my/-agenda-path-excludes
   '("/\\.git/" "/archive/" "/elpa/" "/#[^/]+#\\'" "/\\.#")
