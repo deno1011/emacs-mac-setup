@@ -652,12 +652,27 @@ absent locally.")
   "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/gtd-templates/"
   "Base URL for fetching GTD starter templates on first install.")
 
+(defvar my/-gtd-bootstrap-marker
+  (expand-file-name ".bootstrap-completed"
+                    (expand-file-name "data/org/" my/data-dir))
+  "Marker file. Once present, the GTD layer's auto-fetch is locked.
+See the marker file content for the full explanation.")
+
 (defun my/gtd-bootstrap ()
   "Create ~/emacs/data/org/{gtd,archive}/ and seed missing GTD starter
 files from templates. Idempotent — only creates what is absent.
 Auto-runs on package load; can also be invoked as M-x my/gtd-bootstrap.
-Returns t if anything was created, nil otherwise."
+Returns t if anything was created, nil otherwise.
+
+Once `my/-gtd-bootstrap-marker' exists, this is a complete no-op —
+the user owns the GTD layer."
   (interactive)
+  (if (file-exists-p my/-gtd-bootstrap-marker)
+      nil
+    (my/-gtd-bootstrap-do)))
+
+(defun my/-gtd-bootstrap-do ()
+  "Actual GTD bootstrap work. Internal — call `my/gtd-bootstrap'."
   (let ((created nil)
         (org-root (expand-file-name "data/org/" my/data-dir)))
     ;; 1. Directory tree (data/org/ + gtd/ + archive/)
@@ -694,6 +709,11 @@ Returns t if anything was created, nil otherwise."
                 (error
                  (message "gtd-bootstrap: could not fetch %s: %s"
                           rel (error-message-string err))))))))))
+    ;; Drop the marker so future runs skip the entire bootstrap. The
+    ;; marker is a verbose self-documenting file written by
+    ;; my/-bootstrap-write-marker (defined in init.el).
+    (when (fboundp 'my/-bootstrap-write-marker)
+      (my/-bootstrap-write-marker org-root "gtd"))
     (when (and created (called-interactively-p 'any))
       (message "GTD bootstrapped at %s" org-root))
     created))
