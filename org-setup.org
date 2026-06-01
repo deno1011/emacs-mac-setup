@@ -1536,8 +1536,11 @@ Pattern based on Karpathy's LLM Wiki gist
   :ensure t
   :init (setq org-roam-v2-ack t)
   :custom
-  (org-roam-directory (expand-file-name "~/emacs/wiki/emacs"))
-  (org-roam-db-location (expand-file-name "~/emacs/wiki/emacs/.org-roam.db"))
+  ;; Derive from my/data-dir so the wiki lives inside whatever GH_REPO
+  ;; the user chose at install time (~/emacs/ by default;
+  ;; ~/emacs-data/ etc. for custom installs).
+  (org-roam-directory (expand-file-name "wiki/emacs" my/data-dir))
+  (org-roam-db-location (expand-file-name "wiki/emacs/.org-roam.db" my/data-dir))
   (org-roam-completion-everywhere t)
   :bind (("C-c n l" . org-roam-buffer-toggle)
          ("C-c n f" . org-roam-node-find)

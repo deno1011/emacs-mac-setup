@@ -1,4 +1,4 @@
-;; Entry point — loads config from ~/emacs/config/config.org
+;; Entry point — loads config from ~/GH_REPO/config/config.org
 ;;
 ;; This file is intentionally minimal. Its only job is to:
 ;;   1. Set up package archives and use-package
@@ -43,12 +43,12 @@
 
 ;; Hardcoded by setup script at install time. Repo: emacs
 ;; Re-running setup with a different repo overwrites this file.
-(defvar my/data-dir (expand-file-name "~/emacs/")
+(defvar my/data-dir (expand-file-name "~/GH_REPO/")
   "Root of the personal data repo symlink.")
 
 ;; First-install fallback: fetch missing config files from the public
 ;; bootstrap repo (emacs-mac-setup/stable). The personal layer (iCloud
-;; / ~/emacs/) always takes priority; this is the bootstrap-of-last-
+;; / ~/GH_REPO/) always takes priority; this is the bootstrap-of-last-
 ;; resort. The same URL pattern is reused by config.org for the split
 ;; files and by wiki-setup.org / org-setup.org for templates.
 (defvar my/config-bootstrap-url
@@ -74,12 +74,12 @@
 ;; that layer's bootstrap does nothing — the user is presumed to own
 ;; the content (renames, deletions, edits are all respected).
 ;;
-;; Markers live INSIDE the user's iCloud-synced ~/emacs/ tree so they
+;; Markers live INSIDE the user's iCloud-synced ~/GH_REPO/ tree so they
 ;; travel with the repo across Macs. See the marker text below for the
 ;; full explanation that gets written into each file.
 
 (defvar my/-bootstrap-marker-template
-  "Bootstrap-completion sentinel for Emacs setup at ~/emacs/.
+  "Bootstrap-completion sentinel for Emacs setup at ~/GH_REPO/.
 
 Layer:         %s
 Created:       %s
@@ -122,19 +122,19 @@ you. The bootstrap will not silently undo them.
 Three layers, three independent markers
 ================================================================
 
-  ~/emacs/config/.bootstrap-completed       init.el + config.org
+  ~/GH_REPO/config/.bootstrap-completed       init.el + config.org
                                             governs the config split
                                             files (core, org-setup,
                                             gptel-setup, wiki-setup,
                                             org-apple-reminders-setup)
 
-  ~/emacs/wiki/emacs/.bootstrap-completed   wiki-setup.org
+  ~/GH_REPO/wiki/emacs/.bootstrap-completed   wiki-setup.org
                                             governs WIKI.org schema,
                                             index.org, log.org. Wiki
                                             page CONTENT is never auto-
                                             fetched, only the schema.
 
-  ~/emacs/data/org/.bootstrap-completed     org-setup.org GTD bootstrap
+  ~/GH_REPO/data/org/.bootstrap-completed     org-setup.org GTD bootstrap
                                             governs inbox/calendar/
                                             refile/diary plus gtd/
                                             {projects,next,waiting,
@@ -167,7 +167,7 @@ PRIVATE repo (your personal data, iCloud-synced, NEVER fetched by elisp):
 
   github.com/<your-github-user>/emacs   (e.g., deno1011/emacs)
 
-  Authenticated git access only. Contains the iCloud-synced ~/emacs/
+  Authenticated git access only. Contains the iCloud-synced ~/GH_REPO/
   tree on disk:
     config/                      your customizations of the config files
     data/org/                    your GTD files, journal, personal notes
@@ -186,8 +186,8 @@ It does not authenticate to git or to any private repo.
 iCloud sync — why this marker travels with the repo
 ================================================================
 
-~/emacs/ is symlinked to:
-  ~/Library/Mobile Documents/com~apple~CloudDocs/emacs/
+~/GH_REPO/ is symlinked to:
+  ~/Library/Mobile Documents/com~apple~CloudDocs/GH_REPO/
 
 iCloud Drive syncs that folder to all your Macs (and read-only to
 iOS via the Files app). This marker file lives inside that synced
@@ -202,7 +202,7 @@ area, so it travels automatically across all your devices:
      possible.
 
 Race-condition warning: if you open Emacs on a FRESH Mac BEFORE
-iCloud has finished the initial sync of ~/emacs/, this marker may
+iCloud has finished the initial sync of ~/GH_REPO/, this marker may
 not have arrived yet. The bootstrap would then treat the layer as
 first-install, fetch public files, and iCloud would later arrive
 with your personal files — creating conflict copies that you'd
@@ -246,9 +246,9 @@ References
 ================================================================
 
   Bootstrap entry point:   ~/.emacs.d/init.el
-  Per-layer source:        ~/emacs/config/config.org
-                           ~/emacs/config/wiki-setup.org
-                           ~/emacs/config/org-setup.org
+  Per-layer source:        ~/GH_REPO/config/config.org
+                           ~/GH_REPO/config/wiki-setup.org
+                           ~/GH_REPO/config/org-setup.org
   Public bootstrap repo:   github.com/deno1011/emacs-mac-setup
   Setup scripts:           bootstrap.sh + setup-emacs-*.sh
 "
