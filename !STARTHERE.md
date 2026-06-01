@@ -4,20 +4,16 @@
 
 ## Open Terminal and Run
 
-Open **Terminal**, `cd` to the folder where you want the scripts, then run:
+Open **Terminal** and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
-chmod +x bootstrap.sh
-./bootstrap.sh stable
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)" bootstrap stable
 ```
 
 For development testing, use the same pattern with another branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
-chmod +x bootstrap.sh
-./bootstrap.sh main
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh)" bootstrap main
 ```
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  
