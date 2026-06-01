@@ -80,6 +80,24 @@ Call after editing WIKI.org or significant index changes."
 Helpers that collapse the "open gptel + switch directive + switch backend +
 type prompt + send" dance into a single command per use case.
 
+** Internal: slugify a string
+
+All path-deriving helpers route user-supplied or extracted names
+through this so filenames stay =lowercase-kebab-case= per the wiki's
+Naming convention. Without it, =my/wiki-ingest-buffer "Next Steps"=
+would write =raw/Next Steps.org=.
+
+#+begin_src emacs-lisp
+(defun my/wiki--slugify (s)
+  "Convert string S to lowercase-kebab-case.
+Lowercases, replaces runs of non-alphanumeric chars with single dashes,
+trims leading/trailing dashes. Empty or nil input returns \"untitled\"."
+  (let* ((s (downcase (or s "")))
+         (s (replace-regexp-in-string "[^a-z0-9]+" "-" s))
+         (s (replace-regexp-in-string "\\`-+\\|-+\\'" "" s)))
+    (if (string-empty-p s) "untitled" s)))
+#+end_src
+
 ** Internal: open a configured wiki buffer
 
 #+begin_src emacs-lisp
@@ -138,10 +156,13 @@ chains directly into =my/wiki-ingest=.
 
 #+begin_src emacs-lisp
 (defun my/wiki-import (file)
-  "Copy FILE into the wiki's raw/ directory and immediately ingest it."
+  "Copy FILE into the wiki's raw/ directory and immediately ingest it.
+The destination filename is slugified to lowercase-kebab-case."
   (interactive (list (read-file-name "Import + ingest: " nil nil t)))
   (let* ((raw-dir (expand-file-name "raw/" my/wiki-base-dir))
-         (dest (expand-file-name (file-name-nondirectory file) raw-dir)))
+         (slug (my/wiki--slugify (file-name-base file)))
+         (ext (or (file-name-extension file t) ""))
+         (dest (expand-file-name (concat slug ext) raw-dir)))
     (unless (file-directory-p raw-dir)
       (make-directory raw-dir t))
     (copy-file file dest t)
@@ -156,12 +177,13 @@ For web articles. Saves the response under =raw/<slug>.md=.
 #+begin_src emacs-lisp
 (defun my/wiki-ingest-url (url &optional slug)
   "Download URL to raw/<SLUG>.md and ingest it.
-If SLUG is omitted, derived from the URL's last path component."
+If SLUG is omitted, derived from the URL's last path component.
+Final slug is slugified to lowercase-kebab-case."
   (interactive "sURL to ingest: \nsSlug (blank to derive from URL): ")
-  (let* ((slug (if (and slug (not (string-empty-p slug)))
-                   slug
-                 (let ((base (file-name-base (url-unhex-string url))))
-                   (if (string-empty-p base) "untitled" base))))
+  (let* ((raw-slug (if (and slug (not (string-empty-p slug)))
+                       slug
+                     (file-name-base (url-unhex-string url))))
+         (slug (my/wiki--slugify raw-slug))
          (raw-dir (expand-file-name "raw/" my/wiki-base-dir))
          (dest (expand-file-name (format "%s.md" slug) raw-dir)))
     (unless (file-directory-p raw-dir)
@@ -194,7 +216,8 @@ region is active, only the region is saved; otherwise the whole buffer."
             nil nil default))))
   (when (or (null slug) (string-empty-p slug))
     (user-error "Slug required"))
-  (let* ((raw-dir (expand-file-name "raw/" my/wiki-base-dir))
+  (let* ((slug (my/wiki--slugify slug))
+         (raw-dir (expand-file-name "raw/" my/wiki-base-dir))
          (ext (if (derived-mode-p 'org-mode) ".org" ".md"))
          (dest (expand-file-name (concat slug ext) raw-dir))
          (start (if (use-region-p) (region-beginning) (point-min)))
