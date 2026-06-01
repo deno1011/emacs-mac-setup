@@ -32,7 +32,7 @@ See [README.md](README.md) for full documentation.
 | Homebrew | always | installed if not present; requires sudo once |
 | All setup scripts | always | downloaded to the current folder |
 | `gh` (GitHub CLI) | GitHub mode | needed to access your private config repo |
-| `bitwarden-cli` | GitHub mode | used to fetch your GitHub token and API keys |
+| `bitwarden-cli` + Bitwarden app | GitHub mode | used to store/fetch your GitHub token and API keys; first-time users are guided to create a vault |
 | Ollama | default local AI mode | installed if missing |
 | `qwen2.5-coder:7b` | default local AI mode | pulled with visible terminal progress |
 

@@ -30,13 +30,19 @@ else
   echo "    Bitwarden CLI installed."
 fi
 
-# --- Bitwarden App (optional, GUI only) ---
+# --- Bitwarden App ---
 if [ -d "/Applications/Bitwarden.app" ] || [ -d "$HOME/Applications/Bitwarden.app" ]; then
   echo "==> Bitwarden App already installed."
 else
   echo ""
-  echo "  NOTE: The Bitwarden desktop app is optional — the setup scripts only need the CLI."
-  echo "  Install it from the Mac App Store or https://bitwarden.com/download/ if you want the GUI."
+  echo "==> Installing Bitwarden desktop app..."
+  if brew install --cask bitwarden; then
+    echo "    Bitwarden desktop app installed."
+  else
+    echo "    WARN: Bitwarden desktop app install failed."
+    echo "    You can still continue with the CLI, or install the app later from:"
+    echo "    https://bitwarden.com/download/"
+  fi
 fi
 
 echo ""
@@ -48,13 +54,33 @@ BW_STATUS=$(bw status 2>/dev/null \
 
 if [ "$BW_STATUS" = "unauthenticated" ]; then
   echo "==> Bitwarden login"
-  echo "    Enter your email and master password."
+  echo "    Enter your email and master password for an existing Bitwarden account."
   echo "    If you use 2FA, you will be prompted for the code too."
+  echo "    New to Bitwarden? Create and verify an account first; then return here."
   echo ""
+  printf "  Do you already have a Bitwarden account? [y/N]: "
+  read -r BW_HAS_ACCOUNT < /dev/tty
+  case "$BW_HAS_ACCOUNT" in
+    y|Y|yes|YES)
+      ;;
+    *)
+      echo ""
+      echo "==> Opening Bitwarden so you can create an account."
+      open -a Bitwarden 2>/dev/null || open "https://vault.bitwarden.com/#/register" 2>/dev/null || true
+      echo ""
+      echo "  Create the Bitwarden account, verify the email if Bitwarden asks,"
+      echo "  then return to this terminal."
+      printf "  Press Return when the account exists and you are ready to log in..."
+      read -r _BW_WAIT < /dev/tty
+      unset _BW_WAIT
+      ;;
+  esac
+  unset BW_HAS_ACCOUNT
+
   printf "  Bitwarden email: "
-  read -r BW_EMAIL
+  read -r BW_EMAIL < /dev/tty
   printf "  Master password: "
-  read -rs BW_MASTER_INPUT
+  read -rs BW_MASTER_INPUT < /dev/tty
   echo ""
 
   # Store master password in Keychain right away
@@ -67,6 +93,7 @@ if [ "$BW_STATUS" = "unauthenticated" ]; then
 
   if [ -z "$BW_SESSION" ]; then
     echo "  Auto-login failed (2FA or wrong credentials)."
+    echo "  If this is a new account, make sure it was created and verified first."
     echo "  Running interactive login — enter credentials when prompted:"
     bw login
     # Re-read master password for unlock
@@ -80,7 +107,7 @@ else
   BW_MASTER=$(security find-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" -w 2>/dev/null) || true
   if [ -z "$BW_MASTER" ]; then
     printf "==> Bitwarden master password (stored in Keychain for future use): "
-    read -rs BW_MASTER
+    read -rs BW_MASTER < /dev/tty
     echo ""
     security delete-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" 2>/dev/null || true
     security add-generic-password -a "$BW_KEYCHAIN_ACCOUNT" -s "$BW_KEYCHAIN_SERVICE" -w "$BW_MASTER" -A

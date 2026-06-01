@@ -81,69 +81,12 @@ if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
   [ -n "$_BS_GH_USER" ] && echo "    GitHub user: $_BS_GH_USER (existing gh session)"
 fi
 
-# 2. Not authenticated — try Bitwarden → GitHub token → authenticate → get username
-if [ -z "$_BS_GH_USER" ]; then
-  _BS_BW_KC_SVC="bitwarden-master"
-  _BS_BW_KC_ACC="$USER"
-  _BS_BW_GH_ITEM="github-cli-token"
-  _BS_BW_FIELD="Key"
-
-  if ! command -v bw &>/dev/null; then
-    echo "    Installing Bitwarden CLI..."
-    brew install bitwarden-cli &>/dev/null
-    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-  fi
-
-  _BS_GH_TOKEN=""
-  if command -v bw &>/dev/null; then
-    _BS_BW_MASTER=$(security find-generic-password -a "$_BS_BW_KC_ACC" -s "$_BS_BW_KC_SVC" -w 2>/dev/null) || true
-    if [ -z "$_BS_BW_MASTER" ]; then
-      printf "    Bitwarden master password: "
-      read -rs _BS_BW_MASTER < /dev/tty
-      echo ""
-    fi
-    export __BS_BW_MASTER="$_BS_BW_MASTER"
-
-    _BS_BW_STATUS=$(bw status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unauthenticated'))" 2>/dev/null || echo "unauthenticated")
-    _BS_BW_SESSION=""
-
-    if [ "$_BS_BW_STATUS" = "unauthenticated" ]; then
-      printf "    Bitwarden email: "
-      read -r _BS_BW_EMAIL < /dev/tty
-      _BS_BW_SESSION=$(bw login "$_BS_BW_EMAIL" --passwordenv __BS_BW_MASTER --raw < /dev/tty) || true
-    fi
-
-    if [ -z "$_BS_BW_SESSION" ]; then
-      _BS_BW_SESSION=$(bw unlock --passwordenv __BS_BW_MASTER --raw 2>/dev/null) || true
-    fi
-    unset __BS_BW_MASTER
-
-    if [ -n "$_BS_BW_SESSION" ]; then
-      echo "    Bitwarden unlocked — fetching GitHub token..."
-      bw sync --session "$_BS_BW_SESSION" &>/dev/null || true
-      _BS_GH_TOKEN=$(bw get item "$_BS_BW_GH_ITEM" --session "$_BS_BW_SESSION" 2>/dev/null \
-        | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-f=[x['value'] for x in d.get('fields',[]) if x['name']=='${_BS_BW_FIELD}']
-if f:
-    print(f[0].strip())
-else:
-    print((d.get('login',{}).get('password') or '').strip())
-" 2>/dev/null) || true
-    else
-      echo "    WARN: Bitwarden unlock failed."
-    fi
-  fi
-
-  if [ -n "$_BS_GH_TOKEN" ]; then
-    echo "$_BS_GH_TOKEN" | gh auth login --with-token
-    _BS_GH_USER=$(gh api user --jq '.login' 2>/dev/null) || true
-    [ -n "$_BS_GH_USER" ] && echo "    GitHub user: $_BS_GH_USER (authenticated via Bitwarden)"
-  fi
-  unset _BS_GH_TOKEN _BS_BW_SESSION _BS_BW_MASTER _BS_BW_EMAIL _BS_BW_STATUS \
-        _BS_BW_KC_SVC _BS_BW_KC_ACC _BS_BW_GH_ITEM _BS_BW_FIELD
-fi
+# 2. Do not unlock Bitwarden here.
+# On a first-time Mac the vault may not exist yet; trying to log in here
+# interrupts bootstrap before setup-bitwarden.sh can install the app and guide
+# account creation.  If gh is not authenticated yet, ask for the GitHub user and
+# continue with public/interactive config.  GitHub auth happens later after the
+# proper Bitwarden setup step, with browser login fallback.
 
 # 3. Still unknown — ask (one question only)
 if [ -z "$_BS_GH_USER" ]; then

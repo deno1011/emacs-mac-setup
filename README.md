@@ -9,7 +9,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 **Have these ready before you begin:**
 
 - [ ] GitHub account + personal access token — Settings › Developer settings › Personal access tokens › Classic › scope: `repo`
-- [ ] Bitwarden account *(vault entries are created interactively by `setup-bitwarden.sh` — no manual setup needed)*
+- [ ] Bitwarden account, or an email address ready to create one during setup *(the desktop app is installed and opened when no account exists; vault entries are created interactively by `setup-bitwarden.sh`)*
 - [ ] iCloud Drive enabled *(native variants only)*
 
 **Everything else is automated:**
@@ -17,7 +17,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 | What | How |
 |---|---|
 | Homebrew | Installed by `bootstrap.sh` if missing |
-| GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
+| GitHub CLI, git-crypt, Bitwarden CLI + desktop app | Installed by setup scripts |
 | `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
 | Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
 | Ollama + `qwen2.5-coder:7b` | Installed, started, and pulled for the default local gptel agent setup |
