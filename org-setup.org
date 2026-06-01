@@ -1143,10 +1143,17 @@ not → ~brew install~ in the background + log entry.
                  bin formula)))))
 
 ;; Python packages for org-babel execution
-(dolist (pkg '("matplotlib" "numpy"))
-  (unless (= 0 (call-process "pip3" nil nil nil "show" pkg))
-    (my/pip-install-and-log pkg)
-    (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
+(unless (executable-find "pip3")
+  (when (executable-find "brew")
+    (my/brew-install-and-log "formula" "python" "install" "python")
+    (message "pip3 not found — installing brew python in background. Restart Emacs when done.")))
+
+(if-let ((pip3 (executable-find "pip3")))
+    (dolist (pkg '("matplotlib" "numpy"))
+      (unless (= 0 (call-process pip3 nil nil nil "show" pkg))
+        (my/pip-install-and-log pkg)
+        (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
+  (message "Python packages skipped until pip3 is available. Restart after brew python finishes."))
 #+end_src
 
 ** Enable Babel Languages for Graphics

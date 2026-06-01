@@ -8,42 +8,58 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 ;;; -*- lexical-binding: t -*-
 (message "Loading config... (first start may take a few minutes while packages install)")
 
+;; GUI Emacs does not always inherit the shell PATH on a fresh macOS install.
+;; Keep both common Homebrew prefixes visible without assuming CPU architecture:
+;; Apple Silicon usually uses /opt/homebrew, Intel usually uses /usr/local.
+(dolist (dir '("/opt/homebrew/bin" "/usr/local/bin"))
+  (when (file-directory-p dir)
+    (add-to-list 'exec-path dir)
+    (let ((path (or (getenv "PATH") "")))
+      (unless (string-match-p
+               (regexp-quote (concat dir path-separator))
+               (concat path path-separator))
+        (setenv "PATH" (concat dir path-separator path))))))
+
 ;; Install a brew package in the background and log it for clean uninstall.
 ;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
 ;; the full brew arguments (e.g. "install" "--cask" "font-jetbrains-mono").
 (defun my/brew-install-and-log (type package &rest brew-args)
-  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
-         (entry    (format "%s:%s\n" type package))
-         (proc     (apply #'start-process
-                          (format "install-%s" package)
-                          (format "*install-%s*" package)
-                          "brew" brew-args)))
-    (set-process-sentinel
-     proc
-     (lambda (p _e)
-       (when (= (process-exit-status p) 0)
-         (unless (and (file-exists-p log-file)
-                      (with-temp-buffer
-                        (insert-file-contents log-file)
-                        (search-forward entry nil t)))
-           (append-to-file entry nil log-file)))))))
+  (if-let ((brew (executable-find "brew")))
+      (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+             (entry    (format "%s:%s\n" type package))
+             (proc     (apply #'start-process
+                              (format "install-%s" package)
+                              (format "*install-%s*" package)
+                              brew brew-args)))
+        (set-process-sentinel
+         proc
+         (lambda (p _e)
+           (when (= (process-exit-status p) 0)
+             (unless (and (file-exists-p log-file)
+                          (with-temp-buffer
+                            (insert-file-contents log-file)
+                            (search-forward entry nil t)))
+               (append-to-file entry nil log-file))))))
+    (message "brew not found — cannot auto-install %s" package)))
 
 ;; Install a pip package in the background and log it for clean uninstall.
 (defun my/pip-install-and-log (package)
-  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
-         (entry    (format "pip:%s\n" package))
-         (proc     (start-process (format "install-%s" package)
-                                  (format "*install-%s*" package)
-                                  "pip3" "install" "--break-system-packages" package)))
-    (set-process-sentinel
-     proc
-     (lambda (p _e)
-       (when (= (process-exit-status p) 0)
-         (unless (and (file-exists-p log-file)
-                      (with-temp-buffer
-                        (insert-file-contents log-file)
-                        (search-forward entry nil t)))
-           (append-to-file entry nil log-file)))))))
+  (if-let ((pip3 (executable-find "pip3")))
+      (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+             (entry    (format "pip:%s\n" package))
+             (proc     (start-process (format "install-%s" package)
+                                      (format "*install-%s*" package)
+                                      pip3 "install" "--break-system-packages" package)))
+        (set-process-sentinel
+         proc
+         (lambda (p _e)
+           (when (= (process-exit-status p) 0)
+             (unless (and (file-exists-p log-file)
+                          (with-temp-buffer
+                            (insert-file-contents log-file)
+                            (search-forward entry nil t)))
+               (append-to-file entry nil log-file))))))
+    (message "pip3 not found — cannot auto-install Python package %s" package)))
 #+end_src
 
 * PATH
@@ -725,6 +741,11 @@ Embark (`C-.`) is extremely powerful:
   :config
   (setq ispell-program-name "aspell"
         ispell-dictionary "german"))
-(add-hook 'org-mode-hook 'turn-on-flyspell 'append)
+(defun my/turn-on-flyspell-if-aspell-available ()
+  "Enable Flyspell only when aspell is installed."
+  (if (executable-find ispell-program-name)
+      (turn-on-flyspell)
+    (message "Flyspell skipped: %s not found yet; restart after brew install finishes."
+             ispell-program-name)))
+(add-hook 'org-mode-hook #'my/turn-on-flyspell-if-aspell-available 'append)
 #+end_src
-

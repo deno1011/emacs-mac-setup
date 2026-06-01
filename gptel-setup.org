@@ -37,7 +37,8 @@ the use-package form below and remove the =package-vc-install= call.
   (package-vc-install
    '(gptel-agent-runtime
      :url "https://github.com/deno1011/gptel-agent-runtime"
-     :branch "main")))
+     :branch "main"
+     :ignored-files ("test/*" "docs/*" "scripts/*"))))
 
 ;; Pull latest main asynchronously at startup. This is non-blocking and silent
 ;; if offline. Updated code becomes active from the next Emacs session.
