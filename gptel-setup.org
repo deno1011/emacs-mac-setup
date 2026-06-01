@@ -280,64 +280,6 @@ runtime package reusable across machines.
     (message "gptel interactive default: Gemini 2.5 Flash")))
 #+end_src
 
-* Wiki Maintainer Directive
-
-User-side gptel directive for the Emacs-knowledge LLM Wiki at
-=~/emacs/wiki/emacs/=. Pattern: Karpathy's LLM Wiki — a persistent,
-LLM-maintained knowledge base of interlinked org-roam pages.
-
-The directive is built dynamically from =WIKI.org= (the schema) and
-=index.org= (the catalog), so edits to either propagate after
-=M-x my/wiki-maintainer-refresh=. The directive is *not* auto-selected
-by =gptel-agent-runtime-directive-for-current-runtime=; switch to it
-manually via gptel's directive menu.
-
-#+begin_src emacs-lisp
-(defvar my/wiki-base-dir (expand-file-name "~/emacs/wiki/emacs/")
-  "Root of the Emacs-knowledge LLM Wiki.")
-
-(defun my/wiki-maintainer-build-prompt ()
-  "Build the Wiki Maintainer system prompt from WIKI.org and index.org."
-  (let* ((schema-path (expand-file-name "WIKI.org" my/wiki-base-dir))
-         (index-path  (expand-file-name "index.org" my/wiki-base-dir))
-         (file->str (lambda (p) (when (file-readable-p p)
-                                  (with-temp-buffer
-                                    (insert-file-contents p)
-                                    (buffer-string)))))
-         (schema (funcall file->str schema-path))
-         (index  (funcall file->str index-path)))
-    (concat
-     "You are the Wiki Maintainer for the user's Emacs-knowledge LLM Wiki at "
-     my/wiki-base-dir ".\n"
-     "Pattern: Karpathy LLM-Wiki — a persistent, incrementally built knowledge\n"
-     "base of interlinked org-roam pages. You own wiki/; the user curates raw/\n"
-     "and asks questions.\n\n"
-     "## Operating rules (load-bearing)\n"
-     "- Read index.org first when answering a query; drill into linked pages as needed.\n"
-     "- NEVER commit — the repo auto-pushes on commit. Surface diffs; let the user commit.\n"
-     "- One source at a time, with 2–4 bullets of discussion before writing wiki pages.\n"
-     "- Use [[id:UUID]] org-roam links for wiki-internal references; never [[file:...]].\n"
-     "- Append every operation to log.org: ** [YYYY-MM-DD] <op> | <subject>.\n"
-     "- Lint reports findings only; never auto-fix.\n\n"
-     "## Full schema (WIKI.org)\n\n"
-     (or schema "[WIKI.org not readable — abort and ask the user]")
-     "\n\n## Current index (index.org)\n\n"
-     (or index "[index.org not readable]"))))
-
-(defun my/wiki-maintainer-refresh ()
-  "Rebuild the wiki-maintainer gptel directive from disk.
-Call after editing WIKI.org or significant index changes."
-  (interactive)
-  (with-eval-after-load 'gptel
-    (setq gptel-directives
-          (cons (cons 'wiki-maintainer (my/wiki-maintainer-build-prompt))
-                (assq-delete-all 'wiki-maintainer gptel-directives)))
-    (message "wiki-maintainer directive refreshed")))
-
-(with-eval-after-load 'gptel
-  (my/wiki-maintainer-refresh))
-#+end_src
-
 * Architecture Reference
 
 For the implementation map, read:
