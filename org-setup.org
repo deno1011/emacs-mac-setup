@@ -127,7 +127,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
     (widen)))
 #+end_src
 
-* TODO States
 #+begin_src emacs-lisp
 (setq org-todo-keywords
       '((sequence "TODO(t)" "NEXT(n)" "|" "DONE(d@/!)")
@@ -155,7 +154,8 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (global-set-key (kbd "C-c l") 'org-store-link)
 #+end_src
 
-* TODO State Tag Triggers
+* State Tag Triggers
+** TODO Not sure what needs to be checked here but probably if those make sense
 #+begin_src emacs-lisp
 (setq org-todo-state-tags-triggers
       '(("CANCELLED" ("CANCELLED" . t))
@@ -166,7 +166,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
         ("NEXT"      ("WAITING") ("CANCELLED") ("HOLD"))
         ("DONE"      ("WAITING") ("CANCELLED") ("HOLD"))))
 #+end_src
-
 * Capture Templates
 #+begin_src emacs-lisp
 (let ((org-d (expand-file-name "data/org/" my/data-dir)))
@@ -548,20 +547,35 @@ Items without a category tag remain GTD action material and surface
 in the default views.
 
 #+begin_src emacs-lisp
+(defvar my/-agenda-scan-roots
+  '("data/org/" "wiki/emacs/")
+  "Subdirectories of `my/data-dir' scanned for agenda-relevant .org files.
+Limited on purpose — including the whole ~/emacs/ tree (config/, top-level,
+etc.) bloated the dispatcher to ~20-second initialization. Add a dir
+here and call M-x my/refresh-agenda-files if you need more coverage.")
+
 (defvar my/-agenda-path-excludes
   '("/\\.git/" "/archive/" "/elpa/" "/#[^/]+#\\'" "/\\.#")
-  "Path regexps universally excluded from the agenda scan
-(structural filesystem noise — not user content).")
+  "Path regexps universally excluded from the scan within each root.")
 
 (defun my/-agenda-files-scanned ()
-  "Return all .org files under `my/data-dir' except those matching
-a path in `my/-agenda-path-excludes'."
-  (let ((root (file-name-as-directory my/data-dir))
-        result)
-    (dolist (f (directory-files-recursively root "\\.org\\'"))
-      (unless (cl-some (lambda (re) (string-match-p re f))
-                       my/-agenda-path-excludes)
-        (push f result)))
+  "Return all .org files in `my/-agenda-scan-roots' (relative to
+`my/data-dir') except those matching `my/-agenda-path-excludes'.
+The directory walk also skips .git/, elpa/, archive/ entirely for
+speed via the directory-files-recursively predicate."
+  (let (result)
+    (dolist (rel my/-agenda-scan-roots)
+      (let ((root (expand-file-name rel my/data-dir)))
+        (when (file-directory-p root)
+          (dolist (f (directory-files-recursively
+                      root "\\.org\\'" nil
+                      (lambda (subdir)
+                        (not (string-match-p
+                              "/\\(\\.git\\|elpa\\|archive\\|node_modules\\)\\'"
+                              subdir)))))
+            (unless (cl-some (lambda (re) (string-match-p re f))
+                             my/-agenda-path-excludes)
+              (push f result))))))
     (nreverse result)))
 
 (defun my/refresh-agenda-files ()
