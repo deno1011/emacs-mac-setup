@@ -49,6 +49,7 @@ ask_value BW_FIELD            "Bitwarden field    (custom field name in all BW e
 ask_value BW_ITEM             "git-crypt item     (Bitwarden entry name)"              "emacs-git-crypt-key"
 ask_value BW_GH_ITEM          "GitHub token item  (Bitwarden entry name)"              "github-cli-token"
 ask_value BW_ANTHROPIC_ITEM   "Anthropic key item (Bitwarden entry name)"              "anthropic-api-key"
+ask_value BW_GEMINI_ITEM      "Gemini key item    (Bitwarden entry name, free tier OK)" "gemini-api-key"
 ask_value BW_KEYCHAIN_SERVICE "Keychain service   (macOS Keychain label)"              "bitwarden-master"
 
 if [ "$_HAD_MISSING" = true ]; then

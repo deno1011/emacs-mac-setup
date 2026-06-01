@@ -87,10 +87,12 @@ This block runs after =gptel-agent-runtime= has loaded. It:
    =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
 3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
    MLX, and Ollama backends with their respective model lists.
-4. If =GEMINI_API_KEY= is set, sets the interactive default to Gemini 2.5
-   Flash. Otherwise falls back to the prior local-Ollama default. The
-   autonomous runtime/planner default remains local regardless, so
-   planning never silently depends on a cloud key.
+4. If =GEMINI_API_KEY= is set, sets the interactive default to Gemini 2.0
+   Flash (most generous free quota: 15 RPM / 1500 RPD). Otherwise falls
+   back to the prior local-Ollama default (only triggers if you've
+   manually installed Ollama). The autonomous runtime/planner default
+   remains local regardless, so planning never silently depends on a
+   cloud key.
 
 This section carries the API keys and machine preferences, keeping the
 runtime package reusable across machines.
@@ -267,18 +269,22 @@ runtime package reusable across machines.
   (when (fboundp 'gptel-agent-runtime-use-default-local-model)
     (gptel-agent-runtime-use-default-local-model)))
 
-;; -- Interactive default: Gemini 2.5 Flash if key available ---------
-;; Runs LAST so it overrides the Ollama-local promotion above. The
-;; autonomous runtime/planner still defaults to local via
-;; `gptel-agent-runtime-default-local-model'; this only affects fresh
-;; gptel buffers opened by the user interactively.
+;; -- Interactive default: Gemini 2.0 Flash if key available ---------
+;; Runs LAST so it overrides any earlier default. 2.0 Flash has the
+;; most generous free-tier quota (15 RPM / 1500 RPD) and is plenty
+;; for daily use. Switch to 2.5 Flash/Pro manually via gptel-menu for
+;; higher-quality answers when needed.
+;;
+;; The autonomous runtime/planner still defaults to local Ollama via
+;; `gptel-agent-runtime-default-local-model' (if Ollama is installed);
+;; this only affects fresh gptel buffers opened interactively.
 (when (getenv "GEMINI_API_KEY")
-  (when-let* ((entry (assoc "Gemini 2.5 Flash" my/gptel-backends))
+  (when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
               (backend (cadr entry))
               (model (cddr entry)))
     (setq gptel-backend backend
           gptel-model   model)
-    (message "gptel interactive default: Gemini 2.5 Flash")))
+    (message "gptel interactive default: Gemini 2.0 Flash")))
 #+end_src
 
 * Architecture Reference

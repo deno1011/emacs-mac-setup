@@ -1,0 +1,11 @@
+#+TITLE: Tickler — future-scheduled
+#+STARTUP: overview
+
+Items to surface on a specific future date. Use =SCHEDULED:= or
+=DEADLINE:= timestamps. They appear in the daily agenda on/after
+the scheduled date.
+
+Examples:
+- "Renew passport — review options" SCHEDULED in 6 months
+- "Check on the kitchen reno quote" SCHEDULED next week
+- Recurring reminders: =SCHEDULED: <2026-01-01 +1y>=

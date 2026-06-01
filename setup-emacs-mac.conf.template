@@ -46,6 +46,12 @@ BW_GH_ITEM=""
 # Example: BW_ANTHROPIC_ITEM="anthropic-api-key"
 BW_ANTHROPIC_ITEM=""
 
+# Name of the Bitwarden item containing the Gemini API key (free tier —
+# default gptel model is Gemini 2.0 Flash if this key is available).
+# Get a free key at https://aistudio.google.com/apikey
+# Example: BW_GEMINI_ITEM="gemini-api-key"
+BW_GEMINI_ITEM=""
+
 # Local AI defaults for first-install gptel agent setup.
 # Ollama is installed with Homebrew when LOCAL_AI_INSTALL_OLLAMA is true.
 # The model pull can take a while; setup prints Ollama's progress in Terminal.

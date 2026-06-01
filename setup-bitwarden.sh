@@ -164,6 +164,7 @@ print('' if not v or 'PLACEHOLDER' in v else v)
 GH_TOKEN_VAL=""
 GC_KEY_VAL=""
 ANTHROPIC_VAL=""
+GEMINI_VAL=""
 
 # --- GitHub Token ---
 if [ -n "$(_bw_check_item "$BW_GH_ITEM")" ]; then
@@ -202,12 +203,22 @@ else
   echo ""
 fi
 
+# --- Gemini Key (optional, free tier) ---
+if [ -n "$(_bw_check_item "$BW_GEMINI_ITEM")" ]; then
+  echo "  Gemini Key already in Bitwarden — skipping."
+else
+  printf "  %-54s: " "Gemini API Key     (free; aistudio.google.com, Enter to skip)"
+  read -rs GEMINI_VAL < /dev/tty
+  echo ""
+fi
+
 # --- Create entries ---
 echo ""
 echo "==> Creating Bitwarden entries..."
 [ -n "$GH_TOKEN_VAL" ]   && bw_create_item "$BW_GH_ITEM"        "$GH_TOKEN_VAL"
 [ -n "$GC_KEY_VAL" ]     && bw_create_item "$BW_ITEM"           "$GC_KEY_VAL"
 [ -n "$ANTHROPIC_VAL" ]  && bw_create_item "$BW_ANTHROPIC_ITEM" "$ANTHROPIC_VAL"
+[ -n "$GEMINI_VAL" ]     && bw_create_item "$BW_GEMINI_ITEM"    "$GEMINI_VAL"
 
 echo ""
 echo "======================================================================"
@@ -216,7 +227,7 @@ echo "======================================================================"
 echo ""
 echo "  Vault entries use field name: $BW_FIELD"
 HAS_PLACEHOLDER=false
-echo "$GH_TOKEN_VAL$GC_KEY_VAL$ANTHROPIC_VAL" | grep -q "PLACEHOLDER" && HAS_PLACEHOLDER=true || true
+echo "$GH_TOKEN_VAL$GC_KEY_VAL$ANTHROPIC_VAL$GEMINI_VAL" | grep -q "PLACEHOLDER" && HAS_PLACEHOLDER=true || true
 if [ "$HAS_PLACEHOLDER" = true ]; then
   echo ""
   echo "  IMPORTANT: Placeholder values were created."

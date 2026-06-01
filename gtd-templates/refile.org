@@ -1,0 +1,13 @@
+#+TITLE: Refile — items pending GTD clarification
+#+STARTUP: overview
+
+Captured items waiting to be sorted. Most =C-c c= templates land
+here (todo, respond, note, meeting, phone, habit). Refile each item
+with =C-c C-w= during the weekly review:
+
+- Action you'll do soon       → gtd/next.org
+- Multi-step outcome          → gtd/projects.org (new heading)
+- Blocked on someone else     → gtd/waiting.org
+- Maybe-later                 → gtd/someday.org
+- Keep but no action          → gtd/reference.org
+- Done or irrelevant          → archive or delete

@@ -42,7 +42,8 @@ fi
 
 # Bitwarden needed if: iCloud repo missing OR gh not authenticated OR API key missing in container
 ANTHROPIC_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exec "$DOCKER_CONTAINER" grep -q "ANTHROPIC_API_KEY" /home/emacs/.bashrc 2>/dev/null && echo "yes") || true
-if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "$ANTHROPIC_KEY_SET" != "yes" ]; then
+GEMINI_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exec "$DOCKER_CONTAINER" grep -q "GEMINI_API_KEY" /home/emacs/.bashrc 2>/dev/null && echo "yes") || true
+if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "$ANTHROPIC_KEY_SET" != "yes" ] || [ "$GEMINI_KEY_SET" != "yes" ]; then
   if ! command -v bw &>/dev/null; then
     echo "==> Installing Bitwarden CLI (needed for setup)..."
     brew install bitwarden-cli
@@ -497,18 +498,30 @@ elif docker exec "$DOCKER_CONTAINER" bash -c "[ -f '$_C_REPO_SECRETS' ] && grep 
   echo "    Symlink set."
 else
   echo "==> secrets.el from Bitwarden (repo file missing or still encrypted)..."
-  ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
+  _SECRET_TMP=$(mktemp)
+  echo ";; secrets.el — API keys (not tracked in git)" > "$_SECRET_TMP"
+
+  ANTHROPIC_API_KEY=$(bw_ensure_api_key \
+                        "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
+                        "Anthropic API key" \
+                        "https://console.anthropic.com/settings/keys")
   if [ -n "$ANTHROPIC_API_KEY" ]; then
-    _SECRET_TMP=$(mktemp)
-    printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SECRET_TMP"
-    docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
-    docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:$_C_SECRETS"
-    docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "$_C_SECRETS"
-    rm -f "$_SECRET_TMP"
-    echo "    API key set from Bitwarden."
-  else
-    echo "WARN: Anthropic API key not found in Bitwarden (Item: $BW_ANTHROPIC_ITEM, Field: $BW_FIELD)"
+    printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$_SECRET_TMP"
   fi
+
+  GEMINI_API_KEY=$(bw_ensure_api_key \
+                     "$BW_GEMINI_ITEM" "$BW_FIELD" \
+                     "Gemini API key (free)" \
+                     "https://aistudio.google.com/apikey")
+  if [ -n "$GEMINI_API_KEY" ]; then
+    printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$_SECRET_TMP"
+  fi
+
+  docker exec "$DOCKER_CONTAINER" bash -c 'mkdir -p ~/.emacs.d'
+  docker cp "$_SECRET_TMP" "$DOCKER_CONTAINER:$_C_SECRETS"
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs "$_C_SECRETS"
+  rm -f "$_SECRET_TMP"
+  echo "    secrets.el copied into container."
 fi
 
 # --- Claude Code credentials ---

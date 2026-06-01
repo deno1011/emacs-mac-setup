@@ -14,8 +14,10 @@ LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 * Wiki Root and Preferences
 
 #+begin_src emacs-lisp
-(defvar my/wiki-base-dir (expand-file-name "~/emacs/wiki/emacs/")
-  "Root of the Emacs-knowledge LLM Wiki.")
+(defvar my/wiki-base-dir (expand-file-name "wiki/emacs/" my/data-dir)
+  "Root of the Emacs-knowledge LLM Wiki. Derived from `my/data-dir' so
+the wiki lives inside whatever GH_REPO the user chose at install time
+(~/emacs/ by default; ~/emacs-data/ etc. for custom installs).")
 
 (defvar my/wiki-preferred-model "Claude Sonnet 4.6"
   "Label in `my/gptel-backends' used for wiki sessions opened by the
@@ -43,12 +45,26 @@ local files and do nothing.
   "Base URL for wiki schema templates, fetched on first install if local
 copies are missing. Matches the my/config-fallback-base-url pattern.")
 
+(defvar my/-wiki-bootstrap-marker
+  (expand-file-name ".bootstrap-completed" my/wiki-base-dir)
+  "Marker file. Once present, the wiki layer's auto-fetch is locked.
+See the marker file content for the full explanation.")
+
 (defun my/wiki-bootstrap ()
   "Create the wiki directory tree and seed WIKI.org / index.org / log.org
 from templates if missing. Idempotent — only creates what is absent.
 Auto-runs on package load; can also be invoked as M-x my/wiki-bootstrap.
-Returns t if anything was created, nil if everything was already in place."
+Returns t if anything was created, nil if everything was already in place.
+
+Once `my/-wiki-bootstrap-marker' exists, this function is a complete
+no-op — the user owns the wiki layer."
   (interactive)
+  (if (file-exists-p my/-wiki-bootstrap-marker)
+      nil
+    (my/-wiki-bootstrap-do)))
+
+(defun my/-wiki-bootstrap-do ()
+  "Actual bootstrap work. Internal — call `my/wiki-bootstrap'."
   (let ((created nil))
     ;; 1. Create directory tree
     (dolist (sub '("" "raw" "entities" "concepts" "sources"
@@ -86,6 +102,11 @@ Returns t if anything was created, nil if everything was already in place."
                 (error
                  (message "wiki-bootstrap: could not fetch %s: %s"
                           name err)))))))))
+    ;; Drop the marker so future runs skip the entire bootstrap. The
+    ;; marker is a verbose self-documenting file written by
+    ;; my/-bootstrap-write-marker (defined in init.el).
+    (when (fboundp 'my/-bootstrap-write-marker)
+      (my/-bootstrap-write-marker my/wiki-base-dir "wiki"))
     (when (and created (called-interactively-p 'any))
       (message "Wiki bootstrapped at %s" my/wiki-base-dir))
     created))
