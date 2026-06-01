@@ -1349,6 +1349,23 @@ Pattern based on Karpathy's LLM Wiki gist
   (org-roam-db-autosync-mode))
 #+end_src
 
+** Org-Roam UI — interactive graph
+Web-based graph + backlink viewer for the wiki. Toggle with
+=M-x org-roam-ui-mode= — opens a local server on port 35901 and
+launches the browser. Updates live as you edit pages.
+
+#+begin_src emacs-lisp
+(use-package org-roam-ui
+  :ensure t
+  :after org-roam
+  :custom
+  (org-roam-ui-sync-theme t)
+  (org-roam-ui-follow t)
+  (org-roam-ui-update-on-save t)
+  (org-roam-ui-open-on-start nil)
+  :bind ("C-c n u" . org-roam-ui-mode))
+#+end_src
+
 * Apple Reminders
 
 Konfiguriert in [[file:org-reminders-setup.org][org-reminders-setup.org]] — wird von [[file:config.org][config.org]] nur auf macOS geladen.
