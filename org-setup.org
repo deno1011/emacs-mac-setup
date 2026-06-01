@@ -12,7 +12,8 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :config
   (setq org-directory (expand-file-name "data/org/" my/data-dir)
         org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        org-agenda-files (append (list (expand-file-name "data/org/" my/data-dir))
+        org-agenda-files (append (list (expand-file-name "data/org/" my/data-dir)
+                                       (expand-file-name "wiki/emacs/" my/data-dir))
                                  (when (eq system-type 'darwin)
                                    (list (expand-file-name "~/org/reminders.org"))))
         org-confirm-babel-evaluate nil
