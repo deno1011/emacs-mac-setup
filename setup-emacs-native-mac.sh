@@ -108,69 +108,18 @@ _truthy() {
   esac
 }
 
-if [ "${LOCAL_AI_PROVIDER:-ollama}" = "ollama" ]; then
-  _OLLAMA_MODEL="${LOCAL_AI_DEFAULT_MODEL:-qwen2.5-coder:7b}"
-
-  if ! command -v ollama &>/dev/null; then
-    if _truthy "${LOCAL_AI_INSTALL_OLLAMA:-true}"; then
-      echo "==> Installing Ollama for local gptel agent support..."
-      brew install ollama
-      export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-    else
-      echo "WARN: Ollama is not installed; local gptel model setup skipped."
-    fi
-  else
-    skip "Ollama"
-  fi
-
-  if command -v ollama &>/dev/null; then
-    if [ -n "${OLLAMA_MODELS_DIR:-}" ]; then
-      mkdir -p "$OLLAMA_MODELS_DIR"
-      export OLLAMA_MODELS="$OLLAMA_MODELS_DIR"
-      echo "==> Ollama model storage: $OLLAMA_MODELS_DIR"
-    fi
-
-    if _truthy "${LOCAL_AI_START_OLLAMA:-true}"; then
-      if ollama ps &>/dev/null; then
-        skip "Ollama server"
-      else
-        echo "==> Starting Ollama server..."
-        mkdir -p "$HOME/.emacs.d"
-        nohup ollama serve > "$HOME/.emacs.d/ollama-serve.log" 2>&1 &
-        _OLLAMA_READY=false
-        for _TRY in 1 2 3 4 5 6 7 8 9 10; do
-          sleep 1
-          if ollama ps &>/dev/null; then
-            _OLLAMA_READY=true
-            break
-          fi
-          printf "    Waiting for Ollama server (%s/10)...\n" "$_TRY"
-        done
-        if [ "$_OLLAMA_READY" = true ]; then
-          echo "    Ollama server is ready."
-        else
-          echo "WARN: Ollama server did not answer yet; continuing setup."
-        fi
-        unset _TRY _OLLAMA_READY
-      fi
-    fi
-
-    if _truthy "${LOCAL_AI_PULL_MODEL:-true}" && ! ollama ps &>/dev/null; then
-      echo "WARN: Ollama server is not reachable; model pull skipped."
-      echo "      Later run: ollama pull $_OLLAMA_MODEL"
-    elif _truthy "${LOCAL_AI_PULL_MODEL:-true}"; then
-      if ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$_OLLAMA_MODEL"; then
-        skip "Ollama model $_OLLAMA_MODEL"
-      else
-        echo "==> Pulling Ollama model $_OLLAMA_MODEL..."
-        echo "    This can take a while; Ollama will print download progress below."
-        ollama pull "$_OLLAMA_MODEL"
-      fi
-    fi
-  fi
-  unset _OLLAMA_MODEL
-fi
 unset -f _truthy
+
+# Note: Ollama is no longer installed by default. The default gptel
+# backend is Gemini 2.0 Flash (free tier — see secrets.el block below
+# for the BW-mediated key bootstrap). Local-model fans can still
+# install Ollama manually:
+#
+#   brew install ollama && ollama pull qwen2.5-coder:7b && ollama serve &
+#
+# The Ollama backend remains registered in gptel-setup.org and
+# auto-activates whenever `executable-find "ollama"' succeeds, so no
+# config changes are needed if you opt in.
 
 # --- Install Emacs ---
 brew unlink "$_EMACS_OTHER_PKG" 2>/dev/null || true
@@ -406,15 +355,32 @@ if [ -f "$EMACS_SECRETS" ]; then
 else
   mkdir -p "$HOME/.emacs.d"
   if [ -n "$GH_USER" ] && [ -n "$BW_SESSION" ]; then
+    echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
+
     echo "==> Fetching Anthropic API key from Bitwarden..."
     ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
     if [ -n "$ANTHROPIC_API_KEY" ]; then
-      printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$EMACS_SECRETS"
-      echo "    secrets.el written with API key."
+      printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
+      echo "    Anthropic key written."
     else
-      echo "WARN: Anthropic API key not found — empty secrets.el created."
-      echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
+      echo "    Anthropic key not found in Bitwarden — leaving placeholder."
+      echo ";; ANTHROPIC_API_KEY: add as a Bitwarden item named '$BW_ANTHROPIC_ITEM'" >> "$EMACS_SECRETS"
     fi
+
+    echo "==> Fetching Gemini API key from Bitwarden (free tier — default model)..."
+    GEMINI_API_KEY=$(bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD") || true
+    if [ -n "$GEMINI_API_KEY" ]; then
+      printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
+      echo "    Gemini key written — Gemini 2.0 Flash will be the default model in gptel."
+    else
+      echo "    Gemini key not found in Bitwarden — to enable free Gemini default:"
+      echo "      1. Get a key at https://aistudio.google.com/apikey (free)"
+      echo "      2. Add to Bitwarden as item named '$BW_GEMINI_ITEM'"
+      echo "      3. Re-run this setup script or edit ~/.emacs.d/secrets.el manually"
+      echo ";; GEMINI_API_KEY: add as a Bitwarden item named '$BW_GEMINI_ITEM'" >> "$EMACS_SECRETS"
+    fi
+
+    echo "    secrets.el written."
   else
     echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
     echo "==> secrets.el created (empty — no GitHub/Bitwarden configured)."
