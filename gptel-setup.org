@@ -4,192 +4,280 @@
 
 Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
-This setup file intentionally stays small. The reusable AI implementation lives
-in the standalone package repository:
+This file intentionally stays small. The AI implementation now lives in the
+separate package repository:
 
 [[https://github.com/deno1011/gptel-agent-runtime][deno1011/gptel-agent-runtime]]
 
-The setup repository owns first-install choices: which package branch is used,
-which local provider is preferred, and which local model should be ready after a
-fresh Mac setup. The runtime package owns agent behavior, tools, memory, routing,
-and model-neutral execution.
+The package was split out so it can later be cleaned up for MELPA. Runtime
+configuration still loads from the private Emacs repo, but the implementation
+is installed and updated from Git.
 
 * Repository Roles
 
-- =~/emacs-mac-setup= is the installer/bootstrap/template repo.
-- =~/emacs= or =~/emacs-data= is the private live Emacs runtime repo.
+- =~/emacs= is the private live Emacs-plus runtime repo.
+- =~/emacs/config/gptel-setup.org= is only the loader for the AI package.
 - =~/gptel-agent-runtime= is the standalone package development repo.
-- =~/.emacs.d/config-readonly= is the generated readonly load target.
+- =~/emacs-mac-setup= is the installer/bootstrap/template repo.
 
-* Local Model Defaults
-
-The setup script handles initial provisioning, but this block ensures the
-local environment is ready and models are pulled if needed.
-
-#+begin_src emacs-lisp :tangle yes
-(defvar my/gptel-agent-package-branch "main"
-  "Git branch used for `gptel-agent-runtime' during package-vc installation.
-Use \"stable\" for release installs and a feature branch for branch testing.")
-
-(defvar my/gptel-setup-default-ollama-model 'qwen2.5-coder:7b
-  "Default Ollama model selected for active chat.")
-
-(defvar my/gptel-setup-standard-models '(qwen2.5-coder:7b qwen2.5:7b-instruct)
-  "List of models that should be available locally.")
-
-(defvar my/gptel-setup-ollama-host "localhost:11434"
-  "Host and port for the local Ollama server.")
-
-(defvar my/gptel-setup-ollama-models-directory nil
-  "Optional Ollama model directory (OLLAMA_MODELS).")
-#+end_src
-
-* Environment Pre-flight
-
-Checks if Ollama is running and pulls standard models if missing. This provides
-visible progress in the =*gptel-setup-ollama*= buffer.
-
-#+begin_src emacs-lisp :tangle yes
-(defun my/gptel-setup--ollama-url (&optional path)
-  (format "http://%s%s" my/gptel-setup-ollama-host (or path "")))
-
-(defun my/gptel-setup-ollama-running-p ()
-  (condition-case nil
-      (let ((buf (url-retrieve-synchronously
-                  (my/gptel-setup--ollama-url "/api/tags") t t 1)))
-        (when buf (kill-buffer buf) t))
-    (error nil)))
-
-(defun my/gptel-setup-ensure-ollama-server ()
-  "Start Ollama server if not running."
-  (unless (my/gptel-setup-ollama-running-p)
-    (if (not (executable-find "ollama"))
-        (message "WARN: 'ollama' not found in PATH")
-      (message "Starting Ollama server...")
-      (let ((process-environment (copy-sequence process-environment)))
-        (when my/gptel-setup-ollama-models-directory
-          (setenv "OLLAMA_MODELS" (expand-file-name my/gptel-setup-ollama-models-directory)))
-        (start-process "ollama-serve" "*ollama-serve*" "ollama" "serve"))
-      ;; Wait a bit for server to breathe
-      (sleep-for 2))))
-
-(defun my/gptel-setup-pull-models (models)
-  "Pull MODELS sequentially with progress in *gptel-setup-ollama*."
-  (when models
-    (let ((model (car models))
-          (remaining (cdr models)))
-      (message "Checking Ollama model %s..." model)
-      (make-process
-       :name "gptel-setup-check"
-       :buffer "*gptel-setup-ollama*"
-       :command (list "ollama" "list")
-       :noquery t
-       :sentinel
-       (lambda (proc _)
-         (when (and (not (process-live-p proc)) (zerop (process-exit-status proc)))
-           (with-current-buffer (process-buffer proc)
-             (goto-char (point-min))
-             (if (re-search-forward (regexp-quote (symbol-name model)) nil t)
-                 (progn
-                   (message "Ollama model %s is ready." model)
-                   (my/gptel-setup-pull-models remaining))
-               (message "Ollama model %s missing. Pulling now (see *gptel-setup-ollama*)..." model)
-               (display-buffer "*gptel-setup-ollama*")
-               (make-process
-                :name (format "gptel-pull-%s" model)
-                :buffer "*gptel-setup-ollama*"
-                :command (list "ollama" "pull" (symbol-name model))
-                :noquery t
-                :sentinel
-                (lambda (pull-proc _)
-                  (when (not (process-live-p pull-proc))
-                    (if (zerop (process-exit-status pull-proc))
-                        (progn
-                          (message "Ollama model %s pulled successfully." model)
-                          (my/gptel-setup-pull-models remaining))
-                      (message "ERROR: Failed to pull %s. Check *gptel-setup-ollama*." model))))))))))))))
-
-(defun my/gptel-setup-pre-flight ()
-  "Run environment checks and model provisioning."
-  (interactive)
-  (when (executable-find "ollama")
-    (my/gptel-setup-ensure-ollama-server)
-    (my/gptel-setup-pull-models my/gptel-setup-standard-models)))
-
-;; Run pre-flight 5 seconds after idle
-(run-with-idle-timer 5 nil #'my/gptel-setup-pre-flight)
-#+end_src
-
-* Package Installation and Auto-Update
+* Installation and Auto-Update
 
 Installs =gptel-agent-runtime= from GitHub via =package-vc-install= (Emacs 29+).
+After installation, schedules a silent background update check 10 seconds after
+Emacs becomes idle. Updated package code is active from the next Emacs session.
+
+For day-to-day development use the =main= branch. The =stable= branch currently
+points to the same version and can later become the slower-moving install target.
+
+Once the package is available on MELPA, replace this block with =:ensure t= in
+the use-package form below and remove the =package-vc-install= call.
 
 #+begin_src emacs-lisp :tangle yes
 (unless (package-installed-p 'gptel-agent-runtime)
   (package-vc-install
-   `(gptel-agent-runtime
+   '(gptel-agent-runtime
      :url "https://github.com/deno1011/gptel-agent-runtime"
-     :branch ,my/gptel-agent-package-branch)))
+     :branch "main")))
 
-;; Async update check
+;; Pull latest main asynchronously at startup. This is non-blocking and silent
+;; if offline. Updated code becomes active from the next Emacs session.
 (when-let* ((lib (locate-library "gptel-agent-runtime"))
             (dir (file-name-directory lib)))
   (run-with-idle-timer
    10 nil
-   (lambda (update-dir update-branch)
+   (lambda (update-dir)
      (make-process
       :name "gptel-agent-runtime-update"
-      :command (list "git" "-C" update-dir "pull" "--rebase" "--quiet"
-                     "origin" update-branch)
+      :command (list "git" "-C" update-dir "pull" "--rebase" "--quiet")
       :noquery t
       :sentinel (lambda (proc _)
                   (when (and (not (process-live-p proc))
                              (zerop (process-exit-status proc)))
-                    (message "gptel-agent-runtime: updated from %s — restart to apply"
-                             update-branch)))))
-   dir my/gptel-agent-package-branch))
+                    (message "gptel-agent-runtime: updated — restart to apply")))))
+   dir))
 #+end_src
 
-* Runtime Configuration
+* Configuration
 
-Registers local backends and selects the default model.
+The package expects the main Emacs config to have already defined runtime paths
+such as =my/data-dir=, which happens in =~/.emacs.d/init.el= before
+=config.org= loads this file.
+
+After 2026-05-26 the package is provider-neutral: it only carries the
+runtime layer (agents, tools, memory, router, mission control) and forward-
+declares =my/gptel-backends= and =my/gptel-ollama-backend=. Backend
+registration (Anthropic, OpenAI, LM Studio, MLX, Ollama) and the default
+model selection live in the next section of this file.
 
 #+begin_src emacs-lisp :tangle yes
-(require 'gptel-ollama nil t)
-
-(defun my/gptel-setup-register-backends ()
-  "Register local Ollama backends."
-  (interactive)
-  (when (executable-find "ollama")
-    (let ((backend (gptel-make-ollama "Ollama"
-                     :stream t
-                     :host my/gptel-setup-ollama-host
-                     :models '((qwen2.5-coder:7b :capabilities (tool-use json))
-                               (qwen2.5:7b-instruct :capabilities (tool-use json))
-                               (deepseek-r1 :capabilities (tool-use json))
-                               llama3.2 mistral))))
-      (setq gptel-backend backend
-            gptel-model   my/gptel-setup-default-ollama-model)
-      
-      ;; Ensure my/gptel-backends is updated for model switching UI
-      (setq my/gptel-backends
-            (append (cl-remove "Ollama" my/gptel-backends :key #'car :test #'string-prefix-p)
-                    `(("Qwen 2.5 Coder 7B (Ollama)" ,backend . qwen2.5-coder:7b)
-                      ("Qwen 2.5 Instruct 7B (Ollama)" ,backend . qwen2.5:7b-instruct)
-                      ("DeepSeek R1 (Ollama)" ,backend . deepseek-r1))))
-      
-      (when (fboundp 'my/gptel-sync-directive-for-current-runtime)
-        (my/gptel-sync-directive-for-current-runtime))
-      (when (fboundp 'my/gptel-sync-tools)
-        (my/gptel-sync-tools))
-      (message "gptel local backend registered and model %s selected." gptel-model))))
-
 (use-package gptel-agent-runtime
   :ensure nil
   :demand t
   :config
-  (my/gptel-setup-register-backends)
-  (message "gptel-agent-runtime loaded and local backends configured."))
+  (message "gptel-agent-runtime loaded from package"))
+#+end_src
+
+* Backends Setup (Multi-Provider)
+
+This block runs after =gptel-agent-runtime= has loaded. It:
+
+1. Ensures =gptel= itself is installed and configured for Org mode.
+2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
+   =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
+3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
+   MLX, and Ollama backends with their respective model lists.
+4. If =GEMINI_API_KEY= is set, sets the interactive default to Gemini 2.5
+   Flash. Otherwise falls back to the prior local-Ollama default. The
+   autonomous runtime/planner default remains local regardless, so
+   planning never silently depends on a cloud key.
+
+This section carries the API keys and machine preferences, keeping the
+runtime package reusable across machines.
+
+#+begin_src emacs-lisp :tangle yes
+(use-package gptel
+  :ensure t
+  :demand t
+  :config
+  (setq gptel-default-mode 'org-mode))
+
+(require 'gptel-anthropic nil t)
+(require 'gptel-openai nil t)
+(require 'gptel-ollama nil t)
+(require 'gptel-gemini nil t)
+
+;; -- Anthropic / Claude -----------------------------------------------
+;; Set ANTHROPIC_API_KEY in secrets.el: (setenv "ANTHROPIC_API_KEY" "sk-ant-...")
+(let ((backend (gptel-make-anthropic "Claude"
+                  :stream t
+                  :key (lambda () (getenv "ANTHROPIC_API_KEY")))))
+  (setq my/gptel-backends
+        `(("Claude Opus 4.7"    ,backend . claude-opus-4-7)
+          ("Claude Sonnet 4.6"  ,backend . claude-sonnet-4-6)
+          ("Claude Haiku 4.5"   ,backend . claude-haiku-4-5-20251001)))
+  ;; Preliminary default (overridden below by LM Studio).
+  (setq gptel-backend backend
+        gptel-model   'claude-opus-4-7))
+
+;; -- OpenAI / ChatGPT -------------------------------------------------
+;; Set OPENAI_API_KEY in secrets.el: (setenv "OPENAI_API_KEY" "sk-...")
+;; Force Chat Completions via an explicit endpoint to avoid the Responses API.
+(let ((backend (gptel-make-openai "ChatGPT"
+                  :stream t
+                  :host "api.openai.com"
+                  :endpoint "/v1/chat/completions"
+                  :key (lambda () (getenv "OPENAI_API_KEY")))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("GPT-4o"       ,backend . gpt-4o)
+                  ("GPT-4o-mini"  ,backend . gpt-4o-mini)
+                  ("o3-mini"      ,backend . o3-mini)
+                  ("o4-mini"      ,backend . o4-mini)))))
+
+;; -- Google Gemini (free tier: https://aistudio.google.com/apikey) --
+;; Set GEMINI_API_KEY in secrets.el: (setenv "GEMINI_API_KEY" "...")
+;; Free tier quotas vary per model (2.0 Flash has the most generous limits).
+(let ((backend (gptel-make-gemini "Gemini"
+                 :stream t
+                 :key (lambda () (getenv "GEMINI_API_KEY")))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Gemini 2.5 Pro"     ,backend . gemini-2.5-pro)
+                  ("Gemini 2.5 Flash"   ,backend . gemini-2.5-flash)
+                  ("Gemini 2.0 Flash"   ,backend . gemini-2.0-flash)))))
+
+;; -- Groq (free tier: https://console.groq.com/keys) ----------------
+;; OpenAI-compatible. Set GROQ_API_KEY in secrets.el.
+;; Very fast inference (~500 tok/s on Llama 70B).
+(let ((backend (gptel-make-openai "Groq"
+                 :stream t
+                 :host "api.groq.com"
+                 :endpoint "/openai/v1/chat/completions"
+                 :key (lambda () (getenv "GROQ_API_KEY"))
+                 :models '(llama-3.3-70b-versatile
+                           llama-3.1-8b-instant
+                           mixtral-8x7b-32768
+                           qwen-qwq-32b))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Llama 3.3 70B (Groq)"   ,backend . llama-3.3-70b-versatile)
+                  ("Llama 3.1 8B (Groq)"    ,backend . llama-3.1-8b-instant)
+                  ("Mixtral 8x7B (Groq)"    ,backend . mixtral-8x7b-32768)
+                  ("Qwen QwQ 32B (Groq)"    ,backend . qwen-qwq-32b)))))
+
+;; -- GitHub Models (free dev tier: https://github.com/marketplace/models) -
+;; Set GITHUB_TOKEN in secrets.el to a fine-grained PAT with "models" permission.
+;; Tight per-day quotas; intended for dev/test. Model catalog changes — verify
+;; IDs at github.com/marketplace/models if a call returns 404.
+(let ((backend (gptel-make-openai "GitHub Models"
+                 :stream t
+                 :host "models.inference.ai.azure.com"
+                 :endpoint "/chat/completions"
+                 :key (lambda () (getenv "GITHUB_TOKEN"))
+                 :models '(gpt-4o
+                           gpt-4o-mini
+                           Meta-Llama-3.1-405B-Instruct
+                           Mistral-Large-2411
+                           Phi-3.5-mini-instruct))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("GPT-4o (GitHub)"            ,backend . gpt-4o)
+                  ("GPT-4o-mini (GitHub)"       ,backend . gpt-4o-mini)
+                  ("Llama 3.1 405B (GitHub)"    ,backend . Meta-Llama-3.1-405B-Instruct)
+                  ("Mistral Large (GitHub)"     ,backend . Mistral-Large-2411)
+                  ("Phi 3.5 Mini (GitHub)"      ,backend . Phi-3.5-mini-instruct)))))
+
+;; -- LM Studio (local, OpenAI-compatible) ----------------------------
+;; LM Studio must be running: Sidebar -> Local Server -> Start Server
+;; Port: 1234 (default). No API key required.
+;; Verify model IDs with: curl http://localhost:1234/v1/models
+(let ((backend (gptel-make-openai "LM Studio"
+                  :stream t
+                  :protocol "http"
+                  :host "localhost:1234"
+                  :endpoint "/v1/chat/completions"
+                  :key "lm-studio"
+                  :models '(mistralai/ministral-3-14b-reasoning
+                            deepseek-r1-distill-qwen-7b
+                            gemma-4-31b-it
+                            gemma-3-12b-it))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Ministral 3B 14B Reasoning (LM Studio)" ,backend . mistralai/ministral-3-14b-reasoning)
+                  ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b)
+                  ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
+                  ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
+  ;; Preliminary local default; Ollama active model may further override.
+  (setq gptel-backend backend
+        gptel-model   'mistralai/ministral-3-14b-reasoning))
+
+;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
+;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
+(let ((backend (gptel-make-openai "MLX"
+                  :stream t
+                  :protocol "http"
+                  :host "localhost:8080"
+                  :endpoint "/v1/chat/completions"
+                  :key "mlx"
+                  :models '(mlx-community/Qwen3-14B-4bit
+                            mlx-community/gemma-3-12b-it-4bit))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Qwen3 14B (MLX)"    ,backend . mlx-community/Qwen3-14B-4bit)
+                  ("Gemma 3 12B (MLX)"  ,backend . mlx-community/gemma-3-12b-it-4bit)))))
+
+;; -- Ollama (local) ---------------------------------------------------
+;; Only activated when `ollama' is found in PATH.
+;; Install models first: ollama pull <name>
+(when (executable-find "ollama")
+  (when (fboundp 'gptel-agent-runtime-start-ollama-if-needed)
+    (gptel-agent-runtime-start-ollama-if-needed))
+  (let ((backend (gptel-make-ollama "Ollama"
+                   :stream t
+                   :host (if (boundp 'gptel-agent-runtime-ollama-host)
+                             gptel-agent-runtime-ollama-host
+                           "localhost:11434")
+                   :models '((qwen2.5:14b-instruct :capabilities (tool-use json))
+                             (llama3.2 :capabilities (tool-use json))
+                             (mistral :capabilities (tool-use json))
+                             phi3
+                             (deepseek-r1 :capabilities (tool-use json))))))
+    (setq my/gptel-ollama-backend backend)
+    (setq my/gptel-backends
+          (append my/gptel-backends
+                  `(("Qwen 2.5 Instruct 14B (Ollama)"  ,backend . qwen2.5:14b-instruct)
+                    ("Llama 3.2 (Ollama)"             ,backend . llama3.2)
+                    ("Mistral (Ollama)"               ,backend . mistral)
+                    ("DeepSeek R1 (Ollama)"           ,backend . deepseek-r1)))))
+  ;; Promote the new instruct model so the runtime's default-local-model
+  ;; selection lands on it when Ollama has no model loaded yet.
+  (setq gptel-agent-runtime-default-local-model 'qwen2.5:14b-instruct
+        gptel-agent-runtime-default-local-model-label
+        "Qwen 2.5 Instruct 14B (Ollama)")
+  ;; Local default lives at the 14B; PR 11 router target points at
+  ;; Opus for the rare list-completeness-critical cases that even Haiku
+  ;; might miss. When no Anthropic key is set, both stay local-only.
+  (setq gptel-agent-runtime-high-fidelity-model
+        (and (getenv "ANTHROPIC_API_KEY") 'claude-opus-4-7))
+  ;; Keep local Ollama as the default runtime/planner backend. Cloud models stay
+  ;; registered in `my/gptel-backends' and can be selected manually with
+  ;; `gptel-agent-runtime-select-model', but the autonomous runtime should not
+  ;; silently depend on a cloud key for planning.
+  (when (fboundp 'gptel-agent-runtime-use-default-local-model)
+    (gptel-agent-runtime-use-default-local-model)))
+
+;; -- Interactive default: Gemini 2.5 Flash if key available ---------
+;; Runs LAST so it overrides the Ollama-local promotion above. The
+;; autonomous runtime/planner still defaults to local via
+;; `gptel-agent-runtime-default-local-model'; this only affects fresh
+;; gptel buffers opened by the user interactively.
+(when (getenv "GEMINI_API_KEY")
+  (when-let* ((entry (assoc "Gemini 2.5 Flash" my/gptel-backends))
+              (backend (cadr entry))
+              (model (cddr entry)))
+    (setq gptel-backend backend
+          gptel-model   model)
+    (message "gptel interactive default: Gemini 2.5 Flash")))
 #+end_src
 
 * Architecture Reference
@@ -198,3 +286,7 @@ For the implementation map, read:
 
 - =~/emacs/notes/gptel-agent-architecture.md=
 - the package repository README
+
+The package is still a first extraction. The next cleanup should split the
+monolithic package file into modules for core, backends, prompts, executor,
+tools, context, and planner behavior.

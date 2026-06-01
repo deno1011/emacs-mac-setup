@@ -1,0 +1,387 @@
+#+TITLE: LLM Wiki Setup
+#+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
+
+- Wiki content at =~/emacs/wiki/emacs/=
+- Schema at =~/emacs/wiki/emacs/WIKI.org=
+- Built on top of [[file:org-setup.org][org-roam]] and [[file:gptel-setup.org][gptel]]
+- Pattern: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+
+* Wiki Root and Preferences
+
+#+begin_src emacs-lisp
+(defvar my/wiki-base-dir (expand-file-name "~/emacs/wiki/emacs/")
+  "Root of the Emacs-knowledge LLM Wiki.")
+
+(defvar my/wiki-preferred-model "Claude Sonnet 4.6"
+  "Label in `my/gptel-backends' used for wiki sessions opened by the
+helpers in this file. Sonnet is reliable + cheap; bump to 'Claude Opus 4.7'
+for harder ingests, or set to nil to inherit the buffer's default backend.")
+#+end_src
+
+* First-time Bootstrap
+
+On fresh installs the user's wiki directory (=~/emacs/wiki/emacs/=)
+does not exist yet, and the wiki-maintainer directive needs =WIKI.org=
+and =index.org= to be readable. =my/wiki-bootstrap= creates the
+directory tree and seeds the three schema files from templates if
+they are missing. It is idempotent — safe to call repeatedly — and
+auto-runs on package load.
+
+Templates are fetched from =emacs-mac-setup/stable/wiki-templates/=
+the first time they are needed, using the same URL fallback pattern
+=config.org= uses for missing split files. Subsequent loads find the
+local files and do nothing.
+
+#+begin_src emacs-lisp
+(defvar my/wiki--template-base-url
+  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/wiki-templates/"
+  "Base URL for wiki schema templates, fetched on first install if local
+copies are missing. Matches the my/config-fallback-base-url pattern.")
+
+(defun my/wiki-bootstrap ()
+  "Create the wiki directory tree and seed WIKI.org / index.org / log.org
+from templates if missing. Idempotent — only creates what is absent.
+Auto-runs on package load; can also be invoked as M-x my/wiki-bootstrap.
+Returns t if anything was created, nil if everything was already in place."
+  (interactive)
+  (let ((created nil))
+    ;; 1. Create directory tree
+    (dolist (sub '("" "raw" "entities" "concepts" "sources"
+                   "comparisons" "overviews"))
+      (let ((d (expand-file-name sub my/wiki-base-dir)))
+        (unless (file-directory-p d)
+          (make-directory d t)
+          (setq created t))))
+    ;; 2. Seed schema files from templates if missing.
+    ;; Try a few local fallback paths first (developer/runtime checkout),
+    ;; then fetch from the public mac-setup repo.
+    (dolist (name '("WIKI.org" "index.org" "log.org"))
+      (let ((dest (expand-file-name name my/wiki-base-dir)))
+        (unless (file-exists-p dest)
+          (let ((src (cl-find-if
+                      #'file-readable-p
+                      (list
+                       ;; Local template paths checked in priority order:
+                       (expand-file-name (concat "wiki-templates/" name)
+                                         my/data-dir)
+                       (expand-file-name (concat "../emacs-mac-setup/wiki-templates/" name)
+                                         my/data-dir)
+                       "/tmp/emacs-mac-setup/wiki-templates/WIKI.org"))))
+            (cond
+             (src
+              (copy-file src dest)
+              (setq created t))
+             ((featurep 'url)
+              (condition-case err
+                  (progn
+                    (require 'url)
+                    (url-copy-file (concat my/wiki--template-base-url name)
+                                   dest t)
+                    (setq created t))
+                (error
+                 (message "wiki-bootstrap: could not fetch %s: %s"
+                          name err)))))))))
+    (when (and created (called-interactively-p 'any))
+      (message "Wiki bootstrapped at %s" my/wiki-base-dir))
+    created))
+
+;; Auto-bootstrap on package load. No-op once the wiki exists.
+(my/wiki-bootstrap)
+#+end_src
+
+* Wiki Maintainer Directive
+
+Builds the =wiki-maintainer= gptel directive dynamically from =WIKI.org=
+and =index.org= so schema edits propagate without restart. Call
+=M-x my/wiki-maintainer-refresh= after editing WIKI.org or after large
+ingests. The directive is /not/ auto-selected by
+=gptel-agent-runtime-directive-for-current-runtime=; the helpers below
+opt in explicitly per buffer.
+
+#+begin_src emacs-lisp
+(defun my/wiki-maintainer-build-prompt ()
+  "Build the Wiki Maintainer system prompt from WIKI.org and index.org."
+  (let* ((schema-path (expand-file-name "WIKI.org" my/wiki-base-dir))
+         (index-path  (expand-file-name "index.org" my/wiki-base-dir))
+         (file->str (lambda (p) (when (file-readable-p p)
+                                  (with-temp-buffer
+                                    (insert-file-contents p)
+                                    (buffer-string)))))
+         (schema (funcall file->str schema-path))
+         (index  (funcall file->str index-path)))
+    (concat
+     "You are the Wiki Maintainer for the user's Emacs-knowledge LLM Wiki at "
+     my/wiki-base-dir ".\n"
+     "Pattern: Karpathy LLM-Wiki — a persistent, incrementally built knowledge\n"
+     "base of interlinked org-roam pages. You own wiki/; the user curates raw/\n"
+     "and asks questions.\n\n"
+     "## Operating rules (load-bearing)\n"
+     "- Read index.org first when answering a query; drill into linked pages as needed.\n"
+     "- NEVER commit — the repo auto-pushes on commit. Surface diffs; let the user commit.\n"
+     "- One source at a time, with 2–4 bullets of discussion before writing wiki pages.\n"
+     "- Use [[id:UUID]] org-roam links for wiki-internal references; never [[file:...]].\n"
+     "- Append every operation to log.org: ** [YYYY-MM-DD] <op> | <subject>.\n"
+     "- Lint reports findings only; never auto-fix.\n\n"
+     "## Full schema (WIKI.org)\n\n"
+     (or schema "[WIKI.org not readable — abort and ask the user]")
+     "\n\n## Current index (index.org)\n\n"
+     (or index "[index.org not readable]"))))
+
+(defun my/wiki-maintainer-refresh ()
+  "Rebuild the wiki-maintainer gptel directive from disk.
+Call after editing WIKI.org or significant index changes."
+  (interactive)
+  (with-eval-after-load 'gptel
+    (setq gptel-directives
+          (cons (cons 'wiki-maintainer (my/wiki-maintainer-build-prompt))
+                (assq-delete-all 'wiki-maintainer gptel-directives)))
+    (message "wiki-maintainer directive refreshed")))
+
+(with-eval-after-load 'gptel
+  (my/wiki-maintainer-refresh))
+#+end_src
+
+* Workflow Commands
+
+Helpers that collapse the "open gptel + switch directive + switch backend +
+type prompt + send" dance into a single command per use case.
+
+** Internal: slugify a string
+
+All path-deriving helpers route user-supplied or extracted names
+through this so filenames stay =lowercase-kebab-case= per the wiki's
+Naming convention. Without it, =my/wiki-ingest-buffer "Next Steps"=
+would write =raw/Next Steps.org=.
+
+#+begin_src emacs-lisp
+(defun my/wiki--slugify (s)
+  "Convert string S to lowercase-kebab-case.
+Lowercases, replaces runs of non-alphanumeric chars with single dashes,
+trims leading/trailing dashes. Empty or nil input returns \"untitled\"."
+  (let* ((s (downcase (or s "")))
+         (s (replace-regexp-in-string "[^a-z0-9]+" "-" s))
+         (s (replace-regexp-in-string "\\`-+\\|-+\\'" "" s)))
+    (if (string-empty-p s) "untitled" s)))
+#+end_src
+
+** Internal: open a configured wiki buffer
+
+#+begin_src emacs-lisp
+(defun my/wiki--open-buffer (name &optional initial-prompt)
+  "Open a fresh gptel buffer named *NAME* with wiki-maintainer + preferred
+backend preloaded. If INITIAL-PROMPT is non-nil, insert it at point and
+call `gptel-send' automatically. Returns the buffer."
+  (require 'gptel)
+  (my/wiki-maintainer-refresh)
+  (let ((buf-name (format "*%s*" name)))
+    (with-current-buffer (get-buffer-create buf-name)
+      (unless (derived-mode-p 'org-mode)
+        (org-mode))
+      (gptel-mode 1)
+      (setq-local gptel--system-message
+                  (alist-get 'wiki-maintainer gptel-directives))
+      (when-let* ((label my/wiki-preferred-model)
+                  (entry (assoc label my/gptel-backends))
+                  (backend (cadr entry))
+                  (model (cddr entry)))
+        (setq-local gptel-backend backend
+                    gptel-model model))
+      (goto-char (point-max))
+      (when initial-prompt
+        (insert initial-prompt)
+        (insert "\n")
+        (gptel-send)))
+    (pop-to-buffer buf-name)
+    (get-buffer buf-name)))
+#+end_src
+
+** Ingest — one command per source
+
+=M-x my/wiki-ingest= prompts for a file (defaults to =raw/= with
+completion), opens a dedicated buffer, and fires the ingest prompt.
+Watch the gptel buffer or the [[file:org-setup.org][org-roam-ui]] graph for the result.
+
+#+begin_src emacs-lisp
+(defun my/wiki-ingest (file)
+  "Ingest FILE into the wiki via gptel. FILE should already live in raw/."
+  (interactive
+   (list (read-file-name "Ingest source file: "
+                         (expand-file-name "raw/" my/wiki-base-dir)
+                         nil t)))
+  (let* ((abs (expand-file-name file))
+         (slug (file-name-base abs)))
+    (my/wiki--open-buffer
+     (format "wiki-ingest: %s" slug)
+     (format "Ingest %s.\nUpdate index.org and log.org when done." abs))))
+#+end_src
+
+** Import — copy a file into raw/ then ingest
+
+For sources that aren't yet in =raw/=. Copies the chosen file in and
+chains directly into =my/wiki-ingest=.
+
+#+begin_src emacs-lisp
+(defun my/wiki-import (file)
+  "Copy FILE into the wiki's raw/ directory and immediately ingest it.
+The destination filename is slugified to lowercase-kebab-case."
+  (interactive (list (read-file-name "Import + ingest: " nil nil t)))
+  (let* ((raw-dir (expand-file-name "raw/" my/wiki-base-dir))
+         (slug (my/wiki--slugify (file-name-base file)))
+         (ext (or (file-name-extension file t) ""))
+         (dest (expand-file-name (concat slug ext) raw-dir)))
+    (unless (file-directory-p raw-dir)
+      (make-directory raw-dir t))
+    (copy-file file dest t)
+    (message "Copied to %s" dest)
+    (my/wiki-ingest dest)))
+#+end_src
+
+** Ingest URL — download and ingest in one step
+
+For web articles. Saves the response under =raw/<slug>.md=.
+
+#+begin_src emacs-lisp
+(defun my/wiki-ingest-url (url &optional slug)
+  "Download URL to raw/<SLUG>.md and ingest it.
+If SLUG is omitted, derived from the URL's last path component.
+Final slug is slugified to lowercase-kebab-case."
+  (interactive "sURL to ingest: \nsSlug (blank to derive from URL): ")
+  (let* ((raw-slug (if (and slug (not (string-empty-p slug)))
+                       slug
+                     (file-name-base (url-unhex-string url))))
+         (slug (my/wiki--slugify raw-slug))
+         (raw-dir (expand-file-name "raw/" my/wiki-base-dir))
+         (dest (expand-file-name (format "%s.md" slug) raw-dir)))
+    (unless (file-directory-p raw-dir)
+      (make-directory raw-dir t))
+    (require 'url)
+    (url-copy-file url dest t)
+    (message "Downloaded to %s, starting ingest..." dest)
+    (my/wiki-ingest dest)))
+#+end_src
+
+** Ingest buffer or region — capture in-flight text
+
+For anything already on screen — a scratch buffer, a chat transcript,
+notes you typed up, or a marked region inside a larger document. Saves
+to =raw/<slug>.<ext>= (extension picked from buffer mode) and chains
+into =my/wiki-ingest=. If the region is active, only that selection is
+saved; otherwise the whole buffer.
+
+#+begin_src emacs-lisp
+(defun my/wiki-ingest-buffer (slug)
+  "Save the current buffer (or active region) into raw/<SLUG>.<ext> and ingest.
+Extension is .org if the buffer is in org-mode, otherwise .md. If a
+region is active, only the region is saved; otherwise the whole buffer."
+  (interactive
+   (list (let ((default (when (buffer-file-name)
+                          (file-name-base (buffer-file-name)))))
+           (read-string
+            (format "Slug%s: "
+                    (if default (format " (default %s)" default) ""))
+            nil nil default))))
+  (when (or (null slug) (string-empty-p slug))
+    (user-error "Slug required"))
+  (let* ((slug (my/wiki--slugify slug))
+         (raw-dir (expand-file-name "raw/" my/wiki-base-dir))
+         (ext (if (derived-mode-p 'org-mode) ".org" ".md"))
+         (dest (expand-file-name (concat slug ext) raw-dir))
+         (start (if (use-region-p) (region-beginning) (point-min)))
+         (end   (if (use-region-p) (region-end)       (point-max))))
+    (unless (file-directory-p raw-dir)
+      (make-directory raw-dir t))
+    (write-region start end dest)
+    (message "Saved %s to %s"
+             (if (use-region-p) "region" "buffer") dest)
+    (my/wiki-ingest dest)))
+#+end_src
+
+** Open — ad-hoc query buffer
+
+Open a wiki-maintainer buffer for asking questions against the existing
+wiki ("what do I have on RAG?", "compare Obsidian and org-roam") without
+ingesting anything.
+
+#+begin_src emacs-lisp
+(defun my/wiki-open ()
+  "Open a fresh gptel buffer with wiki-maintainer preloaded for
+ad-hoc queries against the existing wiki."
+  (interactive)
+  (my/wiki--open-buffer "wiki-query"))
+#+end_src
+
+** Lint — health check the wiki
+
+Opens a buffer with the lint prompt preloaded. The agent reports
+orphans, missing cross-references, contradictions, and concepts
+that need their own page. Read-only by design — does not edit files.
+
+#+begin_src emacs-lisp
+(defun my/wiki-lint ()
+  "Open a wiki-maintainer buffer with the lint prompt preloaded.
+The agent reports findings only — never auto-fixes."
+  (interactive)
+  (my/wiki--open-buffer
+   "wiki-lint"
+   (concat
+    "Lint the wiki. Find:\n"
+    "1. Orphan pages (no inbound id-links).\n"
+    "2. Concepts mentioned in 2+ pages without their own page.\n"
+    "3. Contradictions between pages.\n"
+    "4. Stale claims superseded by newer sources.\n"
+    "5. Missing cross-references between obviously related pages.\n"
+    "Report findings only — do NOT modify any files. Append a log.org"
+    " summary entry at the end and stop.")))
+#+end_src
+
+* Keybindings
+
+All wiki helpers live under the =C-c n= prefix that org-roam already uses,
+in uppercase to avoid colliding with org-roam's lowercase bindings.
+
+| Key       | Command                | Purpose                                |
+|-----------+------------------------+----------------------------------------|
+| =C-c n I= | my/wiki-ingest         | Ingest a file from raw/                |
+| =C-c n M= | my/wiki-import         | iMport: copy a file into raw/ + ingest |
+| =C-c n U= | my/wiki-ingest-url     | Download URL + ingest                  |
+| =C-c n B= | my/wiki-ingest-buffer  | Save current Buffer (or region) + ingest |
+| =C-c n Q= | my/wiki-open           | Query the wiki                         |
+| =C-c n L= | my/wiki-lint           | Lint the wiki                          |
+
+#+begin_src emacs-lisp
+(global-set-key (kbd "C-c n I") #'my/wiki-ingest)
+(global-set-key (kbd "C-c n M") #'my/wiki-import)
+(global-set-key (kbd "C-c n U") #'my/wiki-ingest-url)
+(global-set-key (kbd "C-c n B") #'my/wiki-ingest-buffer)
+(global-set-key (kbd "C-c n Q") #'my/wiki-open)
+(global-set-key (kbd "C-c n L") #'my/wiki-lint)
+#+end_src
+
+* Org-Capture Integration
+
+A capture template for ingesting URLs or files via =C-c c w=. Picks a
+sensible action based on whether the input looks like a URL or a path.
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'org-capture
+  (add-to-list
+   'org-capture-templates
+   '("w" "Wiki ingest (URL or local file)"
+     plain (function my/wiki--capture-target)
+     "" :immediate-finish t :no-save t)))
+
+(defun my/wiki--capture-target ()
+  "Capture handler: prompt for a URL or file path, ingest accordingly."
+  (let ((input (read-string "URL or file path: ")))
+    (cond
+     ((string-match-p "\\`https?://" input) (my/wiki-ingest-url input))
+     ((file-exists-p (expand-file-name input)) (my/wiki-import input))
+     (t (user-error "Not a URL and not an existing file: %s" input))))
+  ;; tell org-capture nothing to insert
+  (org-capture-kill))
+#+end_src
