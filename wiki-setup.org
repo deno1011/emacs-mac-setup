@@ -23,6 +23,77 @@ helpers in this file. Sonnet is reliable + cheap; bump to 'Claude Opus 4.7'
 for harder ingests, or set to nil to inherit the buffer's default backend.")
 #+end_src
 
+* First-time Bootstrap
+
+On fresh installs the user's wiki directory (=~/emacs/wiki/emacs/=)
+does not exist yet, and the wiki-maintainer directive needs =WIKI.org=
+and =index.org= to be readable. =my/wiki-bootstrap= creates the
+directory tree and seeds the three schema files from templates if
+they are missing. It is idempotent — safe to call repeatedly — and
+auto-runs on package load.
+
+Templates are fetched from =emacs-mac-setup/stable/wiki-templates/=
+the first time they are needed, using the same URL fallback pattern
+=config.org= uses for missing split files. Subsequent loads find the
+local files and do nothing.
+
+#+begin_src emacs-lisp
+(defvar my/wiki--template-base-url
+  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/wiki-templates/"
+  "Base URL for wiki schema templates, fetched on first install if local
+copies are missing. Matches the my/config-fallback-base-url pattern.")
+
+(defun my/wiki-bootstrap ()
+  "Create the wiki directory tree and seed WIKI.org / index.org / log.org
+from templates if missing. Idempotent — only creates what is absent.
+Auto-runs on package load; can also be invoked as M-x my/wiki-bootstrap.
+Returns t if anything was created, nil if everything was already in place."
+  (interactive)
+  (let ((created nil))
+    ;; 1. Create directory tree
+    (dolist (sub '("" "raw" "entities" "concepts" "sources"
+                   "comparisons" "overviews"))
+      (let ((d (expand-file-name sub my/wiki-base-dir)))
+        (unless (file-directory-p d)
+          (make-directory d t)
+          (setq created t))))
+    ;; 2. Seed schema files from templates if missing.
+    ;; Try a few local fallback paths first (developer/runtime checkout),
+    ;; then fetch from the public mac-setup repo.
+    (dolist (name '("WIKI.org" "index.org" "log.org"))
+      (let ((dest (expand-file-name name my/wiki-base-dir)))
+        (unless (file-exists-p dest)
+          (let ((src (cl-find-if
+                      #'file-readable-p
+                      (list
+                       ;; Local template paths checked in priority order:
+                       (expand-file-name (concat "wiki-templates/" name)
+                                         my/data-dir)
+                       (expand-file-name (concat "../emacs-mac-setup/wiki-templates/" name)
+                                         my/data-dir)
+                       "/tmp/emacs-mac-setup/wiki-templates/WIKI.org"))))
+            (cond
+             (src
+              (copy-file src dest)
+              (setq created t))
+             ((featurep 'url)
+              (condition-case err
+                  (progn
+                    (require 'url)
+                    (url-copy-file (concat my/wiki--template-base-url name)
+                                   dest t)
+                    (setq created t))
+                (error
+                 (message "wiki-bootstrap: could not fetch %s: %s"
+                          name err)))))))))
+    (when (and created (called-interactively-p 'any))
+      (message "Wiki bootstrapped at %s" my/wiki-base-dir))
+    created))
+
+;; Auto-bootstrap on package load. No-op once the wiki exists.
+(my/wiki-bootstrap)
+#+end_src
+
 * Wiki Maintainer Directive
 
 Builds the =wiki-maintainer= gptel directive dynamically from =WIKI.org=
