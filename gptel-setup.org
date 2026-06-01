@@ -87,12 +87,11 @@ This block runs after =gptel-agent-runtime= has loaded. It:
    =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
 3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
    MLX, and Ollama backends with their respective model lists.
-4. If =GEMINI_API_KEY= is set, sets the interactive default to Gemini 2.0
-   Flash (most generous free quota: 15 RPM / 1500 RPD). Otherwise falls
-   back to the prior local-Ollama default (only triggers if you've
-   manually installed Ollama). The autonomous runtime/planner default
-   remains local regardless, so planning never silently depends on a
-   cloud key.
+4. Sets the standard gptel default to Gemini 2.0 Flash. If
+   =GEMINI_API_KEY= is present, requests work immediately; if the key is
+   still missing, the selected default remains Gemini and Emacs tells the
+   user to add the key. Ollama remains an optional local backend and no
+   longer steals the default merely because it is installed.
 
 This section carries the API keys and machine preferences, keeping the
 runtime package reusable across machines.
@@ -118,9 +117,7 @@ runtime package reusable across machines.
         `(("Claude Opus 4.7"    ,backend . claude-opus-4-7)
           ("Claude Sonnet 4.6"  ,backend . claude-sonnet-4-6)
           ("Claude Haiku 4.5"   ,backend . claude-haiku-4-5-20251001)))
-  ;; Preliminary default (overridden below by LM Studio).
-  (setq gptel-backend backend
-        gptel-model   'claude-opus-4-7))
+  nil)
 
 ;; -- OpenAI / ChatGPT -------------------------------------------------
 ;; Set OPENAI_API_KEY in secrets.el: (setenv "OPENAI_API_KEY" "sk-...")
@@ -210,9 +207,7 @@ runtime package reusable across machines.
                   ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b)
                   ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
                   ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
-  ;; Preliminary local default; Ollama active model may further override.
-  (setq gptel-backend backend
-        gptel-model   'mistralai/ministral-3-14b-reasoning))
+  nil)
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
@@ -262,29 +257,29 @@ runtime package reusable across machines.
   ;; might miss. When no Anthropic key is set, both stay local-only.
   (setq gptel-agent-runtime-high-fidelity-model
         (and (getenv "ANTHROPIC_API_KEY") 'claude-opus-4-7))
-  ;; Keep local Ollama as the default runtime/planner backend. Cloud models stay
-  ;; registered in `my/gptel-backends' and can be selected manually with
-  ;; `gptel-agent-runtime-select-model', but the autonomous runtime should not
-  ;; silently depend on a cloud key for planning.
-  (when (fboundp 'gptel-agent-runtime-use-default-local-model)
-    (gptel-agent-runtime-use-default-local-model)))
+  ;; Ollama stays registered as an opt-in local backend. It no longer changes
+  ;; the global gptel default during startup; choose it explicitly with
+  ;; `gptel-agent-runtime-select-model' when local-only work is desired.
+  nil)
 
-;; -- Interactive default: Gemini 2.0 Flash if key available ---------
-;; Runs LAST so it overrides any earlier default. 2.0 Flash has the
-;; most generous free-tier quota (15 RPM / 1500 RPD) and is plenty
-;; for daily use. Switch to 2.5 Flash/Pro manually via gptel-menu for
-;; higher-quality answers when needed.
-;;
-;; The autonomous runtime/planner still defaults to local Ollama via
-;; `gptel-agent-runtime-default-local-model' (if Ollama is installed);
-;; this only affects fresh gptel buffers opened interactively.
-(when (getenv "GEMINI_API_KEY")
-  (when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
-              (backend (cadr entry))
-              (model (cddr entry)))
-    (setq gptel-backend backend
-          gptel-model   model)
-    (message "gptel interactive default: Gemini 2.0 Flash")))
+;; -- Standard default: Gemini 2.0 Flash ------------------------------
+;; Runs LAST so it overrides any earlier backend registration. 2.0 Flash has
+;; the most generous free-tier quota (15 RPM / 1500 RPD) and is plenty for
+;; daily use. Switch to 2.5 Flash/Pro or a local backend manually via
+;; `gptel-agent-runtime-select-model' / gptel-menu when needed.
+(when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
+            (backend (cadr entry))
+            (model (cddr entry)))
+  (setq gptel-backend backend
+        gptel-model   model)
+  (when (fboundp 'gptel-agent-runtime-sync-directive-for-current-runtime)
+    (gptel-agent-runtime-sync-directive-for-current-runtime))
+  (when (fboundp 'gptel-agent-runtime-sync-tools)
+    (gptel-agent-runtime-sync-tools))
+  (message "gptel default: Gemini 2.0 Flash%s"
+           (if (getenv "GEMINI_API_KEY")
+               ""
+             " (set GEMINI_API_KEY in secrets.el before sending requests)")))
 #+end_src
 
 * Architecture Reference

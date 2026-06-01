@@ -52,13 +52,14 @@ BW_ANTHROPIC_ITEM=""
 # Example: BW_GEMINI_ITEM="gemini-api-key"
 BW_GEMINI_ITEM=""
 
-# Local AI defaults for first-install gptel agent setup.
-# Ollama is installed with Homebrew when LOCAL_AI_INSTALL_OLLAMA is true.
-# The model pull can take a while; setup prints Ollama's progress in Terminal.
-LOCAL_AI_PROVIDER="ollama"
-LOCAL_AI_INSTALL_OLLAMA="true"
-LOCAL_AI_START_OLLAMA="true"
-LOCAL_AI_PULL_MODEL="true"
+# Optional local AI setup.
+# Gemini 2.0 Flash is the standard gptel default. Ollama remains available as
+# an opt-in local backend: set LOCAL_AI_PROVIDER="ollama" and the toggles below
+# to "true" if you want setup to install/start Ollama and pull a model.
+LOCAL_AI_PROVIDER="gemini"
+LOCAL_AI_INSTALL_OLLAMA="false"
+LOCAL_AI_START_OLLAMA="false"
+LOCAL_AI_PULL_MODEL="false"
 LOCAL_AI_DEFAULT_MODEL="qwen2.5-coder:7b"
 # Optional custom model storage. Leave empty for Ollama's default location.
 OLLAMA_MODELS_DIR=""
