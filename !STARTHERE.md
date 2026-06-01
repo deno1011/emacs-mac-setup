@@ -7,13 +7,13 @@
 Open **Terminal** and run:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)" bootstrap stable
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh | /bin/bash -s -- stable
 ```
 
 For development testing, use the same pattern with another branch:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh)" bootstrap main
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh | /bin/bash -s -- main
 ```
 
 Bootstrap guides you through config, Bitwarden setup, and Emacs installation.  
