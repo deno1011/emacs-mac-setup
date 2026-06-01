@@ -12,10 +12,12 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :config
   (setq org-directory (expand-file-name "data/org/" my/data-dir)
         org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        org-agenda-files (append (list (expand-file-name "data/org/" my/data-dir)
-                                       (expand-file-name "wiki/emacs/" my/data-dir))
-                                 (when (eq system-type 'darwin)
-                                   (list (expand-file-name "~/org/reminders.org"))))
+        ;; org-agenda-files is set later by the tag-driven scanner —
+        ;; see the "Agenda — Tag-Driven File Discovery" section. This
+        ;; placeholder is overridden by my/refresh-agenda-files at the
+        ;; end of this file's load, and again by gtd-config.el if it
+        ;; appends specific files.
+        org-agenda-files (list (expand-file-name "data/org/" my/data-dir))
         org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
@@ -523,6 +525,76 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (defun bh/org-auto-exclude-function (tag)
   (and (cond ((string= tag "hold") t)) (concat "-" tag)))
 (setq org-agenda-auto-exclude-function 'bh/org-auto-exclude-function)
+#+end_src
+
+* Agenda — Tag-Driven File Discovery and Categorization
+
+Generic infrastructure that applies on every install (with or without
+=data/org/gtd-config.el=). The scanner walks =~/emacs/= recursively for
+=.org= files, excluding only structural filesystem noise. The
+per-category agenda commands then surface content via the FILETAGS
+each file declares:
+
+| Tag         | What it means                                  | Agenda key |
+|-------------+------------------------------------------------+------------|
+| =:someday:= | Maybe-someday, no commitment                   | =C-c a S=  |
+| =:idea:=    | Backlog / wishlist                             | =C-c a I=  |
+| =:plan:=    | Worked-out plan, ready to schedule             | =C-c a P=  |
+| =:area:=    | Area of focus (20K ft)                         | =C-c a A=  |
+| =:goal:=    | Concrete 1–2 year objective (30K ft)           | =C-c a G=  |
+| =:life:=    | Values / direction (40–50K ft)                 | =C-c a L=  |
+
+Items without a category tag remain GTD action material and surface
+in the default views.
+
+#+begin_src emacs-lisp
+(defvar my/-agenda-path-excludes
+  '("/\\.git/" "/archive/" "/elpa/" "/#[^/]+#\\'" "/\\.#")
+  "Path regexps universally excluded from the agenda scan
+(structural filesystem noise — not user content).")
+
+(defun my/-agenda-files-scanned ()
+  "Return all .org files under `my/data-dir' except those matching
+a path in `my/-agenda-path-excludes'."
+  (let ((root (file-name-as-directory my/data-dir))
+        result)
+    (dolist (f (directory-files-recursively root "\\.org\\'"))
+      (unless (cl-some (lambda (re) (string-match-p re f))
+                       my/-agenda-path-excludes)
+        (push f result)))
+    (nreverse result)))
+
+(defun my/refresh-agenda-files ()
+  "Re-scan ~/emacs/ for org files; refresh `org-agenda-files'.
+Run after adding new directories or moving files around."
+  (interactive)
+  (setq org-agenda-files (my/-agenda-files-scanned))
+  (message "org-agenda-files: %d files scanned"
+           (length org-agenda-files)))
+
+(setq org-agenda-files (my/-agenda-files-scanned))
+
+;; Tag-driven per-category views, appended to whatever was set above
+;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/R/M/T).
+(setq org-agenda-custom-commands
+      (append
+       org-agenda-custom-commands
+       '(("I" "💡 Ideas / backlog (anywhere)" tags-todo "+idea")
+         ("P" "🗂 Plans (worked-out, ready to schedule)" tags-todo "+plan")
+         ("S" "💤 Someday / Maybe"           tags-todo "+someday")
+         ("M" "📎 Reference material"        tags-todo "+reference")
+         ("A" "🎯 Areas of focus (20K ft)"   tags-todo "+area")
+         ("G" "🚀 Goals (30K ft)"            tags-todo "+goal")
+         ("L" "🌟 Life / values (40–50K ft)" tags-todo "+life")
+         ("R" "📚 Higher-horizon review"
+          ((tags-todo "+life")
+           (tags-todo "+goal")
+           (tags-todo "+area")))
+         ;; "Pure" action view — TODO state items in files/headings
+         ;; that carry NO category tag. The cleanest "what's actually
+         ;; on my plate right now" view across all of ~/emacs/.
+         ("T" "📋 Action TODOs only (excludes categorized)"
+          tags-todo "-someday-idea-plan-area-goal-life-reference"))))
 #+end_src
 
 * Clocking
