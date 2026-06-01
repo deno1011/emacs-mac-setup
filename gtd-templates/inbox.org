@@ -1,0 +1,9 @@
+#+TITLE: Inbox
+#+STARTUP: overview
+
+Everything new lands here first. Process to empty during reviews:
+- If actionable in <2 min → do it now
+- Else → refile into gtd/next.org, gtd/projects.org, gtd/waiting.org,
+  gtd/someday.org, gtd/reference.org, or archive.
+
+Capture from anywhere: =C-c c i= (or =M-x org-capture= → =i=).

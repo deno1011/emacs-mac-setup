@@ -614,6 +614,94 @@ Run after adding new directories or moving files around."
           tags-todo "-someday-idea-plan-area-goal-life-reference"))))
 #+end_src
 
+* GTD Starter — First-Install Bootstrap
+
+Parallel to =my/wiki-bootstrap=: ensures the GTD folder structure
+and starter files exist on a fresh install. The personal layer
+(iCloud-synced =~/emacs/data/org/=) takes priority; missing files
+are seeded from templates shipped in =mac-setup/stable/gtd-templates/=.
+Idempotent — existing files are never touched.
+
+The seeded files carry the right =#+FILETAGS:= for the tag-driven
+agenda views: =gtd/someday.org= → =:someday:=, =gtd/reference.org=
+→ =:reference:=, =gtd/waiting.org= → =:waiting:=,
+=gtd/projects.org= → =:project:=. After the bootstrap, =C-c a g=
+(GTD Dashboard) works immediately without any manual setup.
+
+To skip a file or add your own: just have it present before the
+first Emacs run (e.g., via iCloud sync from another device).
+
+#+begin_src emacs-lisp
+(defvar my/gtd-bootstrap-files
+  '("inbox.org"
+    "calendar.org"
+    "refile.org"
+    "diary.org"
+    "gtd/projects.org"
+    "gtd/next.org"
+    "gtd/waiting.org"
+    "gtd/tickler.org"
+    "gtd/someday.org"
+    "gtd/reference.org")
+  "Generic GTD starter files seeded by `my/gtd-bootstrap'. Paths
+relative to my/data-dir's data/org/. Each is fetched from
+emacs-mac-setup/stable/gtd-templates/<path> on first install if
+absent locally.")
+
+(defvar my/gtd-bootstrap-url
+  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/gtd-templates/"
+  "Base URL for fetching GTD starter templates on first install.")
+
+(defun my/gtd-bootstrap ()
+  "Create ~/emacs/data/org/{gtd,archive}/ and seed missing GTD starter
+files from templates. Idempotent — only creates what is absent.
+Auto-runs on package load; can also be invoked as M-x my/gtd-bootstrap.
+Returns t if anything was created, nil otherwise."
+  (interactive)
+  (let ((created nil)
+        (org-root (expand-file-name "data/org/" my/data-dir)))
+    ;; 1. Directory tree (data/org/ + gtd/ + archive/)
+    (dolist (sub '("" "gtd" "archive"))
+      (let ((d (expand-file-name sub org-root)))
+        (unless (file-directory-p d)
+          (make-directory d t)
+          (setq created t))))
+    ;; 2. Seed missing GTD files from templates.
+    ;; Resolution order per file: local sibling → adjacent mac-setup
+    ;; checkout → /tmp/emacs-mac-setup → fetch from public stable.
+    (dolist (rel my/gtd-bootstrap-files)
+      (let ((dest (expand-file-name rel org-root)))
+        (unless (file-exists-p dest)
+          (unless (file-directory-p (file-name-directory dest))
+            (make-directory (file-name-directory dest) t))
+          (let ((src (cl-find-if
+                      #'file-readable-p
+                      (list
+                       (expand-file-name (concat "gtd-templates/" rel) my/data-dir)
+                       (expand-file-name (concat "../emacs-mac-setup/gtd-templates/" rel)
+                                         my/data-dir)
+                       (expand-file-name (concat "/tmp/emacs-mac-setup/gtd-templates/" rel))))))
+            (cond
+             (src
+              (copy-file src dest)
+              (setq created t))
+             (t
+              (condition-case err
+                  (progn
+                    (require 'url)
+                    (url-copy-file (concat my/gtd-bootstrap-url rel) dest t)
+                    (setq created t))
+                (error
+                 (message "gtd-bootstrap: could not fetch %s: %s"
+                          rel (error-message-string err))))))))))
+    (when (and created (called-interactively-p 'any))
+      (message "GTD bootstrapped at %s" org-root))
+    created))
+
+;; Auto-bootstrap on package load. No-op once files exist.
+(my/gtd-bootstrap)
+#+end_src
+
 * Clocking
 #+begin_src emacs-lisp
 (require 'org-clock)
