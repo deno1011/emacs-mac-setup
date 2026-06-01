@@ -47,19 +47,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
-source "$SCRIPT_DIR/bw-unlock.sh"
+source "$SCRIPT_DIR/setup-lib.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
-  MISSING=()
-  [ -z "$GIT_NAME" ]  && MISSING+=("GIT_NAME")
-  [ -z "$GIT_EMAIL" ] && MISSING+=("GIT_EMAIL")
-  [ -z "$GH_REPO" ]   && MISSING+=("GH_REPO")
-  if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "ERROR: GH_USER is set but the following fields are missing in $CONFIG_FILE:"
-    for F in "${MISSING[@]}"; do echo "  $F"; done
-    exit 1
-  fi
+  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BW_EMAIL
 fi
 
 # --- Set paths ---
@@ -86,11 +78,8 @@ done
 
 # --- Unlock Bitwarden upfront (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
-  if ! command -v bw &>/dev/null; then
-    echo "==> Installing Bitwarden CLI..."
-    brew install bitwarden-cli
-  fi
-  bw_ensure_session || exit 1
+  setup_install_bitwarden_tools
+  setup_bw_unlock_with_keychain || exit 1
 fi
 
 # --- Tools (GitHub mode only) ---
@@ -174,7 +163,7 @@ if [ -n "$GH_USER" ]; then
     skip "GitHub CLI auth"
   else
     echo "==> Authenticating GitHub CLI with token from Bitwarden..."
-    GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
+    GH_TOKEN=$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
     if [ -n "$GH_TOKEN" ]; then
       if echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null; then
         gh auth setup-git
@@ -275,7 +264,7 @@ HOOKEOF
   [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
 
   if [ "$_GC_INITIALIZED" = false ] || [ "$_FILES_ENCRYPTED" = true ]; then
-    GC_KEY=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+    GC_KEY=$(setup_bw_get_field "$BW_ITEM" "$BW_FIELD") || true
     if [ -n "$GC_KEY" ]; then
       if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
         if [ "$_GC_INITIALIZED" = false ]; then
@@ -350,40 +339,34 @@ else
 fi
 
 # --- secrets.el ---
-# Both API keys use the same flow:
-#   1. Load from Bitwarden if the item exists.
-#   2. If not, prompt the user interactively, then SAVE the entered
-#      key to Bitwarden (creating the item) so future installs find it.
-#   3. Either way, write a (setenv ...) line to secrets.el.
-# Symmetric — no key is special-cased.
+# API keys are read from Bitwarden only. Missing keys are repaired through the
+# up-front intake wizard, keeping the installer non-interactive after intake.
 if [ -f "$EMACS_SECRETS" ]; then
   skip "secrets.el"
 else
   mkdir -p "$HOME/.emacs.d"
-  if [ -n "$GH_USER" ] && [ -n "$BW_SESSION" ]; then
+  if [ -n "$GH_USER" ]; then
     echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
 
-    ANTHROPIC_API_KEY=$(bw_ensure_api_key \
-                          "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
-                          "Anthropic API key" \
-                          "https://console.anthropic.com/settings/keys")
+    ANTHROPIC_API_KEY=$(setup_bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
     if [ -n "$ANTHROPIC_API_KEY" ]; then
       printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
     else
-      echo ";; ANTHROPIC_API_KEY: add Bitwarden item '$BW_ANTHROPIC_ITEM' and re-run setup" >> "$EMACS_SECRETS"
+      echo ";; ANTHROPIC_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
     fi
 
-    GEMINI_API_KEY=$(bw_ensure_api_key \
-                       "$BW_GEMINI_ITEM" "$BW_FIELD" \
-                       "Gemini API key (free)" \
-                       "https://aistudio.google.com/apikey")
+    GEMINI_API_KEY=$(setup_bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD") || true
     if [ -n "$GEMINI_API_KEY" ]; then
       printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
     else
-      echo ";; GEMINI_API_KEY: add Bitwarden item '$BW_GEMINI_ITEM' and re-run setup" >> "$EMACS_SECRETS"
+      echo ";; GEMINI_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
     fi
 
     echo "==> secrets.el written."
+    if [ -z "$GEMINI_API_KEY" ] || [ -z "$ANTHROPIC_API_KEY" ]; then
+      echo "    Missing API keys can be added with:"
+      echo "      bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    fi
   else
     echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
     echo "==> secrets.el created (empty — no GitHub/Bitwarden configured)."
