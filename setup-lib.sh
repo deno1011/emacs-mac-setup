@@ -292,31 +292,54 @@ sys.stdout.buffer.write(base64.b64decode(c))" > "$remote_tmp" 2>/dev/null
 
 setup_try_load_private_config_from_github() {
   setup_runtime_load || return 1
-  [ -n "${GH_USER:-}" ] || return 0
-  setup_gh_ensure_auth || return 0
+  if [ -z "${GH_USER:-}" ]; then
+    echo "  (skip private-conf fetch: GH_USER not set)"
+    return 0
+  fi
+  if ! setup_gh_ensure_auth; then
+    echo "  (skip private-conf fetch: GitHub auth not available or token invalid)"
+    return 0
+  fi
 
-  local candidates="" repo seen="" conf_content conf_tmp
-  [ -n "${GH_REPO:-}" ] && candidates="$candidates $GH_REPO"
-  candidates="$candidates emacs emacs-data"
+  local candidates="" repo seen="" status http_body conf_tmp
+  [ -n "${GH_REPO:-}" ]              && candidates="$candidates $GH_REPO"
+  [ -n "${SETUP_CONFIG_REPO:-}" ]    && candidates="$candidates $SETUP_CONFIG_REPO"
+  candidates="$candidates emacs emacs-data emacs-private emacs-config"
 
   for repo in $candidates; do
     case " $seen " in
       *" $repo "*) continue ;;
     esac
     seen="$seen $repo"
-    conf_content="$(gh api "repos/$GH_USER/$repo/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null)" || true
-    [ -n "$conf_content" ] || continue
     conf_tmp="$(mktemp)"
-    echo "$conf_content" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" > "$conf_tmp" 2>/dev/null || true
-    if grep -q '^GIT_NAME="[^"]' "$conf_tmp" 2>/dev/null; then
-      cp "$conf_tmp" "$SETUP_CONFIG"
-      rm -f "$conf_tmp"
-      echo "  Loaded existing config from $GH_USER/$repo."
-      setup_runtime_load
-      return 0
+    if http_body="$(env -u GITHUB_TOKEN -u GH_TOKEN gh api \
+        "repos/$GH_USER/$repo/contents/config/setup-emacs-mac.conf" 2>"$conf_tmp.err")"; then
+      rm -f "$conf_tmp.err"
+      printf '%s' "$http_body" | python3 -c "import json,sys,base64
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(1)
+c=d.get('content','') or ''
+sys.stdout.buffer.write(base64.b64decode(c))" > "$conf_tmp" 2>/dev/null || true
+      if grep -q '^GIT_NAME="[^"]' "$conf_tmp" 2>/dev/null; then
+        cp "$conf_tmp" "$SETUP_CONFIG"
+        rm -f "$conf_tmp"
+        echo "  Loaded existing config from $GH_USER/$repo (config/setup-emacs-mac.conf)."
+        setup_runtime_load
+        return 0
+      else
+        echo "  - $GH_USER/$repo: config exists but GIT_NAME is empty — skipping"
+      fi
+    else
+      if grep -q "Not Found" "$conf_tmp.err" 2>/dev/null; then
+        echo "  - $GH_USER/$repo: no config/setup-emacs-mac.conf"
+      else
+        echo "  - $GH_USER/$repo: $(head -1 "$conf_tmp.err" 2>/dev/null || echo "fetch failed")"
+      fi
+      rm -f "$conf_tmp.err"
     fi
     rm -f "$conf_tmp"
   done
+  echo "  No usable private setup-emacs-mac.conf found in any candidate repo."
 }
 
 setup_keychain_get() {
