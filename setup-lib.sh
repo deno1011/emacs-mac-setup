@@ -249,6 +249,47 @@ setup_require_bitwarden_email() {
   fi
 }
 
+setup_push_config_to_github() {
+  [ -f "$SETUP_CONFIG" ] || return 0
+  [ -n "${GH_USER:-}" ]  || return 0
+  [ -n "${GH_REPO:-}" ]  || return 0
+  setup_gh_ensure_auth || return 0
+
+  local api_path="repos/${GH_USER}/${GH_REPO}/contents/config/setup-emacs-mac.conf"
+  local remote_meta sha="" remote_tmp
+  remote_meta="$(env -u GITHUB_TOKEN -u GH_TOKEN gh api "$api_path" 2>/dev/null || true)"
+  if [ -n "$remote_meta" ]; then
+    sha="$(printf '%s' "$remote_meta" | python3 -c "import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+print(d.get('sha','') or '')" 2>/dev/null)"
+    remote_tmp="$(mktemp)"
+    printf '%s' "$remote_meta" | python3 -c "import json,sys,base64
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+c=d.get('content','') or ''
+sys.stdout.buffer.write(base64.b64decode(c))" > "$remote_tmp" 2>/dev/null
+    if cmp -s "$SETUP_CONFIG" "$remote_tmp"; then
+      rm -f "$remote_tmp"
+      return 0
+    fi
+    rm -f "$remote_tmp"
+  fi
+
+  local content_b64
+  content_b64="$(base64 < "$SETUP_CONFIG" | tr -d '\n')"
+  local message="setup: sync setup-emacs-mac.conf"
+  local args=( -X PUT "$api_path" -f "message=$message" -f "content=$content_b64" )
+  [ -n "$sha" ] && args+=( -f "sha=$sha" )
+
+  if env -u GITHUB_TOKEN -u GH_TOKEN gh api "${args[@]}" >/dev/null 2>&1; then
+    echo "  Synced setup-emacs-mac.conf to ${GH_USER}/${GH_REPO}."
+  else
+    echo "  WARN: could not push setup-emacs-mac.conf to ${GH_USER}/${GH_REPO}." >&2
+    return 1
+  fi
+}
+
 setup_try_load_private_config_from_github() {
   setup_runtime_load || return 1
   [ -n "${GH_USER:-}" ] || return 0

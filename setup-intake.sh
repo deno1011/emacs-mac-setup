@@ -187,6 +187,10 @@ else
   echo "  Local-only mode selected. Bitwarden/GitHub setup will be skipped."
 fi
 
+if [ -n "${GH_USER:-}" ]; then
+  setup_push_config_to_github || true
+fi
+
 setup_state_set INTAKE_DONE true
 setup_state_set LAST_ERROR ""
 setup_state_set NEXT_STEP ""
