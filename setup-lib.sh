@@ -73,12 +73,21 @@ setup_gh_auth_login_with_token() {
   env -u GITHUB_TOKEN -u GH_TOKEN gh auth setup-git
 }
 
+setup_gh_token_is_valid() {
+  command -v gh >/dev/null 2>&1 || return 1
+  local login
+  login="$(env -u GITHUB_TOKEN -u GH_TOKEN gh api user --jq '.login' 2>/dev/null)" || return 1
+  [ -n "$login" ] && [[ "$login" =~ ^[A-Za-z0-9_-]+$ ]]
+}
+
 setup_gh_ensure_auth() {
   command -v gh >/dev/null 2>&1 || return 1
-  setup_gh_auth_status_stored && return 0
+  if setup_gh_auth_status_stored && setup_gh_token_is_valid; then
+    return 0
+  fi
   [ -n "${GITHUB_TOKEN:-}" ] || return 1
   setup_gh_auth_login_with_token "$GITHUB_TOKEN" >/dev/null 2>&1 || return 1
-  setup_gh_auth_status_stored
+  setup_gh_token_is_valid
 }
 
 setup_ensure_config() {

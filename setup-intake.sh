@@ -15,6 +15,14 @@ setup_phase "Phase 1/5: Discover existing setup"
 setup_ensure_config
 setup_runtime_load
 
+_EXISTING_GH_USER="$(setup_config_get GH_USER)"
+if [ -n "$_EXISTING_GH_USER" ] && ! [[ "$_EXISTING_GH_USER" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "  WARN: GH_USER in config is not a valid GitHub login — clearing."
+  setup_config_set GH_USER ""
+  _EXISTING_GH_USER=""
+fi
+unset _EXISTING_GH_USER
+
 if command -v gh >/dev/null 2>&1 && ! setup_gh_auth_status_stored \
    && [ -n "${GITHUB_TOKEN:-}" ]; then
   echo "  Authenticating gh CLI with saved GitHub token from Keychain..."
@@ -22,8 +30,10 @@ if command -v gh >/dev/null 2>&1 && ! setup_gh_auth_status_stored \
 fi
 
 if [ -z "$(setup_config_get GH_USER)" ] && setup_gh_ensure_auth; then
-  _GH_DETECTED=$(gh api user --jq '.login' 2>/dev/null || true)
-  [ -n "$_GH_DETECTED" ] && setup_config_set GH_USER "$_GH_DETECTED"
+  _GH_DETECTED="$(env -u GITHUB_TOKEN -u GH_TOKEN gh api user --jq '.login' 2>/dev/null || true)"
+  if [ -n "$_GH_DETECTED" ] && [[ "$_GH_DETECTED" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    setup_config_set GH_USER "$_GH_DETECTED"
+  fi
   unset _GH_DETECTED
 fi
 
