@@ -96,6 +96,8 @@ setup_load_config() {
   # shellcheck disable=SC1090
   source "$SETUP_CONFIG"
   MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
+  BITWARDEN_EMAIL="${BITWARDEN_EMAIL:-${BW_EMAIL:-}}"
+  BW_EMAIL="$BITWARDEN_EMAIL"
 }
 
 setup_prompt() {
@@ -139,6 +141,14 @@ setup_require_config() {
   fi
 }
 
+setup_require_bitwarden_email() {
+  setup_load_config || return 1
+  if [ -z "${BITWARDEN_EMAIL:-}" ]; then
+    setup_fail "Missing required config value(s): BITWARDEN_EMAIL " "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
+    return 1
+  fi
+}
+
 setup_keychain_get() {
   local account="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
   security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
@@ -178,8 +188,8 @@ setup_bw_unlock_with_keychain() {
   export __BW_PW="$master"
   status="$(setup_bw_status)"
   if [ "$status" = "unauthenticated" ]; then
-    [ -n "${BW_EMAIL:-}" ] || setup_fail "Bitwarden email is missing from setup config." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
-    session="$(bw login "$BW_EMAIL" --passwordenv __BW_PW --raw 2>/dev/null)" || true
+    [ -n "${BITWARDEN_EMAIL:-}" ] || setup_fail "Bitwarden email is missing from setup config." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    session="$(bw login "$BITWARDEN_EMAIL" --passwordenv __BW_PW --raw 2>/dev/null)" || true
   else
     session="$(bw unlock --passwordenv __BW_PW --raw 2>/dev/null)" || true
   fi

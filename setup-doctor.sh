@@ -24,9 +24,10 @@ echo ""
 if [ -n "${GH_USER:-}" ]; then
   echo "Validation:"
   _MISSING=""
-  for _K in GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BW_EMAIL; do
+  for _K in GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE; do
     [ -z "$(setup_config_get "$_K")" ] && _MISSING="${_MISSING}${_K} "
   done
+  [ -z "${BITWARDEN_EMAIL:-}" ] && _MISSING="${_MISSING}BITWARDEN_EMAIL "
   [ -n "$_MISSING" ] && echo "  Config                    missing: $_MISSING" || echo "  Config                    ok"
   unset _K _MISSING
   if [ -z "$(setup_keychain_get)" ]; then

@@ -51,7 +51,8 @@ source "$SCRIPT_DIR/setup-lib.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
-  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BW_EMAIL
+  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
+  setup_require_bitwarden_email
 fi
 
 # --- Set paths ---

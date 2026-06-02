@@ -21,7 +21,8 @@ if [ -z "${GH_USER:-}" ]; then
   exit 0
 fi
 
-setup_require_config GH_REPO BW_FIELD BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BW_EMAIL
+setup_require_config GH_REPO BW_FIELD BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
+setup_require_bitwarden_email
 
 if [ -f "$SECRETS_REPO" ] && grep -q "setenv" "$SECRETS_REPO" 2>/dev/null; then
   echo "==> secrets.el available in repo (git-crypt decrypted) — creating symlink..."

@@ -118,7 +118,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 - Bitwarden account
 
 **Required config fields** (setup aborts with a repair command if empty when `GH_USER` is set):
-`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BW_EMAIL`
+`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BITWARDEN_EMAIL`
 
 Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and all GitHub repos — is installed or created automatically by the setup scripts.
 
@@ -133,6 +133,10 @@ Safe to store in a private GitHub repo without encryption.
 `MACOS_KEYCHAIN_ACCOUNT` is the macOS Keychain account name used for the stored
 Bitwarden master-password entry. Legacy configs with `BW_KEYCHAIN_ACCOUNT` are
 still accepted, but new configs should use the clearer macOS-specific name.
+
+`BITWARDEN_EMAIL` is the Bitwarden login email/username stored in the setup
+config. Legacy configs with `BW_EMAIL` are still accepted and are migrated by
+`setup-intake.sh`.
 
 **On a new Mac, bootstrap.sh handles the config automatically:**
 

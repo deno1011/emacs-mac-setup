@@ -72,9 +72,12 @@ if [ -n "${GH_USER:-}" ]; then
   setup_load_config
 
   setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
-  setup_prompt_config_if_empty BW_EMAIL "Bitwarden email" ""
+  if [ -z "$(setup_config_get BITWARDEN_EMAIL)" ] && [ -n "$(setup_config_get BW_EMAIL)" ]; then
+    setup_config_set BITWARDEN_EMAIL "$(setup_config_get BW_EMAIL)"
+  fi
+  setup_prompt_config_if_empty BITWARDEN_EMAIL "Bitwarden email / username" ""
   setup_load_config
-  setup_require_config BW_EMAIL
+  setup_require_bitwarden_email
 
   setup_phase "Phase 3/5: Validate Bitwarden and secrets"
   setup_install_bitwarden_tools
