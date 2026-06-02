@@ -369,9 +369,22 @@ sys.stdout.buffer.write(base64.b64decode(c))" > "$conf_tmp" 2>/dev/null || true
 }
 
 setup_keychain_get() {
-  local account="${BITWARDEN_EMAIL:-}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
-  [ -n "$account" ] || return 0
-  security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
+  local account="${BITWARDEN_EMAIL:-}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}" pw
+  if [ -n "$account" ]; then
+    pw="$(security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true)"
+    if [ -n "$pw" ]; then
+      printf '%s' "$pw"
+      return 0
+    fi
+  fi
+  pw="$(security find-generic-password -s "$service" -w 2>/dev/null || true)"
+  printf '%s' "$pw"
+}
+
+setup_keychain_get_existing_account() {
+  local service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  security find-generic-password -s "$service" 2>&1 \
+    | awk -F'"' '/"acct"<blob>=/ {print $4; exit}'
 }
 
 setup_keychain_account() {
@@ -395,6 +408,14 @@ setup_keychain_set() {
   account="$(setup_keychain_account)"
   service="$(setup_keychain_service)"
   [ -n "$account" ] || return 1
+  # Sweep any stale entry under a different account (e.g. old email typo) so
+  # the lookup-by-service fallback can't return outdated passwords.
+  local existing
+  while existing="$(setup_keychain_get_existing_account)"; do
+    [ -z "$existing" ] && break
+    [ "$existing" = "$account" ] && break
+    security delete-generic-password -a "$existing" -s "$service" >/dev/null 2>&1 || break
+  done
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A 2>/dev/null || return 1
 }
@@ -572,8 +593,16 @@ setup_print_inventory() {
   echo "  BITWARDEN_EMAIL           ${BITWARDEN_EMAIL:-<missing>}"
   echo ""
   echo "macOS Keychain:"
+  echo "  service                   ${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  echo "  lookup account            ${BITWARDEN_EMAIL:-<empty>}"
   if [ -n "${BW_KEYCHAIN_SERVICE:-}" ] && [ -n "$(setup_keychain_get)" ]; then
-    echo "  Bitwarden password        found"
+    local _stored_acct
+    _stored_acct="$(setup_keychain_get_existing_account 2>/dev/null)"
+    if [ -n "$_stored_acct" ] && [ "$_stored_acct" != "${BITWARDEN_EMAIL:-}" ]; then
+      echo "  Bitwarden password        found (stored under account: $_stored_acct)"
+    else
+      echo "  Bitwarden password        found"
+    fi
   else
     echo "  Bitwarden password        missing"
   fi
