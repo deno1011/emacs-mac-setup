@@ -8,58 +8,42 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 ;;; -*- lexical-binding: t -*-
 (message "Loading config... (first start may take a few minutes while packages install)")
 
-;; GUI Emacs does not always inherit the shell PATH on a fresh macOS install.
-;; Keep both common Homebrew prefixes visible without assuming CPU architecture:
-;; Apple Silicon usually uses /opt/homebrew, Intel usually uses /usr/local.
-(dolist (dir '("/opt/homebrew/bin" "/usr/local/bin"))
-  (when (file-directory-p dir)
-    (add-to-list 'exec-path dir)
-    (let ((path (or (getenv "PATH") "")))
-      (unless (string-match-p
-               (regexp-quote (concat dir path-separator))
-               (concat path path-separator))
-        (setenv "PATH" (concat dir path-separator path))))))
-
 ;; Install a brew package in the background and log it for clean uninstall.
 ;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
 ;; the full brew arguments (e.g. "install" "--cask" "font-jetbrains-mono").
 (defun my/brew-install-and-log (type package &rest brew-args)
-  (if-let ((brew (executable-find "brew")))
-      (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
-             (entry    (format "%s:%s\n" type package))
-             (proc     (apply #'start-process
-                              (format "install-%s" package)
-                              (format "*install-%s*" package)
-                              brew brew-args)))
-        (set-process-sentinel
-         proc
-         (lambda (p _e)
-           (when (= (process-exit-status p) 0)
-             (unless (and (file-exists-p log-file)
-                          (with-temp-buffer
-                            (insert-file-contents log-file)
-                            (search-forward entry nil t)))
-               (append-to-file entry nil log-file))))))
-    (message "brew not found — cannot auto-install %s" package)))
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "%s:%s\n" type package))
+         (proc     (apply #'start-process
+                          (format "install-%s" package)
+                          (format "*install-%s*" package)
+                          "brew" brew-args)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
 
 ;; Install a pip package in the background and log it for clean uninstall.
 (defun my/pip-install-and-log (package)
-  (if-let ((pip3 (executable-find "pip3")))
-      (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
-             (entry    (format "pip:%s\n" package))
-             (proc     (start-process (format "install-%s" package)
-                                      (format "*install-%s*" package)
-                                      pip3 "install" "--break-system-packages" package)))
-        (set-process-sentinel
-         proc
-         (lambda (p _e)
-           (when (= (process-exit-status p) 0)
-             (unless (and (file-exists-p log-file)
-                          (with-temp-buffer
-                            (insert-file-contents log-file)
-                            (search-forward entry nil t)))
-               (append-to-file entry nil log-file))))))
-    (message "pip3 not found — cannot auto-install Python package %s" package)))
+  (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
+         (entry    (format "pip:%s\n" package))
+         (proc     (start-process (format "install-%s" package)
+                                  (format "*install-%s*" package)
+                                  "pip3" "install" "--break-system-packages" package)))
+    (set-process-sentinel
+     proc
+     (lambda (p _e)
+       (when (= (process-exit-status p) 0)
+         (unless (and (file-exists-p log-file)
+                      (with-temp-buffer
+                        (insert-file-contents log-file)
+                        (search-forward entry nil t)))
+           (append-to-file entry nil log-file)))))))
 #+end_src
 
 * PATH
@@ -89,7 +73,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (setq save-abbrevs 'silently)
 #+end_src
 
-
 * Font
 #+begin_src emacs-lisp
 (unless (find-font (font-spec :name "JetBrains Mono"))
@@ -108,8 +91,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (use-package doom-themes
   :demand t
   :config
-  ;; Avoid theme-inheritance cycle (e.g. modus-vivendi + doom-one): disable any already-loaded themes first.
-  (mapc #'disable-theme custom-enabled-themes)
   (load-theme 'doom-one t)
   (doom-themes-org-config))
 
@@ -118,35 +99,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :custom
   (doom-modeline-height 28)
   (doom-modeline-icon nil))
-#+end_src
-* Visual Enhancements
-** Nyan Mode
-Animated Nyan Cat progress indicator for the mode line.
-#+begin_src emacs-lisp
-(use-package nyan-mode
-  :ensure t
-  :config
-  ;; Rainbow trail
-  (setq nyan-wavy-trail t)
-  ;; Length of progress bar
-  (setq nyan-bar-length 16)
-  ;; Optional animation speed tweaks
-  ;; (setq nyan-animation-frame-interval 0.2)
-  ;; Activate globally
-  (nyan-mode 1))
-#+end_src
-** Visual Line Mode
-Wrap long lines at word boundaries (instead of truncating or hard-wrapping)
-in text-oriented buffers. =visual-line-mode= also remaps movement commands
-(=C-a=, =C-e=, =C-k=, =C-n=, =C-p=) so they operate on visual lines, which is
-what you usually want for prose, Org, Markdown and chat buffers.
-#+begin_src emacs-lisp
-;; Enable globally for text-derived modes (org, markdown, text, ...).
-(add-hook 'text-mode-hook #'visual-line-mode)
-;; Org explicitly, in case org-mode is not yet derived from text-mode at load time.
-(add-hook 'org-mode-hook  #'visual-line-mode)
-;; Soft-wrap indicator in the fringe is distracting; rely on visual-line-mode alone.
-(setq visual-line-fringe-indicators '(nil nil))
 #+end_src
 
 * Scrolling
@@ -360,8 +312,8 @@ what you usually want for prose, Org, Markdown and chat buffers.
 (global-set-key (kbd "C-x C-b") 'buffer-menu)
 #+end_src
 
-* Completion Old Stack (deactivated as the Modern Completion Stack is now active)
-#+begin_src emacs-lisp :eval never
+* Completion
+#+begin_src emacs-lisp
 (use-package smex :ensure t)
 
 (use-package ivy
@@ -381,256 +333,6 @@ what you usually want for prose, Org, Markdown and chat buffers.
   :bind (("M-s" . swiper)))
 #+end_src
 
-
-* Modern Completion Stack
-
-Modern replacement for:
-- Ivy
-- Counsel
-- Swiper
-
-Uses:
-- Vertico
-- Consult
-- Embark
-- Marginalia
-- Orderless
-
-** Package System
-
-#+begin_src emacs-lisp
-(require 'package)
-
-(setq package-archives
-      '(("gnu"    . "https://elpa.gnu.org/packages/")
-        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-        ("melpa"  . "https://melpa.org/packages/")))
-
-(unless package--initialized
-  (package-initialize))
-
-(unless package-archive-contents
-  (package-refresh-contents))
-
-(unless (package-installed-p 'use-package)
-  (package-install 'use-package))
-
-(require 'use-package)
-
-(setq use-package-always-ensure t)
-#+end_src
-
-** Install ripgrep automatically
-
-#+begin_src emacs-lisp
-(defun my/install-ripgrep ()
-  "Install ripgrep automatically if possible."
-  (unless (executable-find "rg")
-
-    (cond
-
-     ;; macOS
-     ((and (eq system-type 'darwin)
-           (executable-find "brew"))
-      (message "Installing ripgrep via brew...")
-      (start-process
-       "install-rg"
-       "*install-rg*"
-       "brew" "install" "ripgrep"))
-
-     ;; Debian / Ubuntu
-     ((and (eq system-type 'gnu/linux)
-           (executable-find "apt"))
-      (message "Installing ripgrep via apt...")
-      (start-process
-       "install-rg"
-       "*install-rg*"
-       "sudo" "apt" "install" "-y" "ripgrep"))
-
-     ;; Fedora
-     ((and (eq system-type 'gnu/linux)
-           (executable-find "dnf"))
-      (message "Installing ripgrep via dnf...")
-      (start-process
-       "install-rg"
-       "*install-rg*"
-       "sudo" "dnf" "install" "-y" "ripgrep"))
-
-     ;; Arch
-     ((and (eq system-type 'gnu/linux)
-           (executable-find "pacman"))
-      (message "Installing ripgrep via pacman...")
-      (start-process
-       "install-rg"
-       "*install-rg*"
-       "sudo" "pacman" "-S" "--noconfirm" "ripgrep"))
-
-     (t
-      (message "Please install ripgrep manually.")))))
-
-(my/install-ripgrep)
-#+end_src
-
-** Vertico
-
-#+begin_src emacs-lisp
-(use-package vertico
-  :init
-  (vertico-mode 1)
-
-  :custom
-  (vertico-cycle t))
-#+end_src
-
-** Save minibuffer history
-
-#+begin_src emacs-lisp
-(use-package savehist
-  :init
-  (savehist-mode 1))
-#+end_src
-
-** Marginalia
-
-#+begin_src emacs-lisp
-(use-package marginalia
-  :after vertico
-  :init
-  (marginalia-mode 1))
-#+end_src
-
-** Orderless matching
-
-#+begin_src emacs-lisp
-(use-package orderless
-
-  :custom
-  (completion-styles '(orderless basic))
-  (completion-category-defaults nil)
-
-  (completion-category-overrides
-   '((file (styles basic partial-completion)))))
-#+end_src
-
-** Consult
-
-#+begin_src emacs-lisp
-(use-package consult
-
-  :bind
-  (;; Search current buffer
-   ("C-s"     . consult-line)
-
-   ;; Project-wide ripgrep search
-   ("C-c s"   . consult-ripgrep)
-
-   ;; Buffer switch
-   ("C-x b"   . consult-buffer)
-
-   ;; Recent files
-   ("C-c r"   . consult-recent-file)
-
-   ;; Yank history
-   ("M-y"     . consult-yank-pop)
-
-   ;; Goto line
-   ("M-g g"   . consult-goto-line)
-
-   ;; Org headings
-   ("C-c h"   . consult-org-heading)
-
-   ;; Imenu/symbols
-   ("C-c m"   . consult-imenu)
-
-   ;; Git grep
-   ("C-c g"   . consult-git-grep)
-
-   ;; Errors
-   ("C-c e"   . consult-flymake)))
-#+end_src
-
-** Embark
-
-#+begin_src emacs-lisp
-(use-package embark
-
-  :bind
-  (("C-."     . embark-act)
-   ("C-;"     . embark-dwim)
-   ("C-h B"   . embark-bindings))
-
-  :init
-  (setq prefix-help-command #'embark-prefix-help-command))
-#+end_src
-
-#+results:
-: embark-bindings
-
-** Embark + Consult integration
-
-#+begin_src emacs-lisp
-(use-package embark-consult
-  :after (embark consult)
-
-  :hook
-  (embark-collect-mode . consult-preview-at-point-mode))
-#+end_src
-
-** General completion settings
-
-#+begin_src emacs-lisp
-(setq enable-recursive-minibuffers t)
-
-(setq completion-ignore-case t
-      read-buffer-completion-ignore-case t
-      read-file-name-completion-ignore-case t)
-
-(setq minibuffer-prompt-properties
-      '(read-only t
-                  cursor-intangible t
-                  face minibuffer-prompt))
-
-(add-hook 'minibuffer-setup-hook
-          #'cursor-intangible-mode)
-#+end_src
-
-** Helpful notes
-
-Main keys:
-
-C-s
-  Search current buffer
-
-C-c s
-  Search project with ripgrep
-
-C-x b
-  Switch buffers/files
-
-C-.
-  Embark actions
-
-C-c h
-  Search org headings
-
-C-c m
-  Search symbols/imenu
-
-M-y
-  Browse yank history
-
-M-g g
-  Goto line
-
-Embark (`C-.`) is extremely powerful:
-- act on files
-- grep results
-- org headings
-- buffers
-- symbols
-- search candidates
-- magit items
-- etc.
 * Org Capture
 #+begin_src emacs-lisp
 (global-set-key (kbd "C-c c") 'org-capture)
@@ -741,11 +443,6 @@ Embark (`C-.`) is extremely powerful:
   :config
   (setq ispell-program-name "aspell"
         ispell-dictionary "german"))
-(defun my/turn-on-flyspell-if-aspell-available ()
-  "Enable Flyspell only when aspell is installed."
-  (if (executable-find ispell-program-name)
-      (turn-on-flyspell)
-    (message "Flyspell skipped: %s not found yet; restart after brew install finishes."
-             ispell-program-name)))
-(add-hook 'org-mode-hook #'my/turn-on-flyspell-if-aspell-available 'append)
+(add-hook 'org-mode-hook 'turn-on-flyspell 'append)
 #+end_src
+

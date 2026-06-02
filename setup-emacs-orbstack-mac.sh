@@ -15,18 +15,12 @@ APPS_DIR="$HOME/Applications"
 
 # ── Load personal config ───────────────────────────────────────────────────────
 CONFIG_FILE="$HOME/emacs-mac-setup/setup-emacs-mac.conf"
-if [[ ! -f "$CONFIG_FILE" ]]; then
+if [[ -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+else
     echo "ERROR: Config file not found: $CONFIG_FILE"
     echo "Please create it (template: setup-emacs-mac.conf.template)"
     exit 1
-fi
-
-if [[ -f "$SCRIPT_DIR/bw-unlock.sh" ]]; then
-    source "$SCRIPT_DIR/bw-unlock.sh"
-    trap 'setup_runtime_cleanup_secret_keychain 2>/dev/null || true' EXIT
-    setup_runtime_load 2>/dev/null || true
-else
-    echo "WARNING: bw-unlock.sh not found — using config metadata only."
 fi
 
 GH_USER="${GH_USER:-}"
@@ -45,27 +39,25 @@ if (( ${#MISSING[@]} > 0 )); then
     exit 1
 fi
 
-# ── Bitwarden (optional — used for intake fallback/recovery) ─────────────────
+# ── Bitwarden (optional — used for git-crypt key and API key) ─────────────────
 BW_AVAILABLE=false
-if (( $+functions[bw_ensure_session] )); then
+if [[ -f "$SCRIPT_DIR/bw-unlock.sh" ]]; then
+    source "$SCRIPT_DIR/bw-unlock.sh"
     if bw_ensure_session 2>/dev/null; then
-        setup_runtime_load_bitwarden_secrets 2>/dev/null || true
         BW_AVAILABLE=true
     else
-        echo "WARNING: Bitwarden session not available — setup runtime values will be used where present."
+        echo "WARNING: Bitwarden session not available — git-crypt and API key must be set manually."
     fi
 else
     echo "WARNING: bw-unlock.sh not found — skipping Bitwarden steps."
 fi
 
 # ── GitHub token ──────────────────────────────────────────────────────────────
-GH_TOKEN="${GITHUB_TOKEN:-}"
-if command -v gh &>/dev/null && setup_gh_auth_status_stored; then
+GH_TOKEN=""
+if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
     GH_TOKEN=$(gh auth token 2>/dev/null || true)
-elif command -v gh &>/dev/null && [[ -n "$GH_TOKEN" ]]; then
-    setup_gh_auth_login_with_token "$GH_TOKEN"
 fi
-[[ -z "$GH_TOKEN" ]] && echo "WARNING: GitHub token missing — run: bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
+[[ -z "$GH_TOKEN" ]] && echo "WARNING: GitHub not authenticated — run: gh auth login"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -207,9 +199,20 @@ orbu bash -c "
         mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org
     fi
 "
-# Config files self-bootstrap on first Emacs run via init.el's
-# my/ensure-config-file-from-url (fetches from emacs-mac-setup/stable).
-# No file copies into the OrbStack VM needed from this script.
+# Modular config files are setup-managed — always update from SCRIPT_DIR
+_CF_CHANGED=false
+for _CF in core.org org-setup.org gptel-setup.org; do
+    if [ -f "$SCRIPT_DIR/$_CF" ]; then
+        orbu tee "/home/$EUSER/${GH_REPO}/config/$_CF" > /dev/null < "$SCRIPT_DIR/$_CF"
+        orbu bash -c "git -C ~/${GH_REPO} diff --quiet config/$_CF 2>/dev/null || git -C ~/${GH_REPO} add config/$_CF" && _CF_CHANGED=true
+        echo "    $_CF updated."
+    fi
+done
+if [ "$_CF_CHANGED" = true ]; then
+    orbu bash -c "git -C ~/${GH_REPO} diff --cached --quiet || git -C ~/${GH_REPO} commit -m 'chore: update modular config files' 2>/dev/null || true"
+    orbu bash -c "git -C ~/${GH_REPO} push origin main 2>/dev/null || true"
+fi
+unset _CF _CF_CHANGED
 
 # ── 10. git-crypt key ─────────────────────────────────────────────────────────
 step "Setting up git-crypt..."
@@ -218,10 +221,7 @@ if orbu test -f ~/.git-crypt-key 2>/dev/null; then
     orbu bash -c "git -C ~/${GH_REPO} crypt unlock ~/.git-crypt-key 2>/dev/null" \
         && echo "git-crypt unlocked." || true
 elif [[ "$BW_AVAILABLE" == true ]]; then
-    GC_KEY_B64="${GIT_CRYPT_KEY:-}"
-    if [[ -z "$GC_KEY_B64" ]]; then
-        GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
-    fi
+    GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
     if [[ -n "$GC_KEY_B64" ]]; then
         echo "$GC_KEY_B64" | tr -d '[:space:]' \
           | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
@@ -232,19 +232,10 @@ elif [[ "$BW_AVAILABLE" == true ]]; then
             && echo "git-crypt unlocked." \
             || warn "git-crypt unlock failed — run bash ~/unlock-git-crypt.sh in the machine."
     else
-        warn "git-crypt key missing — run setup-intake.sh --repair config."
+        warn "git-crypt key not found in Bitwarden (item: $BW_ITEM) — run bash ~/unlock-git-crypt.sh in the machine."
     fi
-elif [[ -n "${GIT_CRYPT_KEY:-}" ]]; then
-    echo "$GIT_CRYPT_KEY" | tr -d '[:space:]' \
-      | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
-      > "$HOME/.emacs-gc-key-tmp"
-    orbu bash -c "cp '/Users/${USER}/.emacs-gc-key-tmp' ~/.git-crypt-key && chmod 600 ~/.git-crypt-key"
-    rm -f "$HOME/.emacs-gc-key-tmp"
-    orbu bash -c "git -C ~/${GH_REPO} crypt unlock ~/.git-crypt-key 2>/dev/null" \
-        && echo "git-crypt unlocked." \
-        || warn "git-crypt unlock failed — run bash ~/unlock-git-crypt.sh in the machine."
 else
-    warn "git-crypt key unavailable — run setup-intake.sh --repair config."
+    warn "Bitwarden not available — run bash ~/unlock-git-crypt.sh in the machine to unlock org files."
 fi
 
 # ── 11. secrets.el ────────────────────────────────────────────────────────────
@@ -267,39 +258,27 @@ orbu bash -c "
     fi
 "
 
-# Runtime fallback: write API key directly if iCloud secrets are not available
-if [[ "$BW_AVAILABLE" == true || -n "${ANTHROPIC_API_KEY:-}${GEMINI_API_KEY:-}" ]]; then
+# Bitwarden fallback: write API key directly if iCloud secrets not available
+if [[ "$BW_AVAILABLE" == true ]]; then
     orbu bash -c "
         SECRETS_DST=~/.emacs.d/secrets.el
         if [ ! -e \"\$SECRETS_DST\" ]; then
-            echo 'Writing API keys from setup runtime...'
+            echo 'Fetching Anthropic API key from Bitwarden...'
         fi
     "
     _SECRETS_MISSING=$(orbu bash -c "[ -e ~/.emacs.d/secrets.el ] && echo 'exists' || echo 'missing'")
     if [[ "$_SECRETS_MISSING" == "missing" ]]; then
-        _SEC_TMP=$(mktemp)
-        echo ";; secrets.el — API keys (not tracked in git)" > "$_SEC_TMP"
-
-        ANTHROPIC_API_KEY=$(bw_ensure_api_key \
-                              "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
-                              "Anthropic API key" \
-                              "https://console.anthropic.com/settings/keys")
+        ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
         if [[ -n "$ANTHROPIC_API_KEY" ]]; then
-            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$_SEC_TMP"
+            _SEC_TMP=$(mktemp)
+            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SEC_TMP"
+            orbu bash -c "mkdir -p ~/.emacs.d"
+            orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
+            rm -f "$_SEC_TMP"
+            echo "API key written to secrets.el from Bitwarden."
+        else
+            warn "Anthropic API key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM)."
         fi
-
-        GEMINI_API_KEY=$(bw_ensure_api_key \
-                           "$BW_GEMINI_ITEM" "$BW_FIELD" \
-                           "Gemini API key (free)" \
-                           "https://aistudio.google.com/apikey")
-        if [[ -n "$GEMINI_API_KEY" ]]; then
-            printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$_SEC_TMP"
-        fi
-
-        orbu bash -c "mkdir -p ~/.emacs.d"
-        orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
-        rm -f "$_SEC_TMP"
-        echo "secrets.el written into OrbStack VM."
     fi
 fi
 
@@ -394,14 +373,20 @@ root sed -i "s|emacs-data|${GH_REPO}|g" /home/$EUSER/unlock-git-crypt.sh
 root chmod +x /home/$EUSER/unlock-git-crypt.sh
 root chown $EUSER:$EUSER /home/$EUSER/unlock-git-crypt.sh
 
-# ── 17. config.org ───────────────────────────────────────────────────────────
-# Self-bootstrapping via init.el — if ~/${GH_REPO}/config/config.org is
-# missing, init.el's my/ensure-config-file-from-url fetches it from
-# emacs-mac-setup/stable on first Emacs launch inside the VM. If
-# iCloud has a personal copy already, that wins via the my/config-dir
-# resolution order.
-step "Ensuring config directory exists (files self-bootstrap)..."
-orbu bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
+# ── 17. config.org fallback ───────────────────────────────────────────────────
+step "Checking config.org..."
+ICLOUD_CONFIG="/Users/${USER}/Library/Mobile Documents/com~apple~CloudDocs/${GH_REPO}/config/config.org"
+orbu bash -c "
+    if [ -f ~/${GH_REPO}/config/config.org ]; then
+        echo 'config.org present.'
+    elif [ -f '${ICLOUD_CONFIG}' ]; then
+        mkdir -p ~/${GH_REPO}/config
+        cp '${ICLOUD_CONFIG}' ~/${GH_REPO}/config/config.org
+        echo 'config.org copied from iCloud.'
+    else
+        echo 'WARN: config.org not found — Emacs will start without config.'
+    fi
+"
 
 # ── 18. Verification ──────────────────────────────────────────────────────────
 step "Verifying installation..."
@@ -583,8 +568,6 @@ if ! grep -q "emacs-orb" ~/.zshrc 2>/dev/null; then
 fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
-setup_runtime_cleanup_secret_keychain 2>/dev/null || true
-
 print -P "\n${GREEN}✓ OrbStack Emacs setup complete!${NC}"
 echo ""
 echo "Launch options:"
