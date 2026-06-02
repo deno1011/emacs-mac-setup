@@ -63,6 +63,17 @@ setup_fail() {
   return 1
 }
 
+setup_gh_auth_status_stored() {
+  env -u GITHUB_TOKEN -u GH_TOKEN gh auth status "$@" >/dev/null 2>&1
+}
+
+setup_gh_auth_login_with_token() {
+  local token="$1"
+  [ -n "$token" ] || return 1
+  printf '%s\n' "$token" | env -u GITHUB_TOKEN -u GH_TOKEN gh auth login --with-token
+  env -u GITHUB_TOKEN -u GH_TOKEN gh auth setup-git
+}
+
 setup_ensure_config() {
   mkdir -p "$SETUP_DIR"
   if [ ! -f "$SETUP_CONFIG" ]; then

@@ -77,13 +77,12 @@ if [ -n "$GH_USER" ]; then
     brew install gh &>/dev/null
     export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
   fi
-  if gh auth status &>/dev/null 2>&1; then
+  if setup_gh_auth_status_stored; then
     echo "==> GitHub auth: already authenticated."
   else
     echo "==> Authenticating GitHub..."
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-      echo "$GITHUB_TOKEN" | gh auth login --with-token
-      gh auth setup-git
+      setup_gh_auth_login_with_token "$GITHUB_TOKEN"
       echo "    GitHub authenticated."
     else
       setup_fail "GitHub token missing after intake; refusing to interrupt setup with a late login prompt." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
@@ -98,7 +97,7 @@ if [ -n "${GH_USER:-}" ]; then
 fi
 
 # --- Check and create GitHub repos ---
-if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
+if [ -n "$GH_USER" ] && setup_gh_auth_status_stored; then
   echo ""
   echo "==> Checking GitHub repos..."
   setup_runtime_load

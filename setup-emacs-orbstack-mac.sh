@@ -60,10 +60,10 @@ fi
 
 # ── GitHub token ──────────────────────────────────────────────────────────────
 GH_TOKEN="${GITHUB_TOKEN:-}"
-if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+if command -v gh &>/dev/null && setup_gh_auth_status_stored; then
     GH_TOKEN=$(gh auth token 2>/dev/null || true)
 elif command -v gh &>/dev/null && [[ -n "$GH_TOKEN" ]]; then
-    echo "$GH_TOKEN" | gh auth login --with-token
+    setup_gh_auth_login_with_token "$GH_TOKEN"
 fi
 [[ -z "$GH_TOKEN" ]] && echo "WARNING: GitHub token missing — run: bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
 

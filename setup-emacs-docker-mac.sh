@@ -106,12 +106,12 @@ if ! command -v gh &>/dev/null; then
   brew install gh
 fi
 
-if gh auth status &>/dev/null 2>&1; then
+if setup_gh_auth_status_stored; then
   skip "GitHub CLI auth (already authenticated)"
 else
   echo "==> Authenticating GitHub CLI with token from setup runtime..."
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    echo "$GITHUB_TOKEN" | gh auth login --with-token
+    setup_gh_auth_login_with_token "$GITHUB_TOKEN"
   else
     setup_fail "GitHub token missing after intake." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
   fi

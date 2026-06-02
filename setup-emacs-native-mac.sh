@@ -157,13 +157,13 @@ echo "==> Using Emacs: $EMACS_BIN"
 
 # --- GitHub-Modus: Auth, Repo, Symlink ---
 if [ -n "$GH_USER" ]; then
-  if gh auth status &>/dev/null 2>&1; then
+  if setup_gh_auth_status_stored; then
     skip "GitHub CLI auth"
   else
     echo "==> Authenticating GitHub CLI with token from setup runtime..."
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-      if echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null; then
-        gh auth setup-git
+      if setup_gh_auth_login_with_token "$GITHUB_TOKEN" 2>/dev/null; then
+        :
       else
         setup_fail "GitHub token is invalid or expired." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
       fi
