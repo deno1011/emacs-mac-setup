@@ -403,6 +403,15 @@ setup_runtime_load_secret_keychain_values() {
 }
 
 setup_runtime_cleanup_secret_keychain() {
+  # Intentional no-op. Runtime secrets (GITHUB_TOKEN, GIT_CRYPT_KEY,
+  # GEMINI_API_KEY, ANTHROPIC_API_KEY) are kept in macOS Keychain so
+  # subsequent setup-intake runs can reload them via
+  # setup_runtime_load_secret_keychain_values without re-prompting.
+  # Use setup_runtime_purge_secret_keychain to delete them explicitly.
+  return 0
+}
+
+setup_runtime_purge_secret_keychain() {
   local key account="$USER" service
   for key in $SETUP_RUNTIME_SECRET_KEYS; do
     service="$(setup_runtime_keychain_service "$key")"
