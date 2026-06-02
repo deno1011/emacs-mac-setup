@@ -92,6 +92,15 @@ if [ -n "${GH_USER:-}" ]; then
       echo "  No existing Bitwarden master password found in macOS Keychain."
       echo "  Lookup account: ${BITWARDEN_EMAIL:-<missing Bitwarden email>}"
       echo "  Lookup service: ${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+      _OTHER_SVCS="$(setup_keychain_list_candidate_services 2>/dev/null || true)"
+      if [ -n "$_OTHER_SVCS" ]; then
+        echo "  Other Bitwarden-looking Keychain services on this Mac:"
+        printf '%s\n' "$_OTHER_SVCS" | sed 's/^/    - /'
+        echo "  If your saved master uses one of those, run:"
+        echo "    bash ~/emacs-mac-setup/setup-intake.sh --repair config"
+        echo "  and set BW_KEYCHAIN_SERVICE to the matching value, then re-run intake."
+      fi
+      unset _OTHER_SVCS
     fi
     echo "  Bitwarden master password is saved to macOS Keychain, not setup config."
     _BW_MASTER="$(setup_prompt_secret "Bitwarden master password")"

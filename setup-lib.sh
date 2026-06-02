@@ -387,6 +387,18 @@ setup_keychain_get_existing_account() {
     | awk -F'"' '/"acct"<blob>=/ {print $4; exit}'
 }
 
+setup_keychain_list_candidate_services() {
+  local svc seen=""
+  # Probe a small set of well-known service names that Bitwarden setups use.
+  for svc in bitwarden-master bitwarden bw-master Bitwarden BitwardenMaster bitwarden_master; do
+    case " $seen " in *" $svc "*) continue ;; esac
+    seen="$seen $svc"
+    if security find-generic-password -s "$svc" >/dev/null 2>&1; then
+      echo "$svc"
+    fi
+  done
+}
+
 setup_keychain_account() {
   printf '%s' "${BITWARDEN_EMAIL:-}"
 }
