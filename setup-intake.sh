@@ -63,8 +63,8 @@ if [ -n "${GH_USER:-}" ]; then
     echo ""
     if [ -z "${BITWARDEN_MASTER_PASSWORD:-}" ]; then
       echo "  No existing Bitwarden master password found in macOS Keychain."
-      echo "  Lookup accounts: $(setup_keychain_lookup_accounts_label)"
-      echo "  Lookup service: ${BW_KEYCHAIN_SERVICE:-bitwarden-master} (fallback: bitwarden-master)"
+      echo "  Lookup account: ${BITWARDEN_EMAIL:-<missing Bitwarden email>}"
+      echo "  Lookup service: ${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
     fi
     echo "  Bitwarden master password is saved to macOS Keychain, not setup config."
     _BW_MASTER="$(setup_prompt_secret "Bitwarden master password")"

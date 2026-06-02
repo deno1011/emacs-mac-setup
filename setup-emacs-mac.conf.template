@@ -35,10 +35,8 @@ BW_FIELD=""
 # Example: BW_KEYCHAIN_SERVICE="bitwarden-master"
 BW_KEYCHAIN_SERVICE=""
 
-# Account name used for the macOS Keychain entry (defaults to Mac username).
-MACOS_KEYCHAIN_ACCOUNT="$USER"
-
-# Bitwarden login email / username. Stored in this private config.
+# Bitwarden login email / username. This is also the macOS Keychain account
+# for the saved Bitwarden master password.
 BITWARDEN_EMAIL=""
 
 # Name of the Bitwarden item containing the GitHub CLI token (for gh auth)

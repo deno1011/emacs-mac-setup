@@ -113,7 +113,6 @@ setup_load_config() {
   GIT_CRYPT_KEY=""
   GEMINI_API_KEY=""
   ANTHROPIC_API_KEY=""
-  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
   BITWARDEN_EMAIL="${BITWARDEN_EMAIL:-${BW_EMAIL:-}}"
   BW_EMAIL="$BITWARDEN_EMAIL"
 }
@@ -138,7 +137,7 @@ setup_runtime_load() {
   setup_runtime_load_secret_keychain_values
   export GIT_NAME GIT_EMAIL GH_USER GH_REPO
   export BW_ITEM BW_FIELD BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM
-  export BW_KEYCHAIN_SERVICE MACOS_KEYCHAIN_ACCOUNT BITWARDEN_EMAIL
+  export BW_KEYCHAIN_SERVICE BITWARDEN_EMAIL
   export BITWARDEN_MASTER_PASSWORD GITHUB_TOKEN GIT_CRYPT_KEY
   export ANTHROPIC_API_KEY GEMINI_API_KEY
 }
@@ -255,39 +254,34 @@ setup_try_load_private_config_from_github() {
 }
 
 setup_keychain_get() {
-  local account service seen_accounts="" seen_services=""
-  for account in "${MACOS_KEYCHAIN_ACCOUNT:-}" "${BW_KEYCHAIN_ACCOUNT:-}" "$USER" "${BITWARDEN_EMAIL:-}" "${BW_EMAIL:-}"; do
-    [ -n "$account" ] || continue
-    case " $seen_accounts " in *" $account "*) continue ;; esac
-    seen_accounts="$seen_accounts $account"
-    for service in "${BW_KEYCHAIN_SERVICE:-bitwarden-master}" bitwarden-master; do
-      [ -n "$service" ] || continue
-      case " $seen_services " in *" $service "*) continue ;; esac
-      seen_services="$seen_services $service"
-      security find-generic-password -a "$account" -s "$service" -w 2>/dev/null && return 0
-    done
-    seen_services=""
-  done
+  local account="${BITWARDEN_EMAIL:-}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  [ -n "$account" ] || return 0
+  security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
+}
+
+setup_keychain_account() {
+  printf '%s' "${BITWARDEN_EMAIL:-}"
+}
+
+setup_keychain_service() {
+  printf '%s' "${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+}
+
+setup_keychain_require_identity() {
+  [ -n "${BITWARDEN_EMAIL:-}" ] || setup_fail "Bitwarden email is required before using macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+  [ -n "${BW_KEYCHAIN_SERVICE:-}" ] || setup_fail "Bitwarden Keychain service label is missing." "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
   return 0
 }
 
 setup_keychain_set() {
-  local password="$1" account="${MACOS_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local password="$1" account service
   [ -n "$password" ] || return 1
+  setup_keychain_require_identity || return 1
+  account="$(setup_keychain_account)"
+  service="$(setup_keychain_service)"
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null
   [ "$(setup_keychain_get)" = "$password" ] || return 1
-}
-
-setup_keychain_lookup_accounts_label() {
-  local account seen="" sep=""
-  for account in "${MACOS_KEYCHAIN_ACCOUNT:-}" "${BW_KEYCHAIN_ACCOUNT:-}" "$USER" "${BITWARDEN_EMAIL:-}" "${BW_EMAIL:-}"; do
-    [ -n "$account" ] || continue
-    case " $seen " in *" $account "*) continue ;; esac
-    seen="$seen $account"
-    printf '%s%s' "$sep" "$account"
-    sep=", "
-  done
 }
 
 setup_runtime_keychain_service() {
