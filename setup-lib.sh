@@ -74,6 +74,14 @@ setup_gh_auth_login_with_token() {
   env -u GITHUB_TOKEN -u GH_TOKEN gh auth setup-git
 }
 
+setup_gh_ensure_auth() {
+  command -v gh >/dev/null 2>&1 || return 1
+  setup_gh_auth_status_stored && return 0
+  [ -n "${GITHUB_TOKEN:-}" ] || return 1
+  setup_gh_auth_login_with_token "$GITHUB_TOKEN" >/dev/null 2>&1 || return 1
+  setup_gh_auth_status_stored
+}
+
 setup_ensure_config() {
   mkdir -p "$SETUP_DIR"
   if [ ! -f "$SETUP_CONFIG" ]; then
@@ -237,8 +245,7 @@ setup_require_bitwarden_email() {
 setup_try_load_private_config_from_github() {
   setup_runtime_load || return 1
   [ -n "${GH_USER:-}" ] || return 0
-  command -v gh >/dev/null 2>&1 || return 0
-  gh auth status >/dev/null 2>&1 || return 0
+  setup_gh_ensure_auth || return 0
 
   local candidates="" repo seen="" conf_content conf_tmp
   [ -n "${GH_REPO:-}" ] && candidates="$candidates $GH_REPO"

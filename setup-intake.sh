@@ -15,14 +15,20 @@ setup_phase "Phase 1/5: Discover existing setup"
 setup_ensure_config
 setup_runtime_load
 
-if [ -z "$(setup_config_get GH_USER)" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1 && ! setup_gh_auth_status_stored \
+   && [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "  Authenticating gh CLI with saved GitHub token from Keychain..."
+  setup_gh_auth_login_with_token "$GITHUB_TOKEN" >/dev/null 2>&1 || true
+fi
+
+if [ -z "$(setup_config_get GH_USER)" ] && setup_gh_ensure_auth; then
   _GH_DETECTED=$(gh api user --jq '.login' 2>/dev/null || true)
   [ -n "$_GH_DETECTED" ] && setup_config_set GH_USER "$_GH_DETECTED"
   unset _GH_DETECTED
 fi
 
 if [ -z "$(setup_config_get GIT_NAME)" ] && [ -n "$(setup_config_get GH_USER)" ] \
-   && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+   && setup_gh_ensure_auth; then
   echo "  Looking for existing setup-emacs-mac.conf in known GitHub repos..."
   setup_try_load_private_config_from_github || true
   setup_runtime_load
