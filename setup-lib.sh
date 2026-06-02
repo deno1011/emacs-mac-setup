@@ -217,28 +217,28 @@ setup_try_load_private_config_from_github() {
   command -v gh >/dev/null 2>&1 || return 0
   gh auth status >/dev/null 2>&1 || return 0
 
-  local repos best_date="" data_repo="" scan_repo scan_date conf_content conf_tmp
-  repos="$(gh api "user/repos?sort=pushed&direction=desc" --paginate --jq '.[].name' 2>/dev/null)" || true
-  for scan_repo in $repos; do
-    scan_date="$(gh api "repos/$GH_USER/$scan_repo/commits?path=config/setup-emacs-mac.conf&per_page=1" \
-      --jq '.[0].commit.committer.date' 2>/dev/null)" || true
-    if [ -n "$scan_date" ] && { [ -z "$best_date" ] || [[ "$scan_date" > "$best_date" ]]; }; then
-      best_date="$scan_date"
-      data_repo="$scan_repo"
-    fi
-  done
-  [ -n "$data_repo" ] || return 0
+  local candidates="" repo seen="" conf_content conf_tmp
+  [ -n "${GH_REPO:-}" ] && candidates="$candidates $GH_REPO"
+  candidates="$candidates emacs emacs-data"
 
-  conf_content="$(gh api "repos/$GH_USER/$data_repo/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null)" || true
-  [ -n "$conf_content" ] || return 0
-  conf_tmp="$(mktemp)"
-  echo "$conf_content" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" > "$conf_tmp" 2>/dev/null || true
-  if grep -q '^GIT_NAME="[^"]' "$conf_tmp" 2>/dev/null; then
-    cp "$conf_tmp" "$SETUP_CONFIG"
-    echo "  Loaded existing config from $GH_USER/$data_repo."
-  fi
-  rm -f "$conf_tmp"
-  setup_runtime_load
+  for repo in $candidates; do
+    case " $seen " in
+      *" $repo "*) continue ;;
+    esac
+    seen="$seen $repo"
+    conf_content="$(gh api "repos/$GH_USER/$repo/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null)" || true
+    [ -n "$conf_content" ] || continue
+    conf_tmp="$(mktemp)"
+    echo "$conf_content" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" > "$conf_tmp" 2>/dev/null || true
+    if grep -q '^GIT_NAME="[^"]' "$conf_tmp" 2>/dev/null; then
+      cp "$conf_tmp" "$SETUP_CONFIG"
+      rm -f "$conf_tmp"
+      echo "  Loaded existing config from $GH_USER/$repo."
+      setup_runtime_load
+      return 0
+    fi
+    rm -f "$conf_tmp"
+  done
 }
 
 setup_keychain_get() {

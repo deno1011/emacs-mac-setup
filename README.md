@@ -166,7 +166,11 @@ Order of precedence:
 5. Token/key/API secrets are imported from Bitwarden into the temporary setup Keychain cache.
 6. After clone/install, a private repo config found in `config/setup-emacs-mac.conf` replaces the template metadata and secrets are reloaded from Bitwarden.
 
-Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf` when `gh` is already authenticated. No manual `CONF_REPO` configuration needed.
+Bootstrap looks for your private config in a bounded set of known repo names:
+the configured `GH_REPO` value, `emacs`, and `emacs-data`. It does not scan
+every GitHub repo during discovery, so `Discover existing setup` stays fast. If
+your private data repo has a different name, enter that `GH_REPO` value during
+intake; setup retries the private config lookup after GitHub auth.
 
 ### Dependency Resolution Tree
 

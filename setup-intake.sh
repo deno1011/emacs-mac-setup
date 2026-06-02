@@ -23,32 +23,8 @@ fi
 
 if [ -z "$(setup_config_get GIT_NAME)" ] && [ -n "$(setup_config_get GH_USER)" ] \
    && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  echo "  Looking for existing setup-emacs-mac.conf in GitHub repos..."
-  _GH_USER="$(setup_config_get GH_USER)"
-  _DATA_REPO_NAME=""
-  _REPOS="$(gh api "user/repos?sort=pushed&direction=desc" --paginate --jq '.[].name' 2>/dev/null)" || true
-  _BEST_DATE=""
-  for _SCAN_REPO in $_REPOS; do
-    _SCAN_DATE="$(gh api "repos/$_GH_USER/$_SCAN_REPO/commits?path=config/setup-emacs-mac.conf&per_page=1" \
-      --jq '.[0].commit.committer.date' 2>/dev/null)" || true
-    if [ -n "$_SCAN_DATE" ] && { [ -z "$_BEST_DATE" ] || [[ "$_SCAN_DATE" > "$_BEST_DATE" ]]; }; then
-      _BEST_DATE="$_SCAN_DATE"
-      _DATA_REPO_NAME="$_SCAN_REPO"
-    fi
-  done
-  if [ -n "$_DATA_REPO_NAME" ]; then
-    _CONF_CONTENT="$(gh api "repos/$_GH_USER/$_DATA_REPO_NAME/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null)" || true
-    if [ -n "$_CONF_CONTENT" ]; then
-      _CONF_TMP="$(mktemp)"
-      echo "$_CONF_CONTENT" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" > "$_CONF_TMP" 2>/dev/null || true
-      if grep -q '^GIT_NAME="[^"]' "$_CONF_TMP" 2>/dev/null; then
-        cp "$_CONF_TMP" "$SETUP_CONFIG"
-        echo "  Loaded existing config from $_GH_USER/$_DATA_REPO_NAME."
-      fi
-      rm -f "$_CONF_TMP"
-    fi
-  fi
-  unset _GH_USER _DATA_REPO_NAME _REPOS _BEST_DATE _SCAN_REPO _SCAN_DATE _CONF_CONTENT _CONF_TMP
+  echo "  Looking for existing setup-emacs-mac.conf in known GitHub repos..."
+  setup_try_load_private_config_from_github || true
   setup_runtime_load
 fi
 
