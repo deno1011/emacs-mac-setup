@@ -401,31 +401,53 @@ setup_keychain_list_candidate_services() {
 
 setup_keychain_diagnose_master() {
   local service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local email="${BITWARDEN_EMAIL:-}"
   echo "  Diagnosing Keychain entry for service \"$service\":"
-  local meta
-  if ! meta="$(security find-generic-password -s "$service" 2>&1)"; then
-    echo "    No entry with this service name exists in the login Keychain."
-    return 0
-  fi
-  local stored_acct
-  stored_acct="$(printf '%s' "$meta" | awk -F'"' '/"acct"<blob>=/ {print $4; exit}')"
-  echo "    Entry exists. Stored account: \"${stored_acct:-<unknown>}\""
-  local readback rc
-  readback="$(security find-generic-password -s "$service" -w 2>&1)"
-  rc=$?
-  if [ $rc -eq 0 ] && [ -n "$readback" ]; then
-    echo "    Read access: OK (length ${#readback} chars)."
-  elif [ $rc -ne 0 ]; then
-    echo "    Read access: FAILED ($rc). security said: $(printf '%s' "$readback" | head -1)"
-    echo "    This usually means the entry's Keychain ACL only allows the original"
-    echo "    app that saved it. Fix with one of:"
-    echo "      a) Open Keychain Access, find the entry, double-click, Access Control,"
-    echo "         add /usr/bin/security to allowed applications (or 'Allow all')."
-    echo "      b) Delete the entry and let setup-intake re-save it (uses -A flag):"
-    echo "         security delete-generic-password -s \"$service\""
-    echo "         bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+  local meta stored_acct readback rc
+  if meta="$(security find-generic-password -s "$service" 2>&1)"; then
+    stored_acct="$(printf '%s' "$meta" | awk -F'"' '/"acct"<blob>=/ {print $4; exit}')"
+    echo "    Entry exists. Stored account: \"${stored_acct:-<unknown>}\""
+    readback="$(security find-generic-password -s "$service" -w 2>&1)"
+    rc=$?
+    if [ $rc -eq 0 ] && [ -n "$readback" ]; then
+      echo "    Read access: OK (length ${#readback} chars)."
+      return 0
+    elif [ $rc -ne 0 ]; then
+      echo "    Read access: FAILED ($rc). security said: $(printf '%s' "$readback" | head -1)"
+      echo "    Likely the entry's Keychain ACL only allows the original saving app."
+      echo "    Fix with one of:"
+      echo "      a) Keychain Access → entry → Access Control → add /usr/bin/security"
+      echo "      b) Delete and let setup-intake re-save (uses -A so subsequent reads work):"
+      echo "         security delete-generic-password -s \"$service\""
+      echo "         bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+      return 0
+    fi
   else
-    echo "    Read access: empty result. Entry may exist with no payload."
+    echo "    No entry with this exact service name exists."
+  fi
+
+  # Fallback diagnostic: an entry might be saved under the email account with a
+  # non-default service name. find-generic-password without -s reports the first
+  # entry matching the given account.
+  if [ -n "$email" ]; then
+    echo "  Searching for any Keychain entry with account \"$email\":"
+    if meta="$(security find-generic-password -a "$email" 2>&1)"; then
+      local found_svc
+      found_svc="$(printf '%s' "$meta" | awk -F'"' '/"svce"<blob>=/ {print $4; exit}')"
+      if [ -n "$found_svc" ] && [ "$found_svc" != "$service" ]; then
+        echo "    Found an entry under service \"$found_svc\" (not \"$service\")."
+        echo "    To use it, update BW_KEYCHAIN_SERVICE in your conf:"
+        echo "      bash ~/emacs-mac-setup/setup-intake.sh --repair config"
+        echo "    and set BW_KEYCHAIN_SERVICE=\"$found_svc\""
+        echo "    (or: sed -i '' 's|^BW_KEYCHAIN_SERVICE=.*|BW_KEYCHAIN_SERVICE=\"$found_svc\"|' ~/emacs-mac-setup/setup-emacs-mac.conf)"
+      elif [ -n "$found_svc" ]; then
+        echo "    Found an entry under service \"$found_svc\" — that's the same"
+        echo "    service we tried. Read must have returned empty above; check ACL."
+      fi
+    else
+      echo "    No Keychain entry uses \"$email\" as its account either."
+      echo "    The master password isn't actually stored on this Mac yet."
+    fi
   fi
 }
 
