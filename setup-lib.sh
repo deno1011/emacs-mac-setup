@@ -399,6 +399,36 @@ setup_keychain_list_candidate_services() {
   done
 }
 
+setup_keychain_diagnose_master() {
+  local service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  echo "  Diagnosing Keychain entry for service \"$service\":"
+  local meta
+  if ! meta="$(security find-generic-password -s "$service" 2>&1)"; then
+    echo "    No entry with this service name exists in the login Keychain."
+    return 0
+  fi
+  local stored_acct
+  stored_acct="$(printf '%s' "$meta" | awk -F'"' '/"acct"<blob>=/ {print $4; exit}')"
+  echo "    Entry exists. Stored account: \"${stored_acct:-<unknown>}\""
+  local readback rc
+  readback="$(security find-generic-password -s "$service" -w 2>&1)"
+  rc=$?
+  if [ $rc -eq 0 ] && [ -n "$readback" ]; then
+    echo "    Read access: OK (length ${#readback} chars)."
+  elif [ $rc -ne 0 ]; then
+    echo "    Read access: FAILED ($rc). security said: $(printf '%s' "$readback" | head -1)"
+    echo "    This usually means the entry's Keychain ACL only allows the original"
+    echo "    app that saved it. Fix with one of:"
+    echo "      a) Open Keychain Access, find the entry, double-click, Access Control,"
+    echo "         add /usr/bin/security to allowed applications (or 'Allow all')."
+    echo "      b) Delete the entry and let setup-intake re-save it (uses -A flag):"
+    echo "         security delete-generic-password -s \"$service\""
+    echo "         bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+  else
+    echo "    Read access: empty result. Entry may exist with no payload."
+  fi
+}
+
 setup_keychain_account() {
   printf '%s' "${BITWARDEN_EMAIL:-}"
 }
