@@ -61,6 +61,11 @@ if [ -n "${GH_USER:-}" ]; then
   setup_phase "Phase 3/5: Collect passwords and tokens"
   if [ -z "${BITWARDEN_MASTER_PASSWORD:-}" ] || [ "$REPAIR_MODE" = "bitwarden" ]; then
     echo ""
+    if [ -z "${BITWARDEN_MASTER_PASSWORD:-}" ]; then
+      echo "  No existing Bitwarden master password found in macOS Keychain."
+      echo "  Lookup account: ${MACOS_KEYCHAIN_ACCOUNT:-$USER} (fallback: $USER)"
+      echo "  Lookup service: ${BW_KEYCHAIN_SERVICE:-bitwarden-master} (fallback: bitwarden-master)"
+    fi
     echo "  Bitwarden master password is saved to macOS Keychain, not setup config."
     _BW_MASTER="$(setup_prompt_secret "Bitwarden master password")"
     [ -n "$_BW_MASTER" ] || setup_fail "Bitwarden master password is required in GitHub mode." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"

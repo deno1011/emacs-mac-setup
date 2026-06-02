@@ -253,8 +253,20 @@ setup_try_load_private_config_from_github() {
 }
 
 setup_keychain_get() {
-  local account="${MACOS_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
-  security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
+  local account service seen_accounts="" seen_services=""
+  for account in "${MACOS_KEYCHAIN_ACCOUNT:-$USER}" "$USER"; do
+    [ -n "$account" ] || continue
+    case " $seen_accounts " in *" $account "*) continue ;; esac
+    seen_accounts="$seen_accounts $account"
+    for service in "${BW_KEYCHAIN_SERVICE:-bitwarden-master}" bitwarden-master; do
+      [ -n "$service" ] || continue
+      case " $seen_services " in *" $service "*) continue ;; esac
+      seen_services="$seen_services $service"
+      security find-generic-password -a "$account" -s "$service" -w 2>/dev/null && return 0
+    done
+    seen_services=""
+  done
+  return 0
 }
 
 setup_keychain_set() {
@@ -262,6 +274,7 @@ setup_keychain_set() {
   [ -n "$password" ] || return 1
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null
+  [ "$(setup_keychain_get)" = "$password" ] || return 1
 }
 
 setup_runtime_keychain_service() {
