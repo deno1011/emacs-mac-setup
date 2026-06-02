@@ -113,7 +113,9 @@ setup_load_config() {
   GIT_CRYPT_KEY=""
   GEMINI_API_KEY=""
   ANTHROPIC_API_KEY=""
-  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-$USER}"
+  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
+  BITWARDEN_EMAIL="${BITWARDEN_EMAIL:-${BW_EMAIL:-}}"
+  BW_EMAIL="$BITWARDEN_EMAIL"
 }
 
 setup_runtime_var_get() {
@@ -254,7 +256,7 @@ setup_try_load_private_config_from_github() {
 
 setup_keychain_get() {
   local account service seen_accounts="" seen_services=""
-  for account in "${MACOS_KEYCHAIN_ACCOUNT:-$USER}" "$USER"; do
+  for account in "${MACOS_KEYCHAIN_ACCOUNT:-}" "${BW_KEYCHAIN_ACCOUNT:-}" "$USER" "${BITWARDEN_EMAIL:-}" "${BW_EMAIL:-}"; do
     [ -n "$account" ] || continue
     case " $seen_accounts " in *" $account "*) continue ;; esac
     seen_accounts="$seen_accounts $account"
@@ -275,6 +277,17 @@ setup_keychain_set() {
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null
   [ "$(setup_keychain_get)" = "$password" ] || return 1
+}
+
+setup_keychain_lookup_accounts_label() {
+  local account seen="" sep=""
+  for account in "${MACOS_KEYCHAIN_ACCOUNT:-}" "${BW_KEYCHAIN_ACCOUNT:-}" "$USER" "${BITWARDEN_EMAIL:-}" "${BW_EMAIL:-}"; do
+    [ -n "$account" ] || continue
+    case " $seen " in *" $account "*) continue ;; esac
+    seen="$seen $account"
+    printf '%s%s' "$sep" "$account"
+    sep=", "
+  done
 }
 
 setup_runtime_keychain_service() {
