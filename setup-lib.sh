@@ -16,17 +16,16 @@ setup_add_homebrew_to_path() {
 
 setup_state_set() {
   local key="$1" value="$2"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
+  [ -n "$key" ] || return 1
   mkdir -p "$SETUP_DIR"
   local tmp
   tmp="$(mktemp)"
   [ -f "$SETUP_STATE" ] || : > "$SETUP_STATE"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { done = 0 }
-    index($0, key "=") == 1 { print key "=\"" value "\""; done = 1; next }
+  AWK_KEY="$key" AWK_VALUE="$value" awk '
+    BEGIN { k = ENVIRON["AWK_KEY"]; v = ENVIRON["AWK_VALUE"]; gsub(/\\/, "\\\\", v); gsub(/"/, "\\\"", v); replaced = 0 }
+    index($0, k "=") == 1 { print k "=\"" v "\""; replaced = 1; next }
     { print }
-    END { if (!done) print key "=\"" value "\"" }
+    END { if (!replaced) print k "=\"" v "\"" }
   ' "$SETUP_STATE" > "$tmp"
   mv "$tmp" "$SETUP_STATE"
 }
@@ -98,16 +97,15 @@ setup_config_get() {
 
 setup_config_set() {
   local key="$1" value="$2"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
+  [ -n "$key" ] || return 1
   setup_ensure_config || return 1
   local tmp
   tmp="$(mktemp)"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { done = 0 }
-    index($0, key "=") == 1 { print key "=\"" value "\""; done = 1; next }
+  AWK_KEY="$key" AWK_VALUE="$value" awk '
+    BEGIN { k = ENVIRON["AWK_KEY"]; v = ENVIRON["AWK_VALUE"]; gsub(/\\/, "\\\\", v); gsub(/"/, "\\\"", v); replaced = 0 }
+    index($0, k "=") == 1 { print k "=\"" v "\""; replaced = 1; next }
     { print }
-    END { if (!done) print key "=\"" value "\"" }
+    END { if (!replaced) print k "=\"" v "\"" }
   ' "$SETUP_CONFIG" > "$tmp"
   mv "$tmp" "$SETUP_CONFIG"
 }
