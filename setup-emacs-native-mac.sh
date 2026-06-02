@@ -46,13 +46,15 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "Template: ~/emacs-mac-setup/setup-emacs-mac.conf.template"
   exit 1
 fi
-source "$CONFIG_FILE"
 source "$SCRIPT_DIR/setup-lib.sh"
+trap 'setup_runtime_cleanup_secret_keychain 2>/dev/null || true' EXIT
+setup_runtime_load
+setup_try_load_private_config_from_github || true
+setup_runtime_load
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
-  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
-  setup_require_bitwarden_email
+  setup_runtime_require GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BITWARDEN_EMAIL BITWARDEN_MASTER_PASSWORD
 fi
 
 # --- Set paths ---
@@ -77,17 +79,12 @@ for _PKG in node coreutils; do
   brew unlink "$_PKG" 2>/dev/null || true
 done
 
-# --- Unlock Bitwarden upfront (GitHub mode only) ---
-if [ -n "$GH_USER" ]; then
-  setup_install_bitwarden_tools
-  setup_bw_unlock_with_keychain || exit 1
-fi
-
 # --- Tools (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
   command -v bw &>/dev/null       && skip "Bitwarden CLI"  || { echo "==> Installing Bitwarden CLI..."; brew install bitwarden-cli; }
   command -v gh &>/dev/null       && skip "GitHub CLI"     || { echo "==> Installing GitHub CLI...";    brew install gh; }
   command -v git-crypt &>/dev/null && skip "git-crypt"     || { echo "==> Installing git-crypt...";     brew install git-crypt; }
+  setup_runtime_load_bitwarden_secrets || exit 1
 fi
 
 # --- Local AI runtime (Ollama + default model) ---
@@ -163,20 +160,15 @@ if [ -n "$GH_USER" ]; then
   if gh auth status &>/dev/null 2>&1; then
     skip "GitHub CLI auth"
   else
-    echo "==> Authenticating GitHub CLI with token from Bitwarden..."
-    GH_TOKEN=$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
-    if [ -n "$GH_TOKEN" ]; then
-      if echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null; then
+    echo "==> Authenticating GitHub CLI with token from setup runtime..."
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      if echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null; then
         gh auth setup-git
       else
-        echo "WARN: GitHub Token expired or invalid — please log in manually:"
-        gh auth login < /dev/tty
-        gh auth setup-git
+        setup_fail "GitHub token is invalid or expired." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
       fi
     else
-      echo "WARN: GitHub token not found in Bitwarden. Please log in manually:"
-      gh auth login < /dev/tty
-      gh auth setup-git
+      setup_fail "GitHub token missing after intake." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
     fi
   fi
 
@@ -184,7 +176,8 @@ if [ -n "$GH_USER" ]; then
   _EMACS_DATA_CONF="$HOME/Library/Mobile Documents/com~apple~CloudDocs/$GH_REPO/config/setup-emacs-mac.conf"
   if [ -f "$_EMACS_DATA_CONF" ]; then
     cp "$_EMACS_DATA_CONF" "$CONFIG_FILE"
-    source "$CONFIG_FILE"
+    setup_runtime_load
+    setup_runtime_load_bitwarden_secrets || exit 1
     echo "==> setup-emacs-mac.conf loaded from emacs-data/config/."
   fi
 
@@ -237,6 +230,14 @@ if [ -n "$GH_USER" ]; then
     fi
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
+    _EMACS_DATA_CONF="$ICLOUD_REPO_PATH/config/setup-emacs-mac.conf"
+    if [ -f "$_EMACS_DATA_CONF" ]; then
+      cp "$_EMACS_DATA_CONF" "$CONFIG_FILE"
+      setup_runtime_load
+      setup_runtime_load_bitwarden_secrets || exit 1
+      echo "==> setup-emacs-mac.conf loaded from cloned emacs-data/config/."
+    fi
+
     mkdir -p "$ICLOUD_REPO_PATH/config" "$ICLOUD_REPO_PATH/data/org"
     # config.org and the split files (core/org-setup/gptel-setup/wiki-setup/
     # org-apple-reminders-setup) self-bootstrap from emacs-mac-setup/stable
@@ -265,7 +266,7 @@ HOOKEOF
   [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
 
   if [ "$_GC_INITIALIZED" = false ] || [ "$_FILES_ENCRYPTED" = true ]; then
-    GC_KEY=$(setup_bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+    GC_KEY="${GIT_CRYPT_KEY:-}"
     if [ -n "$GC_KEY" ]; then
       if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
         if [ "$_GC_INITIALIZED" = false ]; then
@@ -293,7 +294,7 @@ HOOKEOF
       fi
       rm -f /tmp/gckey
     else
-      echo "WARN: git-crypt key not found in Bitwarden."
+      echo "WARN: git-crypt key not found in setup runtime."
     fi
   else
     skip "git-crypt (data/org/ already decrypted)"
@@ -340,8 +341,8 @@ else
 fi
 
 # --- secrets.el ---
-# API keys are read from Bitwarden only. Missing keys are repaired through the
-# up-front intake wizard, keeping the installer non-interactive after intake.
+# API keys are read from the up-front setup runtime only. Missing keys are
+# repaired through intake, keeping the installer non-interactive after intake.
 if [ -f "$EMACS_SECRETS" ]; then
   skip "secrets.el"
 else
@@ -349,18 +350,16 @@ else
   if [ -n "$GH_USER" ]; then
     echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
 
-    ANTHROPIC_API_KEY=$(setup_bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
     if [ -n "$ANTHROPIC_API_KEY" ]; then
       printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
     else
-      echo ";; ANTHROPIC_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
+      echo ";; ANTHROPIC_API_KEY: run setup-intake.sh --repair anthropic" >> "$EMACS_SECRETS"
     fi
 
-    GEMINI_API_KEY=$(setup_bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD") || true
     if [ -n "$GEMINI_API_KEY" ]; then
       printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
     else
-      echo ";; GEMINI_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
+      echo ";; GEMINI_API_KEY: run setup-intake.sh --repair gemini" >> "$EMACS_SECRETS"
     fi
 
     echo "==> secrets.el written."
@@ -383,6 +382,10 @@ if [ -n "$GH_USER" ]; then
     git config --global user.email "$GIT_EMAIL"
     git config --global user.name "$GIT_NAME"
   fi
+fi
+
+if [ -n "$GH_USER" ]; then
+  setup_runtime_cleanup_secret_keychain
 fi
 
 echo ""

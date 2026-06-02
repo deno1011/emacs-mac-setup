@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/setup-lib.sh"
 
 setup_add_homebrew_to_path
-setup_load_config || true
+setup_runtime_load || true
 
 echo ""
 echo "======================================================================"
@@ -24,10 +24,9 @@ echo ""
 if [ -n "${GH_USER:-}" ]; then
   echo "Validation:"
   _MISSING=""
-  for _K in GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE; do
-    [ -z "$(setup_config_get "$_K")" ] && _MISSING="${_MISSING}${_K} "
+  for _K in GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BITWARDEN_EMAIL BITWARDEN_MASTER_PASSWORD GIT_CRYPT_KEY; do
+    [ -z "${!_K:-}" ] && _MISSING="${_MISSING}${_K} "
   done
-  [ -z "${BITWARDEN_EMAIL:-}" ] && _MISSING="${_MISSING}BITWARDEN_EMAIL "
   [ -n "$_MISSING" ] && echo "  Config                    missing: $_MISSING" || echo "  Config                    ok"
   unset _K _MISSING
   if [ -z "$(setup_keychain_get)" ]; then
@@ -37,19 +36,22 @@ if [ -n "${GH_USER:-}" ]; then
     echo "  Bitwarden Keychain        found"
   fi
   if command -v bw >/dev/null 2>&1; then
-    if setup_bw_unlock_with_keychain >/dev/null 2>&1; then
+    if setup_runtime_load_bitwarden_secrets >/dev/null 2>&1; then
       echo "  Bitwarden unlock          ok"
-      [ -n "$(setup_bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD")" ] \
-        && echo "  Gemini key                found" \
-        || echo "  Gemini key                missing (repair: setup-intake.sh --repair gemini)"
-      [ -n "$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD")" ] \
-        && echo "  GitHub token              found" \
-        || echo "  GitHub token              missing (browser login fallback available)"
     else
       echo "  Bitwarden unlock          failed"
       echo "  Repair: bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
     fi
   fi
+  [ -n "${GITHUB_TOKEN:-}" ] \
+    && echo "  GitHub token              found" \
+    || echo "  GitHub token              missing (repair: setup-intake.sh --repair github-token)"
+  [ -n "${GEMINI_API_KEY:-}" ] \
+    && echo "  Gemini key                found" \
+    || echo "  Gemini key                missing (repair: setup-intake.sh --repair gemini)"
+  [ -n "${ANTHROPIC_API_KEY:-}" ] \
+    && echo "  Anthropic key             found" \
+    || echo "  Anthropic key             optional/missing"
 else
   echo "Validation:"
   echo "  Local-only mode           ok"

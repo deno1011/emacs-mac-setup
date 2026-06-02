@@ -19,8 +19,8 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 | Homebrew | Installed by `bootstrap.sh` if missing |
 | GitHub CLI, git-crypt, Bitwarden CLI + desktop app | Installed by setup scripts |
 | `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
-| Bitwarden vault entries | Created during the up-front `setup-intake.sh` phase |
-| Gemini API key | Default gptel backend; read from Bitwarden into `~/.emacs.d/secrets.el` |
+| Runtime secrets | Collected/imported up front; temporarily cached in Keychain; cleaned up after setup |
+| Gemini API key | Default gptel backend; read from setup runtime into `~/.emacs.d/secrets.el` |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
 **Run in Terminal:**
@@ -76,7 +76,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `setup-doctor.sh` | Prints the last failed phase and concrete repair command |
 | `fill-config.sh` | Compatibility wrapper for `setup-intake.sh` |
 | `setup-bitwarden.sh` | Compatibility repair entry for Bitwarden-backed setup |
-| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` -> repo file if decrypted; otherwise read existing keys from Bitwarden |
+| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` -> repo file if decrypted; otherwise write keys from setup runtime |
 
 ### Install
 
@@ -118,7 +118,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 - Bitwarden account
 
 **Required config fields** (setup aborts with a repair command if empty when `GH_USER` is set):
-`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BITWARDEN_EMAIL`
+`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_ANTHROPIC_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BITWARDEN_EMAIL`
 
 Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and all GitHub repos — is installed or created automatically by the setup scripts.
 
@@ -126,24 +126,136 @@ Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and
 
 ## Personal Config (`setup-emacs-mac.conf`)
 
-Contains: name, email, GitHub username, Bitwarden item names, Docker names.  
-Does **not** contain: passwords, API keys, or encryption keys — those stay in Bitwarden.  
-Safe to store in a private GitHub repo without encryption.
+Contains: name, email, GitHub username, Bitwarden item names, Docker names, and other non-secret setup metadata. It must not contain passwords, API keys, tokens, or git-crypt keys.
+
+The setup source layout is:
+
+1. `setup-emacs-mac.conf` stores non-secret metadata and Bitwarden item names.
+2. macOS Keychain stores the Bitwarden master password persistently.
+3. Bitwarden stores the GitHub token, git-crypt key, and API keys.
+4. Setup temporarily caches Bitwarden-loaded secrets in Keychain under
+   `emacs-mac-setup-runtime:*` so separate scripts can continue without
+   prompting.
+5. Successful installer endpoints delete that temporary Keychain cache again.
 
 `MACOS_KEYCHAIN_ACCOUNT` is the macOS Keychain account name used for the stored
-Bitwarden master-password entry. Legacy configs with `BW_KEYCHAIN_ACCOUNT` are
-still accepted, but new configs should use the clearer macOS-specific name.
+Bitwarden master-password entry.
 
 `BITWARDEN_EMAIL` is the Bitwarden login email/username stored in the setup
-config. Legacy configs with `BW_EMAIL` are still accepted and are migrated by
-`setup-intake.sh`.
+config. `GITHUB_TOKEN`, `GIT_CRYPT_KEY`, `GEMINI_API_KEY`, and
+`ANTHROPIC_API_KEY` are loaded from Bitwarden into memory by `setup-lib.sh`;
+install scripts consume those runtime variables and do not open new password
+prompts later.
+
+The Bitwarden access data is the only persistent Keychain state: the master
+password remains in Keychain, and the login email remains in config. GitHub
+token, git-crypt key, Gemini key, and Anthropic key are not persisted in config
+and are deleted from the temporary setup Keychain cache after setup.
 
 **On a new Mac, bootstrap.sh handles the config automatically:**
 
 - **GitHub already authenticated** (e.g. second Mac): pulls `setup-emacs-mac.conf` from private repo → ready immediately
-- **Brand new Mac**: copies the template -> `setup-intake.sh` asks for missing setup data once, stores the Bitwarden master password in macOS Keychain, then installation continues without scattered follow-up prompts
+- **Brand new Mac**: copies the template -> `setup-intake.sh` asks for missing setup data once, stores metadata in config, keeps the Bitwarden master password in Keychain, mirrors secrets to Bitwarden, then installation continues without scattered follow-up prompts
+
+Order of precedence:
+
+1. Existing local config is loaded first.
+2. If GitHub is already authenticated, setup tries to pull the private repo config.
+3. If no private config is available yet, setup uses the public template and prompts for missing metadata.
+4. Bitwarden email comes from config or intake; the Bitwarden master password comes from persistent Keychain or intake.
+5. Token/key/API secrets are imported from Bitwarden into the temporary setup Keychain cache.
+6. After clone/install, a private repo config found in `config/setup-emacs-mac.conf` replaces the template metadata and secrets are reloaded from Bitwarden.
 
 Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf` when `gh` is already authenticated. No manual `CONF_REPO` configuration needed.
+
+### Dependency Resolution Tree
+
+The setup resolves data in this dependency order. Anything lower in the tree is
+allowed to depend on everything above it; anything higher must not depend on
+lower-level state.
+
+```text
+bootstrap.sh
+`-- Homebrew
+    `-- setup-lib.sh
+        |-- public template config
+        |   `-- creates local ~/emacs-mac-setup/setup-emacs-mac.conf when missing
+        |-- local setup config
+        |   |-- GIT_NAME
+        |   |-- GIT_EMAIL
+        |   |-- GH_USER
+        |   |-- GH_REPO
+        |   |-- Bitwarden item names
+        |   `-- BITWARDEN_EMAIL
+        |-- existing GitHub auth
+        |   `-- optional early private repo config lookup
+        |-- setup-intake.sh
+        |   |-- prompts only for missing metadata
+        |   |-- prompts Bitwarden email when config has none or repair bitwarden is requested
+        |   |-- reads persistent Bitwarden master password from Keychain
+        |   |-- prompts Bitwarden master password only when Keychain has none or repair bitwarden is requested
+        |   |-- installs/unlocks Bitwarden
+        |   |-- imports GitHub token from Bitwarden or existing gh auth
+        |   |-- imports Gemini/Anthropic keys from Bitwarden
+        |   |-- imports or generates git-crypt key
+        |   |-- writes secrets to Bitwarden
+        |   `-- writes non-Bitwarden secrets to temporary Keychain cache only
+        |-- GitHub auth
+        |   `-- uses existing gh auth or runtime GitHub token
+        |-- private repo config lookup
+        |   |-- replaces template/default metadata when available
+        |   `-- reloads Bitwarden secrets after metadata changes
+        `-- installer
+            |-- native Emacs / Docker / OrbStack / secrets / git-crypt unlock
+            |-- consumes runtime variables
+            |-- never reads secrets from config
+            `-- deletes temporary Keychain cache on exit
+```
+
+```mermaid
+flowchart TD
+    A["bootstrap.sh"] --> B["Install or find Homebrew"]
+    B --> C["Download emacs-mac-setup scripts"]
+    C --> D["setup_ensure_config"]
+    D --> E{"Local setup config exists?"}
+    E -- "no" --> F["Create from public template"]
+    E -- "yes" --> G["Load local metadata"]
+    F --> G
+    G --> H{"gh already authenticated?"}
+    H -- "yes" --> I["Try private repo config lookup"]
+    H -- "no" --> J["Run setup-intake.sh"]
+    I --> J
+    J --> K["Resolve missing metadata"]
+    K --> L["Resolve Bitwarden email from config or prompt"]
+    L --> M["Resolve Bitwarden master from persistent Keychain or prompt"]
+    M --> N["Unlock Bitwarden"]
+    N --> O["Load token/key/API secrets from Bitwarden"]
+    O --> P{"GitHub token missing?"}
+    P -- "yes, gh auth exists" --> Q["Import gh auth token"]
+    P -- "yes, no gh auth" --> R["Prompt GitHub token"]
+    P -- "no" --> S["Mirror runtime secrets to Bitwarden"]
+    Q --> S
+    R --> S
+    S --> T["Cache non-Bitwarden secrets in temporary Keychain"]
+    T --> U["Authenticate GitHub if needed"]
+    U --> V["Try private repo config lookup again"]
+    V --> W["Reload metadata and Bitwarden secrets"]
+    W --> X["Run selected installer"]
+    X --> Y["Delete temporary Keychain cache"]
+```
+
+Scenario check:
+
+| Scenario | Expected prompts | Source used |
+|---|---|---|
+| Local config complete, Bitwarden master in Keychain, Bitwarden has secrets | none for setup data | local config + Keychain + Bitwarden |
+| Private repo config available because `gh auth` already exists | only missing Bitwarden access data if absent | private repo config + Keychain/Bitwarden |
+| Fresh Mac, no `gh auth`, no local config | GitHub metadata, Bitwarden email, Bitwarden master, missing secrets | template first, private config after GitHub auth |
+| Fresh Mac, no private repo yet | metadata and Bitwarden access data | template/local config + Bitwarden |
+| Existing `gh auth`, GitHub token missing in Bitwarden | no token prompt | `gh auth token`, then mirror to Bitwarden |
+| Bitwarden master already in Keychain | no Bitwarden password prompt | persistent Keychain |
+| Temporary runtime Keychain entries left from failed setup | no duplicate prompt while retrying, then cleanup on installer exit | temporary Keychain cache |
+| Old config contains accidental secret lines | ignored | Keychain/Bitwarden only |
 
 ---
 
@@ -359,7 +471,7 @@ Installed via Homebrew by `setup-emacs-native-{plus,yamamoto}-mac.sh`:
 | Package | When | Purpose |
 |---|---|---|
 | `emacs-plus@30` / `emacs-mac@30exp` | always | Emacs itself |
-| `bitwarden-cli` | GitHub mode | Secret retrieval (git-crypt key, GitHub token, API keys) |
+| `bitwarden-cli` | GitHub mode | Vault import/mirroring during intake and recovery |
 | `gh` | GitHub mode | GitHub CLI (repo clone, auth, API) |
 | `git-crypt` | GitHub mode | Encrypt/decrypt org files in the repo |
 
@@ -491,7 +603,7 @@ Multiple AI backends are pre-configured and switchable with `C-c M`:
 | **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
 | **LM Studio** | Any local model loaded in LM Studio |
 
-API keys are stored in Bitwarden and loaded at startup via `secrets.el` — never hardcoded.
+API keys are stored in Bitwarden, loaded into process memory by setup scripts, and written to `secrets.el` for Emacs startup.
 
 ### Executable Responses and Tools
 
@@ -599,7 +711,7 @@ Without `--ask`, all packages installed by the setup are removed automatically.
 
 The `org/` files and `emacs.d/secrets.el` in the GitHub repo are encrypted with git-crypt. The key is stored in Bitwarden (`emacs-git-crypt-key`, field: `Key`).
 
-After `git-crypt unlock`, setup scripts automatically symlink `~/.emacs.d/secrets.el` to the decrypted repo file. Bitwarden is only used as a fallback if the repo file is missing or still encrypted.
+After `git-crypt unlock`, setup scripts automatically symlink `~/.emacs.d/secrets.el` to the decrypted repo file. If the repo file is missing or still encrypted, `setup-secrets.sh` writes a local `secrets.el` from the already-loaded setup runtime.
 
 **Manual unlock:**
 

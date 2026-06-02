@@ -5,6 +5,8 @@ SETUP_DIR="${SETUP_DIR:-$HOME/emacs-mac-setup}"
 SETUP_CONFIG="${SETUP_CONFIG:-$SETUP_DIR/setup-emacs-mac.conf}"
 SETUP_TEMPLATE="${SETUP_TEMPLATE:-$SETUP_DIR/setup-emacs-mac.conf.template}"
 SETUP_STATE="${SETUP_STATE:-$SETUP_DIR/.setup-state}"
+SETUP_RUNTIME_KEYCHAIN_PREFIX="${SETUP_RUNTIME_KEYCHAIN_PREFIX:-emacs-mac-setup-runtime}"
+SETUP_RUNTIME_SECRET_KEYS="GITHUB_TOKEN GIT_CRYPT_KEY GEMINI_API_KEY ANTHROPIC_API_KEY"
 
 setup_add_homebrew_to_path() {
   [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -95,9 +97,69 @@ setup_load_config() {
   setup_ensure_config || return 1
   # shellcheck disable=SC1090
   source "$SETUP_CONFIG"
-  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
-  BITWARDEN_EMAIL="${BITWARDEN_EMAIL:-${BW_EMAIL:-}}"
-  BW_EMAIL="$BITWARDEN_EMAIL"
+  BITWARDEN_MASTER_PASSWORD=""
+  GITHUB_TOKEN=""
+  GIT_CRYPT_KEY=""
+  GEMINI_API_KEY=""
+  ANTHROPIC_API_KEY=""
+  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-$USER}"
+}
+
+setup_runtime_var_get() {
+  local key="$1"
+  eval "printf '%s' \"\${$key:-}\""
+}
+
+setup_runtime_load() {
+  setup_load_config || return 1
+  BITWARDEN_MASTER_PASSWORD=""
+  GITHUB_TOKEN=""
+  GIT_CRYPT_KEY=""
+  GEMINI_API_KEY=""
+  ANTHROPIC_API_KEY=""
+  local keychain_master
+  keychain_master="$(setup_keychain_get)"
+  if [ -n "$keychain_master" ]; then
+    BITWARDEN_MASTER_PASSWORD="$keychain_master"
+  fi
+  setup_runtime_load_secret_keychain_values
+  export GIT_NAME GIT_EMAIL GH_USER GH_REPO
+  export BW_ITEM BW_FIELD BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM
+  export BW_KEYCHAIN_SERVICE MACOS_KEYCHAIN_ACCOUNT BITWARDEN_EMAIL
+  export BITWARDEN_MASTER_PASSWORD GITHUB_TOKEN GIT_CRYPT_KEY
+  export ANTHROPIC_API_KEY GEMINI_API_KEY
+}
+
+setup_runtime_store_secret() {
+  local key="$1" value="$2"
+  [ -n "$value" ] || return 0
+  printf -v "$key" '%s' "$value"
+  export "$key"
+  case " $SETUP_RUNTIME_SECRET_KEYS " in
+    *" $key "*) setup_runtime_keychain_set "$key" "$value" ;;
+  esac
+}
+
+setup_runtime_store_bitwarden_master() {
+  local password="$1"
+  [ -n "$password" ] || return 1
+  BITWARDEN_MASTER_PASSWORD="$password"
+  export BITWARDEN_MASTER_PASSWORD
+  setup_keychain_set "$password" || return 1
+}
+
+setup_runtime_require() {
+  setup_runtime_load || return 1
+  local missing="" key
+  for key in "$@"; do
+    if [ -z "$(setup_runtime_var_get "$key")" ]; then
+      missing="${missing}${key} "
+    fi
+  done
+  if [ -n "$missing" ]; then
+    setup_fail "Missing required runtime value(s): $missing" "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
+    return 1
+  fi
 }
 
 setup_prompt() {
@@ -149,16 +211,82 @@ setup_require_bitwarden_email() {
   fi
 }
 
+setup_try_load_private_config_from_github() {
+  setup_runtime_load || return 1
+  [ -n "${GH_USER:-}" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  gh auth status >/dev/null 2>&1 || return 0
+
+  local repos best_date="" data_repo="" scan_repo scan_date conf_content conf_tmp
+  repos="$(gh api "user/repos?sort=pushed&direction=desc" --paginate --jq '.[].name' 2>/dev/null)" || true
+  for scan_repo in $repos; do
+    scan_date="$(gh api "repos/$GH_USER/$scan_repo/commits?path=config/setup-emacs-mac.conf&per_page=1" \
+      --jq '.[0].commit.committer.date' 2>/dev/null)" || true
+    if [ -n "$scan_date" ] && { [ -z "$best_date" ] || [[ "$scan_date" > "$best_date" ]]; }; then
+      best_date="$scan_date"
+      data_repo="$scan_repo"
+    fi
+  done
+  [ -n "$data_repo" ] || return 0
+
+  conf_content="$(gh api "repos/$GH_USER/$data_repo/contents/config/setup-emacs-mac.conf" --jq '.content' 2>/dev/null)" || true
+  [ -n "$conf_content" ] || return 0
+  conf_tmp="$(mktemp)"
+  echo "$conf_content" | tr -d '\n' | python3 -c "import sys,base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))" > "$conf_tmp" 2>/dev/null || true
+  if grep -q '^GIT_NAME="[^"]' "$conf_tmp" 2>/dev/null; then
+    cp "$conf_tmp" "$SETUP_CONFIG"
+    echo "  Loaded existing config from $GH_USER/$data_repo."
+  fi
+  rm -f "$conf_tmp"
+  setup_runtime_load
+}
+
 setup_keychain_get() {
-  local account="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local account="${MACOS_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
   security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
 }
 
 setup_keychain_set() {
-  local password="$1" account="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local password="$1" account="${MACOS_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
   [ -n "$password" ] || return 1
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null
+}
+
+setup_runtime_keychain_service() {
+  printf '%s:%s' "$SETUP_RUNTIME_KEYCHAIN_PREFIX" "$1"
+}
+
+setup_runtime_keychain_get() {
+  local key="$1" account="$USER" service
+  service="$(setup_runtime_keychain_service "$key")"
+  security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
+}
+
+setup_runtime_keychain_set() {
+  local key="$1" value="$2" account="$USER" service
+  [ -n "$value" ] || return 0
+  service="$(setup_runtime_keychain_service "$key")"
+  security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
+  security add-generic-password -a "$account" -s "$service" -w "$value" -A >/dev/null
+}
+
+setup_runtime_load_secret_keychain_values() {
+  local key value
+  for key in $SETUP_RUNTIME_SECRET_KEYS; do
+    if [ -z "$(setup_runtime_var_get "$key")" ]; then
+      value="$(setup_runtime_keychain_get "$key")"
+      [ -n "$value" ] && printf -v "$key" '%s' "$value"
+    fi
+  done
+}
+
+setup_runtime_cleanup_secret_keychain() {
+  local key account="$USER" service
+  for key in $SETUP_RUNTIME_SECRET_KEYS; do
+    service="$(setup_runtime_keychain_service "$key")"
+    security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
+  done
 }
 
 setup_install_bitwarden_tools() {
@@ -180,11 +308,11 @@ setup_bw_status() {
 }
 
 setup_bw_unlock_with_keychain() {
-  setup_load_config || return 1
+  setup_runtime_load || return 1
   command -v bw >/dev/null 2>&1 || setup_fail "Bitwarden CLI is not installed." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
   local master status session
-  master="$(setup_keychain_get)"
-  [ -n "$master" ] || setup_fail "Bitwarden master password is not stored in macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+  master="${BITWARDEN_MASTER_PASSWORD:-}"
+  [ -n "$master" ] || setup_fail "Bitwarden master password is missing from config and macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
   export __BW_PW="$master"
   status="$(setup_bw_status)"
   if [ "$status" = "unauthenticated" ]; then
@@ -197,6 +325,31 @@ setup_bw_unlock_with_keychain() {
   [ -n "$session" ] || setup_fail "Bitwarden login/unlock failed. Password, email, or 2FA state needs attention." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
   export BW_SESSION="$session"
   bw sync --session "$BW_SESSION" >/dev/null 2>&1 || true
+}
+
+setup_runtime_import_secret_from_bitwarden() {
+  local config_key="$1" item="$2" field="$3" value
+  [ -n "$(setup_runtime_var_get "$config_key")" ] && return 0
+  [ -n "$item" ] || return 0
+  [ -n "$field" ] || return 0
+  value="$(setup_bw_get_field "$item" "$field")" || true
+  [ -n "$value" ] || return 0
+  setup_runtime_store_secret "$config_key" "$value"
+}
+
+setup_runtime_load_bitwarden_secrets() {
+  setup_bw_unlock_with_keychain || return 1
+  setup_runtime_import_secret_from_bitwarden GITHUB_TOKEN "$BW_GH_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden GIT_CRYPT_KEY "$BW_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden GEMINI_API_KEY "$BW_GEMINI_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden ANTHROPIC_API_KEY "$BW_ANTHROPIC_ITEM" "$BW_FIELD"
+}
+
+setup_runtime_mirror_secret_to_bitwarden() {
+  local config_key="$1" item="$2" field="$3" value
+  value="$(setup_runtime_var_get "$config_key")"
+  [ -n "$value" ] || return 0
+  setup_bw_create_item "$item" "$field" "$value"
 }
 
 setup_bw_get_field() {
@@ -217,11 +370,29 @@ setup_bw_create_item() {
   [ -n "$name" ]  || setup_fail "Refusing to create a Bitwarden item with an empty name." "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
   [ -n "$field" ] || setup_fail "Refusing to create Bitwarden item '$name' with an empty field name." "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
   [ -n "$value" ] || return 0
+  local encoded item_id
   if bw get item "$name" --session "$BW_SESSION" >/dev/null 2>&1; then
-    echo "  Already exists: $name"
+    item_id="$(bw get item "$name" --session "$BW_SESSION" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")"
+    encoded=$(bw get item "$name" --session "$BW_SESSION" 2>/dev/null | python3 -c "
+import json,sys
+field,value=sys.argv[1],sys.argv[2]
+d=json.load(sys.stdin)
+d.setdefault('login', {})['password']=value
+fields=d.setdefault('fields', [])
+for item in fields:
+    if item.get('name') == field:
+        item['value'] = value
+        item['type'] = 1
+        break
+else:
+    fields.append({'name': field, 'value': value, 'type': 1})
+print(json.dumps(d))
+" "$field" "$value" | bw encode)
+    [ -n "$item_id" ] || setup_fail "Could not resolve Bitwarden item id for '$name'." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    echo "$encoded" | bw edit item "$item_id" --session "$BW_SESSION" >/dev/null
+    echo "  Updated: $name"
     return 0
   fi
-  local encoded
   encoded=$(python3 -c "
 import json,sys
 name,field,value=sys.argv[1],sys.argv[2],sys.argv[3]
@@ -232,7 +403,7 @@ print(json.dumps({'type':1,'name':name,'login':{'password':value},'fields':[{'na
 }
 
 setup_print_inventory() {
-  setup_load_config || return 1
+  setup_runtime_load || return 1
   echo ""
   echo "Detected setup inventory:"
   echo ""
@@ -242,6 +413,7 @@ setup_print_inventory() {
   echo "  GH_REPO                   ${GH_REPO:-emacs-data}"
   echo "  BW_FIELD                  ${BW_FIELD:-<missing>}"
   echo "  BW_GEMINI_ITEM            ${BW_GEMINI_ITEM:-<missing>}"
+  echo "  BITWARDEN_EMAIL           ${BITWARDEN_EMAIL:-<missing>}"
   echo ""
   echo "macOS Keychain:"
   if [ -n "${BW_KEYCHAIN_SERVICE:-}" ] && [ -n "$(setup_keychain_get)" ]; then

@@ -7,7 +7,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 source "$CONFIG_FILE"
 
-MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
+MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-$USER}"
 BW_KEYCHAIN_SERVICE="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
 
 echo "==> Removing Bitwarden keychain entry..."

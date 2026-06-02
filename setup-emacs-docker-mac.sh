@@ -14,8 +14,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "Please create it (template: setup-emacs-mac.conf)"
   exit 1
 fi
-source "$CONFIG_FILE"
 source "$SCRIPT_DIR/bw-unlock.sh"
+trap 'setup_runtime_cleanup_secret_keychain 2>/dev/null || true' EXIT
+setup_runtime_load
 
 # --- Check required fields ---
 MISSING=()
@@ -40,15 +41,19 @@ if [ ! -d "/Applications/Utilities/XQuartz.app" ]; then
   echo ""
 fi
 
-# Bitwarden needed if: iCloud repo missing OR gh not authenticated OR API key missing in container
+# Bitwarden is only needed as fallback when runtime values are missing.
 ANTHROPIC_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exec "$DOCKER_CONTAINER" grep -q "ANTHROPIC_API_KEY" /home/emacs/.bashrc 2>/dev/null && echo "yes") || true
 GEMINI_KEY_SET=$(docker inspect "$DOCKER_CONTAINER" &>/dev/null && docker exec "$DOCKER_CONTAINER" grep -q "GEMINI_API_KEY" /home/emacs/.bashrc 2>/dev/null && echo "yes") || true
-if [ ! -d "$ICLOUD_REPO_PATH/.git" ] || ! gh auth status &>/dev/null 2>&1 || [ "$ANTHROPIC_KEY_SET" != "yes" ] || [ "$GEMINI_KEY_SET" != "yes" ]; then
+if { [ "$ANTHROPIC_KEY_SET" != "yes" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; } \
+   || { [ "$GEMINI_KEY_SET" != "yes" ] && [ -z "${GEMINI_API_KEY:-}" ]; } \
+   || [ -z "${GITHUB_TOKEN:-}" ] \
+   || [ -z "${GIT_CRYPT_KEY:-}" ]; then
   if ! command -v bw &>/dev/null; then
     echo "==> Installing Bitwarden CLI (needed for setup)..."
     brew install bitwarden-cli
   fi
   bw_ensure_session || exit 1
+  setup_runtime_load_bitwarden_secrets || exit 1
 fi
 
 # --- Clean incomplete Homebrew downloads ---
@@ -104,13 +109,11 @@ fi
 if gh auth status &>/dev/null 2>&1; then
   skip "GitHub CLI auth (already authenticated)"
 else
-  echo "==> Authenticating GitHub CLI with token from Bitwarden..."
-  GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
-  if [ -n "$GH_TOKEN" ]; then
-    echo "$GH_TOKEN" | gh auth login --with-token
+  echo "==> Authenticating GitHub CLI with token from setup runtime..."
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    echo "$GITHUB_TOKEN" | gh auth login --with-token
   else
-    echo "WARN: GitHub token not found in Bitwarden. Please log in manually:"
-    gh auth login
+    setup_fail "GitHub token missing after intake." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
   fi
 fi
 
@@ -255,8 +258,12 @@ if [ -d "$ICLOUD_REPO_PATH/.git" ]; then
   git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
   git -C "$ICLOUD_REPO_PATH" pull origin main || true
 else
-  echo "==> Fetching key from Bitwarden..."
-  KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD")
+  echo "==> Loading git-crypt key from setup runtime..."
+  KEY_B64="${GIT_CRYPT_KEY:-}"
+  if [ -z "$KEY_B64" ]; then
+    KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD")
+  fi
+  [ -n "$KEY_B64" ] || setup_fail "git-crypt key missing after intake." "bash ~/emacs-mac-setup/setup-intake.sh --repair config"
 
   echo "==> Setting up GitHub credential helper..."
   gh auth setup-git
@@ -468,8 +475,11 @@ docker exec "$DOCKER_CONTAINER" git --version
 if docker exec "$DOCKER_CONTAINER" test -f /home/emacs/.git-crypt-key 2>/dev/null; then
   skip "git-crypt key (already stored in container)"
 else
-  echo "==> Fetching git-crypt key from Bitwarden..."
-  GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+  echo "==> Loading git-crypt key from setup runtime..."
+  GC_KEY_B64="${GIT_CRYPT_KEY:-}"
+  if [ -z "$GC_KEY_B64" ]; then
+    GC_KEY_B64=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+  fi
   if [ -n "$GC_KEY_B64" ]; then
     echo "$GC_KEY_B64" | tr -d '[:space:]' \
       | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" \
@@ -482,7 +492,7 @@ else
       || echo "WARN: git-crypt unlock failed — org/ files still encrypted."
     rm -f /tmp/_gckey_docker
   else
-    echo "WARN: git-crypt key not found in Bitwarden — org/ files will remain encrypted."
+    echo "WARN: git-crypt key missing — org/ files will remain encrypted."
   fi
 fi
 
@@ -773,5 +783,6 @@ echo "Emacs app available at: ~/Applications/Emacs (Docker).app"
 echo "To enter the container:  docker exec -it ${DOCKER_CONTAINER} bash"
 echo ""
 echo "==> Starting Emacs..."
+setup_runtime_cleanup_secret_keychain
 /opt/X11/bin/xhost +localhost 2>/dev/null || true
 docker exec -it -e DISPLAY=host.docker.internal:0 "$DOCKER_CONTAINER" emacs

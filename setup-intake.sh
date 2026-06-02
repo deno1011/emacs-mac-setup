@@ -13,7 +13,7 @@ fi
 setup_add_homebrew_to_path
 setup_phase "Phase 1/5: Discover existing setup"
 setup_ensure_config
-setup_load_config
+setup_runtime_load
 
 if [ -z "$(setup_config_get GH_USER)" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   _GH_DETECTED=$(gh api user --jq '.login' 2>/dev/null || true)
@@ -49,7 +49,7 @@ if [ -z "$(setup_config_get GIT_NAME)" ] && [ -n "$(setup_config_get GH_USER)" ]
     fi
   fi
   unset _GH_USER _DATA_REPO_NAME _REPOS _BEST_DATE _SCAN_REPO _SCAN_DATE _CONF_CONTENT _CONF_TMP
-  setup_load_config
+  setup_runtime_load
 fi
 
 setup_print_inventory
@@ -60,7 +60,7 @@ setup_prompt_config_if_empty GIT_EMAIL           "Email (git commits)"          
 setup_prompt_config_if_empty GH_USER             "GitHub username (Enter for local-only mode)"  ""
 setup_prompt_config_if_empty GH_REPO             "Emacs data repo"                             "emacs-data"
 
-setup_load_config
+setup_runtime_load
 
 if [ -n "${GH_USER:-}" ]; then
   setup_prompt_config_if_empty BW_FIELD            "Bitwarden custom field name"                  "Key"
@@ -69,42 +69,83 @@ if [ -n "${GH_USER:-}" ]; then
   setup_prompt_config_if_empty BW_ANTHROPIC_ITEM   "Anthropic key Bitwarden item name"            "anthropic-api-key"
   setup_prompt_config_if_empty BW_GEMINI_ITEM      "Gemini key Bitwarden item name"               "gemini-api-key"
   setup_prompt_config_if_empty BW_KEYCHAIN_SERVICE "macOS Keychain service label"                 "bitwarden-master"
-  setup_load_config
+  setup_runtime_load
 
-  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
-  if [ -z "$(setup_config_get BITWARDEN_EMAIL)" ] && [ -n "$(setup_config_get BW_EMAIL)" ]; then
-    setup_config_set BITWARDEN_EMAIL "$(setup_config_get BW_EMAIL)"
+  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE
+  if [ "$REPAIR_MODE" = "bitwarden" ]; then
+    _BW_EMAIL="$(setup_prompt "Bitwarden email / username" "${BITWARDEN_EMAIL:-}")"
+    [ -n "$_BW_EMAIL" ] && setup_config_set BITWARDEN_EMAIL "$_BW_EMAIL"
+    unset _BW_EMAIL
+  else
+    setup_prompt_config_if_empty BITWARDEN_EMAIL "Bitwarden email / username" ""
   fi
-  setup_prompt_config_if_empty BITWARDEN_EMAIL "Bitwarden email / username" ""
-  setup_load_config
+  setup_runtime_load
   setup_require_bitwarden_email
 
-  setup_phase "Phase 3/5: Validate Bitwarden and secrets"
-  setup_install_bitwarden_tools
-
-  if [ -z "$(setup_keychain_get)" ] || [ "$REPAIR_MODE" = "bitwarden" ]; then
+  setup_phase "Phase 3/5: Collect passwords and tokens"
+  if [ -z "${BITWARDEN_MASTER_PASSWORD:-}" ] || [ "$REPAIR_MODE" = "bitwarden" ]; then
     echo ""
-    echo "  Bitwarden master password is stored in macOS Keychain for future setup runs."
+    echo "  Bitwarden master password is saved to macOS Keychain, not setup config."
     _BW_MASTER="$(setup_prompt_secret "Bitwarden master password")"
-    setup_keychain_set "$_BW_MASTER" || setup_fail "Could not store Bitwarden password in macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    [ -n "$_BW_MASTER" ] || setup_fail "Bitwarden master password is required in GitHub mode." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    setup_runtime_store_bitwarden_master "$_BW_MASTER" || setup_fail "Could not store Bitwarden password in macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
     unset _BW_MASTER
+  else
+    export BITWARDEN_MASTER_PASSWORD
+    if [ -z "$(setup_keychain_get)" ]; then
+      setup_keychain_set "$BITWARDEN_MASTER_PASSWORD" || setup_fail "Could not store Bitwarden password in macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    fi
   fi
+  setup_runtime_load
+
+  setup_phase "Phase 4/5: Validate Bitwarden and sync secrets"
+  setup_install_bitwarden_tools
 
   setup_bw_unlock_with_keychain || exit 1
   setup_state_set BITWARDEN_LOGIN_OK true
   echo "  Bitwarden vault unlocked."
 
-  _existing_gh="$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD")"
-  if [ -z "$_existing_gh" ] || [ "$REPAIR_MODE" = "github-token" ]; then
-    echo ""
-    echo "  GitHub token is optional here; if skipped, setup falls back to browser login."
-    _GH_TOKEN="$(setup_prompt_secret "GitHub token (repo scope, Enter to skip)")"
-    [ -n "$_GH_TOKEN" ] && setup_bw_create_item "$BW_GH_ITEM" "$BW_FIELD" "$_GH_TOKEN"
+  setup_runtime_import_secret_from_bitwarden GITHUB_TOKEN "$BW_GH_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden GIT_CRYPT_KEY "$BW_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden GEMINI_API_KEY "$BW_GEMINI_ITEM" "$BW_FIELD"
+  setup_runtime_import_secret_from_bitwarden ANTHROPIC_API_KEY "$BW_ANTHROPIC_ITEM" "$BW_FIELD"
+  setup_runtime_load
+
+  if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    _GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+    [ -n "$_GH_TOKEN" ] && setup_runtime_store_secret GITHUB_TOKEN "$_GH_TOKEN"
     unset _GH_TOKEN
   fi
 
-  _existing_gc="$(setup_bw_get_field "$BW_ITEM" "$BW_FIELD")"
-  if [ -z "$_existing_gc" ]; then
+  if [ -z "${GITHUB_TOKEN:-}" ] || [ "$REPAIR_MODE" = "github-token" ]; then
+    echo ""
+    _GH_TOKEN="$(setup_prompt_secret "GitHub token (repo scope; required unless gh is already logged in)")"
+    [ -n "$_GH_TOKEN" ] && setup_runtime_store_secret GITHUB_TOKEN "$_GH_TOKEN"
+    unset _GH_TOKEN
+  fi
+
+  if [ -z "${GEMINI_API_KEY:-}" ] || [ "$REPAIR_MODE" = "gemini" ]; then
+    echo ""
+    echo "  Gemini is the default gptel backend. Get a free key at:"
+    echo "  https://aistudio.google.com/apikey"
+    _GEMINI_KEY="$(setup_prompt_secret "Gemini API key (Enter to skip)")"
+    [ -n "$_GEMINI_KEY" ] && setup_runtime_store_secret GEMINI_API_KEY "$_GEMINI_KEY"
+    unset _GEMINI_KEY
+  fi
+
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] || [ "$REPAIR_MODE" = "anthropic" ]; then
+    echo ""
+    _ANTHROPIC_KEY="$(setup_prompt_secret "Anthropic API key (optional, Enter to skip)")"
+    [ -n "$_ANTHROPIC_KEY" ] && setup_runtime_store_secret ANTHROPIC_API_KEY "$_ANTHROPIC_KEY"
+    unset _ANTHROPIC_KEY
+  fi
+  setup_runtime_load
+
+  if [ -z "${GITHUB_TOKEN:-}" ] && ! { command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; }; then
+    setup_fail "GitHub token is missing. Automatic setup cannot authenticate later without interrupting." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
+  fi
+
+  if [ -z "${GIT_CRYPT_KEY:-}" ]; then
     echo "  git-crypt key missing — generating one now."
     command -v git-crypt >/dev/null 2>&1 || brew install git-crypt
     _GC_TMP="$(mktemp -d)"
@@ -114,29 +155,21 @@ if [ -n "${GH_USER:-}" ]; then
     _GC_KEY="$(base64 -i /tmp/gckey_bs | tr -d '\n')"
     rm -f /tmp/gckey_bs
     rm -rf "$_GC_TMP"
-    setup_bw_create_item "$BW_ITEM" "$BW_FIELD" "$_GC_KEY"
+    setup_runtime_store_secret GIT_CRYPT_KEY "$_GC_KEY"
     unset _GC_KEY _GC_TMP
   fi
+  setup_runtime_load
 
-  _existing_gemini="$(setup_bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD")"
-  if [ -z "$_existing_gemini" ] || [ "$REPAIR_MODE" = "gemini" ]; then
-    echo ""
-    echo "  Gemini is the default gptel backend. Get a free key at:"
-    echo "  https://aistudio.google.com/apikey"
-    _GEMINI_KEY="$(setup_prompt_secret "Gemini API key (Enter to skip)")"
-    [ -n "$_GEMINI_KEY" ] && setup_bw_create_item "$BW_GEMINI_ITEM" "$BW_FIELD" "$_GEMINI_KEY"
-    unset _GEMINI_KEY
+  setup_runtime_mirror_secret_to_bitwarden GITHUB_TOKEN "$BW_GH_ITEM" "$BW_FIELD"
+  setup_runtime_mirror_secret_to_bitwarden GIT_CRYPT_KEY "$BW_ITEM" "$BW_FIELD"
+  setup_runtime_mirror_secret_to_bitwarden GEMINI_API_KEY "$BW_GEMINI_ITEM" "$BW_FIELD"
+  setup_runtime_mirror_secret_to_bitwarden ANTHROPIC_API_KEY "$BW_ANTHROPIC_ITEM" "$BW_FIELD"
+
+  setup_phase "Phase 5/5: Final validation"
+  setup_runtime_require GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BITWARDEN_EMAIL BITWARDEN_MASTER_PASSWORD GIT_CRYPT_KEY
+  if [ -z "${GITHUB_TOKEN:-}" ] && ! { command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; }; then
+    setup_fail "GitHub token is missing and gh is not already authenticated." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
   fi
-
-  _existing_anthropic="$(setup_bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD")"
-  if [ -z "$_existing_anthropic" ] || [ "$REPAIR_MODE" = "anthropic" ]; then
-    echo ""
-    _ANTHROPIC_KEY="$(setup_prompt_secret "Anthropic API key (optional, Enter to skip)")"
-    [ -n "$_ANTHROPIC_KEY" ] && setup_bw_create_item "$BW_ANTHROPIC_ITEM" "$BW_FIELD" "$_ANTHROPIC_KEY"
-    unset _ANTHROPIC_KEY
-  fi
-
-  unset _existing_gh _existing_gc _existing_gemini _existing_anthropic
 else
   echo "  Local-only mode selected. Bitwarden/GitHub setup will be skipped."
 fi

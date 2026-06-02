@@ -65,7 +65,10 @@ fi
 source "$DEST/setup-lib.sh"
 setup_ensure_config
 bash "$DEST/setup-intake.sh"
-source "$CONFIG_FILE"
+setup_runtime_load
+if [ -n "${GH_USER:-}" ]; then
+  setup_runtime_load_bitwarden_secrets || exit 1
+fi
 
 # --- GitHub auth (with token from Bitwarden) ---
 if [ -n "$GH_USER" ]; then
@@ -78,29 +81,27 @@ if [ -n "$GH_USER" ]; then
     echo "==> GitHub auth: already authenticated."
   else
     echo "==> Authenticating GitHub..."
-    source "$DEST/setup-lib.sh" 2>/dev/null || true
-    _BS_GH_TOKEN=""
-    if setup_bw_unlock_with_keychain; then
-      _BS_GH_TOKEN=$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
-    fi
-    if [ -n "$_BS_GH_TOKEN" ]; then
-      echo "$_BS_GH_TOKEN" | gh auth login --with-token
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      echo "$GITHUB_TOKEN" | gh auth login --with-token
       gh auth setup-git
       echo "    GitHub authenticated."
     else
-      echo "    WARN: GitHub token not found in Bitwarden — manual login:"
-      gh auth login < /dev/tty
-      gh auth setup-git
+      setup_fail "GitHub token missing after intake; refusing to interrupt setup with a late login prompt." "bash ~/emacs-mac-setup/setup-intake.sh --repair github-token"
     fi
-    unset _BS_GH_TOKEN
   fi
+fi
+
+if [ -n "${GH_USER:-}" ]; then
+  setup_try_load_private_config_from_github || true
+  setup_runtime_load
+  setup_runtime_load_bitwarden_secrets || exit 1
 fi
 
 # --- Check and create GitHub repos ---
 if [ -n "$GH_USER" ] && gh auth status &>/dev/null 2>&1; then
   echo ""
   echo "==> Checking GitHub repos..."
-  source "$CONFIG_FILE"
+  setup_runtime_load
 
   _create_repo_if_missing() {
     local REPO_NAME="$1" DESC="$2"
