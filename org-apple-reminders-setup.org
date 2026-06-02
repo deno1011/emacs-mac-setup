@@ -57,8 +57,7 @@ delete, …), so no manual =global-set-key= calls are needed.
   (use-package org-apple-reminders
     :ensure nil
     :config
-    (setq org-apple-reminders-sync-file
-          (expand-file-name "data/org/reminders.org" my/data-dir))
+    (setq org-apple-reminders-sync-file "~/org/reminders.org")
 
     ;; nil = sync all Apple Reminders lists (the default — not restricted).
     ;; Set to a list of names to restrict, or pick interactively with `C-c r i'.

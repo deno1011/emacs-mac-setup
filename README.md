@@ -9,7 +9,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 **Have these ready before you begin:**
 
 - [ ] GitHub account + personal access token — Settings › Developer settings › Personal access tokens › Classic › scope: `repo`
-- [ ] Bitwarden account for GitHub mode *(bootstrap installs the app/CLI; the master password is stored in macOS Keychain)*
+- [ ] Bitwarden account *(vault entries are created interactively by `setup-bitwarden.sh` — no manual setup needed)*
 - [ ] iCloud Drive enabled *(native variants only)*
 
 **Everything else is automated:**
@@ -17,10 +17,10 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 | What | How |
 |---|---|
 | Homebrew | Installed by `bootstrap.sh` if missing |
-| GitHub CLI, git-crypt, Bitwarden CLI + desktop app | Installed by setup scripts |
+| GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
 | `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
-| Bitwarden vault entries | Created during the up-front `setup-intake.sh` phase |
-| Gemini API key | Default gptel backend; read from Bitwarden into `~/.emacs.d/secrets.el` |
+| Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
+| Ollama + `qwen2.5-coder:7b` | Installed, started, and pulled for the default local gptel agent setup |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
 **Run in Terminal:**
@@ -72,11 +72,9 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `core.org` | Base config: UI, font, version control, protected files, auto-commit, startup sync |
 | `org-setup.org` | Org mode: agenda, capture templates, tags, clocking, export, LaTeX |
 | `gptel-setup.org` | AI assistant loader: installs `gptel-agent-runtime`, selects the default local model, and keeps setup-specific AI defaults small |
-| `setup-intake.sh` | Up-front discovery, config repair, Bitwarden/Keychain unlock, and secret intake |
-| `setup-doctor.sh` | Prints the last failed phase and concrete repair command |
-| `fill-config.sh` | Compatibility wrapper for `setup-intake.sh` |
-| `setup-bitwarden.sh` | Compatibility repair entry for Bitwarden-backed setup |
-| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` -> repo file if decrypted; otherwise read existing keys from Bitwarden |
+| `fill-config.sh` | Interactive guided config fill |
+| `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
+| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
 
 ### Install
 
@@ -87,7 +85,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
 | `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container (XQuartz) |
 | `setup-emacs-orbstack-mac.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
-| `bw-unlock.sh` | Compatibility Bitwarden API; delegates to `setup-lib.sh` and never prompts for API keys |
+| `bw-unlock.sh` | Unlock Bitwarden vault (used internally by setup scripts) |
 
 ### Uninstall
 
@@ -117,8 +115,8 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 - GitHub account with a personal access token (Classic, `repo` scope)
 - Bitwarden account
 
-**Required config fields** (setup aborts with a repair command if empty when `GH_USER` is set):
-`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BW_EMAIL`
+**Required config fields** (setup aborts if empty when `GH_USER` is set):
+`GIT_NAME` `GIT_EMAIL` `GH_REPO`
 
 Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and all GitHub repos — is installed or created automatically by the setup scripts.
 
@@ -133,9 +131,9 @@ Safe to store in a private GitHub repo without encryption.
 **On a new Mac, bootstrap.sh handles the config automatically:**
 
 - **GitHub already authenticated** (e.g. second Mac): pulls `setup-emacs-mac.conf` from private repo → ready immediately
-- **Brand new Mac**: copies the template -> `setup-intake.sh` asks for missing setup data once, stores the Bitwarden master password in macOS Keychain, then installation continues without scattered follow-up prompts
+- **Brand new Mac**: copies the template → `fill-config.sh` guides you through each field → setup re-pulls latest conf after GitHub auth is established
 
-Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf` when `gh` is already authenticated. No manual `CONF_REPO` configuration needed.
+Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf`. No manual `CONF_REPO` configuration needed.
 
 ---
 
@@ -477,8 +475,7 @@ Multiple AI backends are pre-configured and switchable with `C-c M`:
 
 | Backend | Models |
 |---|---|
-| **Gemini** | Gemini 2.0 Flash is the startup default when `GEMINI_API_KEY` is available |
-| **Ollama** | Optional local backend; configured automatically when Ollama is installed |
+| **Ollama** | `qwen2.5-coder:7b` is the default local model and is pulled during setup |
 | **Claude** (Anthropic) | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
 | **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
 | **LM Studio** | Any local model loaded in LM Studio |
@@ -553,10 +550,9 @@ in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
 
 ### Local Models
 
-Gemini is the default startup backend because it works on fresh Macs without a
-local model download. Ollama remains available as an optional local backend:
-install Ollama and pull a model when you want fully local inference. LM Studio
-or any OpenAI-compatible local server can still be selected as a backend.
+Ollama is the default local backend. Setup installs Ollama, starts the server,
+and pulls `qwen2.5-coder:7b` with visible terminal progress. LM Studio or any
+OpenAI-compatible local server can still be selected as a backend.
 
 ---
 
@@ -629,9 +625,8 @@ chmod +x bootstrap.sh
 ./bootstrap.sh stable
 ```
 
-Bootstrap downloads all scripts from `stable`, runs the up-front intake,
-configures Bitwarden + GitHub auth when requested, installs emacs-plus, and
-prepares Gemini as the default gptel backend when a Gemini key is available.
+Bootstrap downloads all scripts from `stable`, configures Bitwarden + GitHub
+auth, installs emacs-plus, and prepares the default local Ollama model.
 
 ### Reinstall from `main` (dev/testing path)
 

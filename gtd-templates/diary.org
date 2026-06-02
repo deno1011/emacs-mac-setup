@@ -1,7 +1,0 @@
-#+TITLE: Journal
-#+STARTUP: overview
-
-Date-tree journal. Entries added via =C-c c j= are placed under the
-current year/month/day automatically.
-
-* 2026

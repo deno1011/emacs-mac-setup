@@ -199,9 +199,20 @@ orbu bash -c "
         mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org
     fi
 "
-# Config files self-bootstrap on first Emacs run via init.el's
-# my/ensure-config-file-from-url (fetches from emacs-mac-setup/stable).
-# No file copies into the OrbStack VM needed from this script.
+# Modular config files are setup-managed — always update from SCRIPT_DIR
+_CF_CHANGED=false
+for _CF in core.org org-setup.org gptel-setup.org; do
+    if [ -f "$SCRIPT_DIR/$_CF" ]; then
+        orbu tee "/home/$EUSER/${GH_REPO}/config/$_CF" > /dev/null < "$SCRIPT_DIR/$_CF"
+        orbu bash -c "git -C ~/${GH_REPO} diff --quiet config/$_CF 2>/dev/null || git -C ~/${GH_REPO} add config/$_CF" && _CF_CHANGED=true
+        echo "    $_CF updated."
+    fi
+done
+if [ "$_CF_CHANGED" = true ]; then
+    orbu bash -c "git -C ~/${GH_REPO} diff --cached --quiet || git -C ~/${GH_REPO} commit -m 'chore: update modular config files' 2>/dev/null || true"
+    orbu bash -c "git -C ~/${GH_REPO} push origin main 2>/dev/null || true"
+fi
+unset _CF _CF_CHANGED
 
 # ── 10. git-crypt key ─────────────────────────────────────────────────────────
 step "Setting up git-crypt..."
@@ -257,29 +268,17 @@ if [[ "$BW_AVAILABLE" == true ]]; then
     "
     _SECRETS_MISSING=$(orbu bash -c "[ -e ~/.emacs.d/secrets.el ] && echo 'exists' || echo 'missing'")
     if [[ "$_SECRETS_MISSING" == "missing" ]]; then
-        _SEC_TMP=$(mktemp)
-        echo ";; secrets.el — API keys (not tracked in git)" > "$_SEC_TMP"
-
-        ANTHROPIC_API_KEY=$(bw_ensure_api_key \
-                              "$BW_ANTHROPIC_ITEM" "$BW_FIELD" \
-                              "Anthropic API key" \
-                              "https://console.anthropic.com/settings/keys")
+        ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
         if [[ -n "$ANTHROPIC_API_KEY" ]]; then
-            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$_SEC_TMP"
+            _SEC_TMP=$(mktemp)
+            printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$_SEC_TMP"
+            orbu bash -c "mkdir -p ~/.emacs.d"
+            orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
+            rm -f "$_SEC_TMP"
+            echo "API key written to secrets.el from Bitwarden."
+        else
+            warn "Anthropic API key not found in Bitwarden (item: $BW_ANTHROPIC_ITEM)."
         fi
-
-        GEMINI_API_KEY=$(bw_ensure_api_key \
-                           "$BW_GEMINI_ITEM" "$BW_FIELD" \
-                           "Gemini API key (free)" \
-                           "https://aistudio.google.com/apikey")
-        if [[ -n "$GEMINI_API_KEY" ]]; then
-            printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$_SEC_TMP"
-        fi
-
-        orbu bash -c "mkdir -p ~/.emacs.d"
-        orbu bash -c "cat > ~/.emacs.d/secrets.el" < "$_SEC_TMP"
-        rm -f "$_SEC_TMP"
-        echo "secrets.el written into OrbStack VM."
     fi
 fi
 
@@ -374,14 +373,20 @@ root sed -i "s|emacs-data|${GH_REPO}|g" /home/$EUSER/unlock-git-crypt.sh
 root chmod +x /home/$EUSER/unlock-git-crypt.sh
 root chown $EUSER:$EUSER /home/$EUSER/unlock-git-crypt.sh
 
-# ── 17. config.org ───────────────────────────────────────────────────────────
-# Self-bootstrapping via init.el — if ~/${GH_REPO}/config/config.org is
-# missing, init.el's my/ensure-config-file-from-url fetches it from
-# emacs-mac-setup/stable on first Emacs launch inside the VM. If
-# iCloud has a personal copy already, that wins via the my/config-dir
-# resolution order.
-step "Ensuring config directory exists (files self-bootstrap)..."
-orbu bash -c "mkdir -p ~/${GH_REPO}/config ~/${GH_REPO}/data/org"
+# ── 17. config.org fallback ───────────────────────────────────────────────────
+step "Checking config.org..."
+ICLOUD_CONFIG="/Users/${USER}/Library/Mobile Documents/com~apple~CloudDocs/${GH_REPO}/config/config.org"
+orbu bash -c "
+    if [ -f ~/${GH_REPO}/config/config.org ]; then
+        echo 'config.org present.'
+    elif [ -f '${ICLOUD_CONFIG}' ]; then
+        mkdir -p ~/${GH_REPO}/config
+        cp '${ICLOUD_CONFIG}' ~/${GH_REPO}/config/config.org
+        echo 'config.org copied from iCloud.'
+    else
+        echo 'WARN: config.org not found — Emacs will start without config.'
+    fi
+"
 
 # ── 18. Verification ──────────────────────────────────────────────────────────
 step "Verifying installation..."
