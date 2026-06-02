@@ -97,6 +97,32 @@ setup_ensure_config() {
     cp "$SETUP_TEMPLATE" "$SETUP_CONFIG"
     echo "  Created config: $SETUP_CONFIG"
   fi
+  setup_ensure_config_keys
+}
+
+setup_ensure_config_keys() {
+  [ -f "$SETUP_TEMPLATE" ] || return 0
+  [ -f "$SETUP_CONFIG" ]   || return 0
+  local line key added=""
+  while IFS= read -r line; do
+    case "$line" in
+      \#*|"") continue ;;
+    esac
+    case "$line" in
+      *=*) key="${line%%=*}" ;;
+      *) continue ;;
+    esac
+    case "$key" in
+      [A-Za-z_]*) ;;
+      *) continue ;;
+    esac
+    if ! grep -q "^${key}=" "$SETUP_CONFIG" 2>/dev/null; then
+      printf '%s\n' "$line" >> "$SETUP_CONFIG"
+      added="${added}${key} "
+    fi
+  done < "$SETUP_TEMPLATE"
+  [ -n "$added" ] && echo "  Added missing config keys: ${added% }"
+  return 0
 }
 
 setup_config_get() {
