@@ -47,10 +47,21 @@ fi
 setup_print_inventory
 
 setup_phase "Phase 2/5: Resolve setup data"
-setup_prompt_config_if_empty GIT_NAME            "Full name (git commits)"                     ""
-setup_prompt_config_if_empty GIT_EMAIL           "Email (git commits)"                         ""
+
 setup_prompt_config_if_empty GH_USER             "GitHub username (Enter for local-only mode)"  ""
 setup_prompt_config_if_empty GH_REPO             "Emacs data repo"                             "emacs-data"
+
+if [ -n "$(setup_config_get GH_USER)" ] && [ -z "$(setup_config_get GIT_NAME)" ]; then
+  setup_runtime_load
+  if setup_gh_ensure_auth; then
+    echo "  Looking for existing setup-emacs-mac.conf in your private repo..."
+    setup_try_load_private_config_from_github || true
+    setup_runtime_load
+  fi
+fi
+
+setup_prompt_config_if_empty GIT_NAME            "Full name (git commits)"                     ""
+setup_prompt_config_if_empty GIT_EMAIL           "Email (git commits)"                         ""
 
 setup_runtime_load
 
