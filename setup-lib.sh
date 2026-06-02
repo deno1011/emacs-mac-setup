@@ -279,6 +279,7 @@ setup_runtime_load_secret_keychain_values() {
       [ -n "$value" ] && printf -v "$key" '%s' "$value"
     fi
   done
+  return 0
 }
 
 setup_runtime_cleanup_secret_keychain() {
