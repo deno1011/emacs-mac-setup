@@ -70,7 +70,12 @@ if [ -n "${GH_USER:-}" ]; then
     _BW_MASTER="$(setup_prompt_secret "Bitwarden master password")"
     [ -n "$_BW_MASTER" ] || setup_fail "Bitwarden master password is required in GitHub mode." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
     setup_runtime_store_bitwarden_master "$_BW_MASTER" || setup_fail "Could not store Bitwarden password in macOS Keychain." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    export BITWARDEN_MASTER_PASSWORD="$_BW_MASTER"
     unset _BW_MASTER
+    if [ -z "$(setup_keychain_get)" ]; then
+      echo "  WARN: macOS Keychain readback returned empty — re-saving."
+      setup_keychain_set "$BITWARDEN_MASTER_PASSWORD" || setup_fail "Could not save Bitwarden password to macOS Keychain (security command failed)." "bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
+    fi
   else
     export BITWARDEN_MASTER_PASSWORD
     if [ -z "$(setup_keychain_get)" ]; then

@@ -60,7 +60,7 @@ setup_fail() {
   echo "After fixing, resume with:"
   echo "  bash ~/emacs-mac-setup/bootstrap.sh stable --resume"
   echo "======================================================================"
-  return 1
+  exit 1
 }
 
 setup_gh_auth_status_stored() {
@@ -123,6 +123,11 @@ setup_runtime_var_get() {
 }
 
 setup_runtime_load() {
+  local prev_master="${BITWARDEN_MASTER_PASSWORD:-}"
+  local prev_github="${GITHUB_TOKEN:-}"
+  local prev_gitcrypt="${GIT_CRYPT_KEY:-}"
+  local prev_gemini="${GEMINI_API_KEY:-}"
+  local prev_anthropic="${ANTHROPIC_API_KEY:-}"
   setup_load_config || return 1
   BITWARDEN_MASTER_PASSWORD=""
   GITHUB_TOKEN=""
@@ -133,8 +138,14 @@ setup_runtime_load() {
   keychain_master="$(setup_keychain_get)"
   if [ -n "$keychain_master" ]; then
     BITWARDEN_MASTER_PASSWORD="$keychain_master"
+  elif [ -n "$prev_master" ]; then
+    BITWARDEN_MASTER_PASSWORD="$prev_master"
   fi
   setup_runtime_load_secret_keychain_values
+  [ -z "${GITHUB_TOKEN:-}" ]      && [ -n "$prev_github" ]    && GITHUB_TOKEN="$prev_github"
+  [ -z "${GIT_CRYPT_KEY:-}" ]     && [ -n "$prev_gitcrypt" ]  && GIT_CRYPT_KEY="$prev_gitcrypt"
+  [ -z "${GEMINI_API_KEY:-}" ]    && [ -n "$prev_gemini" ]    && GEMINI_API_KEY="$prev_gemini"
+  [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -n "$prev_anthropic" ] && ANTHROPIC_API_KEY="$prev_anthropic"
   export GIT_NAME GIT_EMAIL GH_USER GH_REPO
   export BW_ITEM BW_FIELD BW_GH_ITEM BW_ANTHROPIC_ITEM BW_GEMINI_ITEM
   export BW_KEYCHAIN_SERVICE BITWARDEN_EMAIL
@@ -279,9 +290,9 @@ setup_keychain_set() {
   setup_keychain_require_identity || return 1
   account="$(setup_keychain_account)"
   service="$(setup_keychain_service)"
+  [ -n "$account" ] || return 1
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
-  security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null
-  [ "$(setup_keychain_get)" = "$password" ] || return 1
+  security add-generic-password -a "$account" -s "$service" -w "$password" -A 2>/dev/null || return 1
 }
 
 setup_runtime_keychain_service() {
