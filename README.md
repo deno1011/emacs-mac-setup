@@ -130,6 +130,10 @@ Contains: name, email, GitHub username, Bitwarden item names, Docker names.
 Does **not** contain: passwords, API keys, or encryption keys — those stay in Bitwarden.  
 Safe to store in a private GitHub repo without encryption.
 
+`MACOS_KEYCHAIN_ACCOUNT` is the macOS Keychain account name used for the stored
+Bitwarden master-password entry. Legacy configs with `BW_KEYCHAIN_ACCOUNT` are
+still accepted, but new configs should use the clearer macOS-specific name.
+
 **On a new Mac, bootstrap.sh handles the config automatically:**
 
 - **GitHub already authenticated** (e.g. second Mac): pulls `setup-emacs-mac.conf` from private repo → ready immediately

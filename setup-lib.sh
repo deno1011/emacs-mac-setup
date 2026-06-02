@@ -95,7 +95,7 @@ setup_load_config() {
   setup_ensure_config || return 1
   # shellcheck disable=SC1090
   source "$SETUP_CONFIG"
-  BW_KEYCHAIN_ACCOUNT="${BW_KEYCHAIN_ACCOUNT:-$USER}"
+  MACOS_KEYCHAIN_ACCOUNT="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}"
 }
 
 setup_prompt() {
@@ -140,12 +140,12 @@ setup_require_config() {
 }
 
 setup_keychain_get() {
-  local account="${BW_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local account="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
   security find-generic-password -a "$account" -s "$service" -w 2>/dev/null || true
 }
 
 setup_keychain_set() {
-  local password="$1" account="${BW_KEYCHAIN_ACCOUNT:-$USER}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
+  local password="$1" account="${MACOS_KEYCHAIN_ACCOUNT:-${BW_KEYCHAIN_ACCOUNT:-$USER}}" service="${BW_KEYCHAIN_SERVICE:-bitwarden-master}"
   [ -n "$password" ] || return 1
   security delete-generic-password -a "$account" -s "$service" 2>/dev/null || true
   security add-generic-password -a "$account" -s "$service" -w "$password" -A >/dev/null

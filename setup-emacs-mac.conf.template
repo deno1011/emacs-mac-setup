@@ -35,8 +35,9 @@ BW_FIELD=""
 # Example: BW_KEYCHAIN_SERVICE="bitwarden-master"
 BW_KEYCHAIN_SERVICE=""
 
-# Account name in Mac Keychain (defaults to Mac username)
-BW_KEYCHAIN_ACCOUNT="$USER"
+# Account name used for the macOS Keychain entry (defaults to Mac username).
+# Legacy configs may still use BW_KEYCHAIN_ACCOUNT; setup accepts both.
+MACOS_KEYCHAIN_ACCOUNT="$USER"
 
 # Bitwarden login email. Stored in config; the master password is stored only
 # in macOS Keychain under BW_KEYCHAIN_SERVICE.
