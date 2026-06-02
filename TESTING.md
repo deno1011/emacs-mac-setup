@@ -118,7 +118,7 @@ Move cursor onto that heading.
 
 **Expected:**
 - Echo area: "Reminders: syncing…" then "Reminders: N←DONE N→Apple N←Apple N updated"
-- `~/org/reminders.org` is created/updated with all open reminders from Apple.
+- `~/GH_REPO/data/org/reminders.org` is created/updated with all open reminders from Apple.
 - Any new headings in `reminders.org` (no `REMINDER_ID`) were pushed to Apple.
 - Items completed in Apple since last sync are now `DONE` in `reminders.org`.
 
@@ -239,7 +239,7 @@ Remove tag the same way → reminder is unflagged in Apple.
 
 **Action:** Restart Emacs. Wait 3 seconds without typing.
 
-**Expected:** Background pull fires silently. `~/org/reminders-agenda.org` is updated. No error messages.
+**Expected:** Background pull fires silently. `~/GH_REPO/data/org/reminders-agenda.org` is updated. No error messages.
 
 ---
 

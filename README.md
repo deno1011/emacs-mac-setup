@@ -9,7 +9,7 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 **Have these ready before you begin:**
 
 - [ ] GitHub account + personal access token — Settings › Developer settings › Personal access tokens › Classic › scope: `repo`
-- [ ] Bitwarden account *(vault entries are created interactively by `setup-bitwarden.sh` — no manual setup needed)*
+- [ ] Bitwarden account for GitHub mode *(bootstrap installs the app/CLI; the master password is stored in macOS Keychain)*
 - [ ] iCloud Drive enabled *(native variants only)*
 
 **Everything else is automated:**
@@ -17,29 +17,21 @@ Automated Emacs setup for macOS. Four installation variants share a common confi
 | What | How |
 |---|---|
 | Homebrew | Installed by `bootstrap.sh` if missing |
-| GitHub CLI, git-crypt, Bitwarden CLI | Installed by setup scripts |
+| GitHub CLI, git-crypt, Bitwarden CLI + desktop app | Installed by setup scripts |
 | `GH_REPO` (private data repo) | Created by `bootstrap.sh` if it does not exist |
-| Bitwarden vault entries | Created interactively by `setup-bitwarden.sh` |
+| Bitwarden vault entries | Created during the up-front `setup-intake.sh` phase |
+| Gemini API key | Default gptel backend; read from Bitwarden into `~/.emacs.d/secrets.el` |
 | XQuartz | Installed by `setup-emacs-docker-mac.sh` (Docker only) |
 
 **Run in Terminal:**
 
 ```bash
-# 1. Download all scripts — always lands in ~/emacs-mac-setup/
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+# Download bootstrap and install the tested stable branch.
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh stable
 
-# 2. Only needed if GitHub was not yet authenticated during bootstrap:
-bash ~/emacs-mac-setup/fill-config.sh   # interactive guided config fill
-# or manually:
-open ~/emacs-mac-setup/setup-emacs-mac.conf   # set GIT_NAME, GIT_EMAIL, GH_USER, GH_REPO
-
-# 3. Install — pick one variant (all scripts are in ~/emacs-mac-setup/)
-bash ~/emacs-mac-setup/setup-emacs-native-plus-mac.sh       # recommended: native comp, fast LSP (~15 min)
-bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh   # smooth scrolling, trackpad gestures (~20 min)
-bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh            # isolated in Docker + XQuartz
-bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh          # isolated in OrbStack, no XQuartz needed
-
-# 4. Start Emacs
+# Start Emacs after setup completes.
 open "/Applications/Plus Emacs.app"                # Plus
 open "/Applications/Yamamoto Emacs.app"            # Yamamoto
 open "$HOME/Applications/GUI Docker Emacs.app"     # Docker
@@ -79,10 +71,12 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `config.org` | Emacs config index — entry point linking to the three config files below |
 | `core.org` | Base config: UI, font, version control, protected files, auto-commit, startup sync |
 | `org-setup.org` | Org mode: agenda, capture templates, tags, clocking, export, LaTeX |
-| `gptel-setup.org` | AI assistant: gptel backends, tools, claude-executor, workspace context |
-| `fill-config.sh` | Interactive guided config fill |
-| `setup-bitwarden.sh` | Install Bitwarden + CLI, create required vault entries interactively |
-| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` → repo file if decrypted; otherwise fetch from Bitwarden |
+| `gptel-setup.org` | AI assistant loader: installs `gptel-agent-runtime`, selects the default local model, and keeps setup-specific AI defaults small |
+| `setup-intake.sh` | Up-front discovery, config repair, Bitwarden/Keychain unlock, and secret intake |
+| `setup-doctor.sh` | Prints the last failed phase and concrete repair command |
+| `fill-config.sh` | Compatibility wrapper for `setup-intake.sh` |
+| `setup-bitwarden.sh` | Compatibility repair entry for Bitwarden-backed setup |
+| `setup-secrets.sh` | Symlink `~/.emacs.d/secrets.el` -> repo file if decrypted; otherwise read existing keys from Bitwarden |
 
 ### Install
 
@@ -93,7 +87,7 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 | `setup-emacs-native-mac.sh` | Shared implementation called by both native wrappers |
 | `setup-emacs-docker-mac.sh` | Install Emacs in a Docker container (XQuartz) |
 | `setup-emacs-orbstack-mac.sh` | Install Emacs in an OrbStack Linux machine (no XQuartz) |
-| `bw-unlock.sh` | Unlock Bitwarden vault (used internally by setup scripts) |
+| `bw-unlock.sh` | Compatibility Bitwarden API; delegates to `setup-lib.sh` and never prompts for API keys |
 
 ### Uninstall
 
@@ -123,8 +117,8 @@ All scripts are downloaded to `~/emacs-mac-setup/` by `bootstrap.sh` — this is
 - GitHub account with a personal access token (Classic, `repo` scope)
 - Bitwarden account
 
-**Required config fields** (setup aborts if empty when `GH_USER` is set):
-`GIT_NAME` `GIT_EMAIL` `GH_REPO`
+**Required config fields** (setup aborts with a repair command if empty when `GH_USER` is set):
+`GIT_NAME` `GIT_EMAIL` `GH_REPO` `BW_FIELD` `BW_ITEM` `BW_GH_ITEM` `BW_GEMINI_ITEM` `BW_KEYCHAIN_SERVICE` `BW_EMAIL`
 
 Everything else — Homebrew, GitHub CLI, git-crypt, Bitwarden CLI, XQuartz, and all GitHub repos — is installed or created automatically by the setup scripts.
 
@@ -139,9 +133,9 @@ Safe to store in a private GitHub repo without encryption.
 **On a new Mac, bootstrap.sh handles the config automatically:**
 
 - **GitHub already authenticated** (e.g. second Mac): pulls `setup-emacs-mac.conf` from private repo → ready immediately
-- **Brand new Mac**: copies the template → `fill-config.sh` guides you through each field → setup re-pulls latest conf after GitHub auth is established
+- **Brand new Mac**: copies the template -> `setup-intake.sh` asks for missing setup data once, stores the Bitwarden master password in macOS Keychain, then installation continues without scattered follow-up prompts
 
-Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf`. No manual `CONF_REPO` configuration needed.
+Bootstrap auto-detects your private data repo by scanning your GitHub repos for the most recently committed `setup-emacs-mac.conf` when `gh` is already authenticated. No manual `CONF_REPO` configuration needed.
 
 ---
 
@@ -452,295 +446,49 @@ The uninstall scripts read `system-packages.log` and remove all tracked packages
 
 ## Apple Reminders Integration
 
-`apple-reminders.org` provides full bidirectional sync between Emacs/Org and macOS Apple Reminders. It requires no external service — everything runs locally via two macOS mechanisms: **JXA** (JavaScript for Automation via `osascript`) for reading and updating reminders, and **reminders-cli** for adding new ones.
-
----
-
-### How It Works
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Apple Reminders app                       │
-└──────────┬──────────────────────────────────────────────────┘
-           │ JXA (osascript)            ▲ JXA async
-           │ pull on startup, every 5min│ instant on state/priority/
-           ▼                            │ deadline/tag change
-┌──────────────────────────────────────┴────────────────────┐
-│                       reminders.org                         │
-│  (editable, ALL lists, organised by * ListName headings)    │
-└──────────┬─────────────────────────────────────────────────┘
-           │ org-agenda-files           │ on save: push all fields
-           │                            │ C-c r R: full bidirectional sync
-           ▼                            │
-      org-agenda (f12)          any .org file
-      f12 → A (all reminders)   C-c r p: push heading → Apple
-```
-
-**Single file, full control:**
-
-`reminders.org` is the only file you need. It covers **all** Apple Reminders lists, is fully editable, and is used directly by org-agenda. Each list appears as a top-level `* ListName` heading with `** TODO` items underneath.
-
----
-
-### Prerequisites
-
-**reminders-cli** is installed automatically via Homebrew on first use:
-
-```bash
-brew install keith/formulae/reminders-cli
-```
-
-**macOS permissions** — the first time `osascript` accesses Reminders, macOS will prompt for permission. Allow it. If you accidentally denied it: System Settings → Privacy & Security → Automation → Emacs.
-
----
-
-### Field Mapping
-
-| Org | Apple Reminders | Notes |
-|-----|----------------|-------|
-| Heading title | Name | Stripped of `[#A]` / `★` prefixes |
-| `DEADLINE: <date>` | Due Date | ISO date only, no time |
-| Priority `[#A]` | High (1) | |
-| Priority `[#B]` | Medium (5) | |
-| Priority `[#C]` | Low (9) | |
-| No priority | None (0) | |
-| Tag `:flagged:` | Flagged | Only this tag is synced to Apple |
-| Body text | Notes | LOGBOOK drawer stripped |
-| `:REMINDER_ID:` | Internal UUID | **Never edit manually** |
-| `:REMINDER_LIST:` | List name | **Never edit manually** |
-
-Org-only features that are **never pushed to Apple**: `SCHEDULED`, `LOGBOOK`/clocking, `NEXT`/`WAITING` states, all tags except `:flagged:`, sub-tasks, other properties.
-
----
-
-### Configuration
-
-All variables can be set in your config before `apple-reminders.org` loads:
-
-```elisp
-;; Which list to use for reminders.org sync (nil = auto-detect first list)
-(setq my/apple-reminders-sync-list "Work")
-
-;; Path to the bidirectional sync org file
-(setq my/apple-reminders-sync-file "~/org/reminders.org")
-
-;; Optional: separate auto-generated agenda file (nil = use reminders.org directly)
-(setq my/apple-reminders-agenda-file nil)
-
-;; Seconds between background pulls from Apple (0 to disable)
-(setq my/apple-reminders-auto-sync-interval 300)
-
-;; Pin a specific list as the default for add/push (nil = auto-detect)
-(setq my/apple-reminders-default-list nil)
-```
-
----
-
-### Key Bindings
-
-#### Global (any buffer)
-
-| Key | Command | What it does |
-|-----|---------|-------------|
-| `C-c r d` | `my/apple-reminders-dashboard` | Open the *Apple Reminders* dashboard |
-| `C-c r l` | `my/apple-reminders-show-lists` | List all Reminders lists in the echo area |
-| `C-c r a` | `my/apple-reminders-add` | Add a new reminder interactively |
-
-#### Org buffers only
-
-| Key | Command | What it does |
-|-----|---------|-------------|
-| `C-c r p` | `my/org-heading-to-reminder` | Push heading at point to Apple, stamp `REMINDER_ID` |
-| `C-c r R` | `my/apple-reminders-sync` | Full bidirectional sync: `reminders.org` ↔ Apple |
-
-#### Inside `*Apple Reminders*` dashboard
-
-| Key | What it does |
-|-----|-------------|
-| `g` | Refresh — fetch all data fresh from Apple |
-| `t` / `C-c C-t` | Mark reminder at point as complete |
-| `e` | Jump to this reminder in `reminders.org` to edit |
-| `h` | Toggle show/hide items completed this session |
-| `q` | Quit / close dashboard |
-
-#### Inside `reminders.org` — standard org commands, auto-sync
-
-| Key | What it does | When Apple is updated |
-|-----|-------------|----------------------|
-| `C-c ,` | Set/change priority | Immediately (advice hook) |
-| `C-c C-d` | Set/change deadline | Immediately (advice hook) |
-| `C-c C-q` | Set/change tags (`:flagged:`) | Immediately (advice hook) |
-| `C-c C-t` | Change TODO state | Immediately (state-change hook) |
-| `S-↑` / `S-↓` | Cycle priority | Immediately (advice hook) |
-| Edit title or body, then `C-x C-s` | Title and notes | On save |
-
-#### Org capture
-
-| Key | What it does |
-|-----|-------------|
-| `C-c c A` | Capture a new reminder — filed to `reminders.org`, pushed to Apple on save |
-
----
-
-### Use Cases
-
-#### 1. Browse all reminders
-
-`C-c r d` opens the *Apple Reminders* dashboard. All lists appear as top-level org headings, reminders as subheadings. The first open always uses cached data; press `g` to fetch fresh data from Apple.
-
-```
-* Inbox
-** TODO [#A] Call dentist
-** TODO Buy groceries
-* Work
-** TODO ★ Submit report
-   DEADLINE: <2025-06-30>
-```
-
-#### 2. Complete a reminder from Emacs
-
-In the dashboard, move to any `** TODO` heading and press `t`. The item immediately changes to `DONE` in the buffer and is marked complete in Apple Reminders (async, within seconds). Press `h` to show/hide items completed in this session.
-
-#### 3. Edit a reminder — via dashboard
-
-Press `e` on any dashboard item to jump to that reminder's heading in `reminders.org`. From there, use standard org commands to edit. All changes push to Apple automatically:
-
-- `C-c ,` → priority change → Apple updated immediately
-- `C-c C-d` → deadline change → Apple updated immediately
-- Edit the title line → `C-x C-s` → Apple updated on save
-
-#### 4. Add a quick reminder
-
-`C-c r a` prompts for a title, list (auto-detected default), and optional due date. The reminder is created in Apple immediately via reminders-cli.
-
-#### 5. Push an existing org heading to Apple
-
-Any `* TODO` heading in any org file can be pushed to Apple:
-
-1. Move cursor to the heading
-2. `C-c r p`
-3. The heading is created in Apple Reminders, and `REMINDER_ID` + `REMINDER_LIST` properties are stamped back onto the org heading
-
-After the push, standard org commands (`C-c ,`, `C-c C-d`, `C-c C-q`, `C-c C-t`) on that heading will auto-sync to Apple — from any org file, not just `reminders.org`.
-
-**With `C-u C-c r p`:** prompted to choose which list to push to.
-
-#### 6. Capture a reminder from anywhere
-
-`C-c c A` opens an org-capture template that files to `reminders.org`. Save with `C-c C-c`. The item is pushed to Apple on save.
-
-#### 7. Full bidirectional sync
-
-`C-c r R` (in any org buffer) runs a complete sync:
-
-| Situation | Result |
-|-----------|--------|
-| Org item with no `REMINDER_ID` | Created in Apple, `REMINDER_ID` stamped back |
-| Org item open, Apple item open | Org values pushed to Apple (org wins) |
-| Org `DONE`/`CANCELLED`, Apple still open | Apple marked complete |
-| Org open, Apple completed or missing | Org heading marked `DONE` |
-| Apple open, not yet in org | Pulled as new `** TODO` under `* ListName` heading |
-
-#### 8. View reminders in the org agenda
-
-`reminders.org` is registered in `org-agenda-files` automatically. Reminders appear in `f12` (standard org agenda). For a dedicated all-reminders view: `f12` → `A`.
-
-#### 9. Automatic background sync
-
-A background pull runs 3 seconds after Emacs starts (idle timer) and then every 5 minutes. It:
-
-1. Fetches all open reminders from Apple (all lists)
-2. Refreshes the dashboard cache → press `g` to re-render with latest data
-3. In `reminders.org`: marks Apple-completed items as `DONE`, adds any new Apple items not yet in org under their `* ListName` heading
-
-Background pull does **not** overwrite fields (title, priority, deadline) for existing items — use `C-c r R` for a full push-from-org sync.
-
----
-
-### File Structure
-
-**`reminders.org`** (editable, all lists — the only file):
-```org
-#+TITLE: Reminders
-#+TODO: TODO NEXT WAITING | DONE CANCELLED
-
-* Inbox
-** TODO [#A] Call Alice
-   DEADLINE: <2025-06-15>
-   :PROPERTIES:
-   :REMINDER_ID:   x1y2z3-...
-   :REMINDER_LIST: Inbox
-   :END:
-
-** TODO Buy groceries  :flagged:
-   :PROPERTIES:
-   :REMINDER_ID:   a4b5c6-...
-   :REMINDER_LIST: Inbox
-   :END:
-
-* Work
-** TODO Prepare slides for Monday
-   :PROPERTIES:
-   :REMINDER_ID:   d7e8f9-...
-   :REMINDER_LIST: Work
-   :END:
-```
-
-Each `* ListName` heading corresponds to one Apple Reminders list. Items are `** TODO` under their list heading. The file is editable — all standard org commands sync back to Apple automatically.
-
----
-
-### Troubleshooting
-
-**Duplicate reminders in Apple**
-Caused by `REMINDER_ID` not being stamped back (JXA timing issue on first create). Fixed in v1.4.3: the create script now uses a before/after ID diff instead of querying by name. To clean up existing duplicates: delete one copy in the Apple Reminders app, then run `C-c r R`.
-
-**"Non-existent agenda file" prompt from org-agenda**
-Happens if ERT tests were run in the live Emacs session, leaving a stale temp path in `org-agenda-custom-commands`. Fix:
-```elisp
-M-: (setq org-agenda-custom-commands (assoc-delete-all "A" org-agenda-custom-commands)) RET
-```
-Then reload `apple-reminders.el`.
-
-**`reminders-agenda.org` still in agenda (upgrading from v1.5 or earlier)**
-Remove the stale file from `org-agenda-files`:
-```elisp
-M-: (setq org-agenda-files (delete (expand-file-name "~/org/reminders-agenda.org") org-agenda-files)) RET
-```
-You can also delete `~/org/reminders-agenda.org` — it is no longer used.
-
-**Item pushed via `C-c r p` reappears in `reminders.org`**
-The background pull scans all open org buffers to avoid re-pulling items already tracked elsewhere. If the original file was closed when the pull ran, the item will be added to `reminders.org`. Solution: delete the duplicate from `reminders.org` and keep the original in your other file.
-
-**reminders-cli not found**
-```bash
-brew install keith/formulae/reminders-cli
-```
-
-**Emacs cannot access Reminders (JXA fails silently)**
-System Settings → Privacy & Security → Automation → Emacs → enable Reminders.
+Bidirectional sync between Emacs/Org and macOS Apple Reminders lives in its
+own package, **[`org-apple-reminders`](https://github.com/deno1011/org-apple-reminders)**.
+It is installed automatically by `org-apple-reminders-setup.org` on first
+Emacs start (via `package-vc-install` from the package's `main` branch) and
+silently updated in the background each Emacs startup.
+
+For full documentation — features, key bindings (`C-c r p`, `C-c r m`,
+`C-c r d`, `C-c r D`, `C-c r R`, `C-c r i`, …), configuration, the
+`C-c c A` capture template, the two-timestamp conflict-resolution model,
+and troubleshooting — see the
+[`org-apple-reminders` README](https://github.com/deno1011/org-apple-reminders#readme).
+
+The package runs entirely via JXA (`osascript`); no external CLI tools are
+required. `C-c r R` triggers a full bidirectional sync.
 
 ---
 
 ## AI Integration
 
-The configuration includes a fully wired AI assistant inside Emacs via **gptel**, extended with a custom **claude-executor** layer that makes AI responses executable — not just readable.
+The configuration includes a local-first AI assistant inside Emacs via
+**gptel** and the standalone
+[`gptel-agent-runtime`](https://github.com/deno1011/gptel-agent-runtime)
+package. The setup repo keeps only installation and local defaults; the runtime
+package owns tools, directives, memory, tracing, routing, and agent behavior.
 
 ### Backends
 
-Multiple AI backends are pre-configured and switchable at any time (`M-x gptel-send` or `C-c RET`):
+Multiple AI backends are pre-configured and switchable with `C-c M`:
 
 | Backend | Models |
 |---|---|
+| **Gemini** | Gemini 2.0 Flash is the startup default when `GEMINI_API_KEY` is available |
+| **Ollama** | Optional local backend; configured automatically when Ollama is installed |
 | **Claude** (Anthropic) | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
 | **ChatGPT** (OpenAI) | GPT-4o, GPT-4o-mini, o3-mini, o4-mini |
 | **LM Studio** | Any local model loaded in LM Studio |
 
 API keys are stored in Bitwarden and loaded at startup via `secrets.el` — never hardcoded.
 
-### Executable Responses (claude-executor)
+### Executable Responses and Tools
 
-Claude can act on Emacs state silently via gptel tools, or produce visible code blocks that are automatically executed:
+The assistant can act on Emacs state silently via gptel tools, or produce visible
+Org Babel code blocks that are rendered inline:
 
 | Method | What happens |
 |---|---|
@@ -750,7 +498,9 @@ Claude can act on Emacs state silently via gptel tools, or produce visible code 
 | `` #+begin_src python/R/gnuplot :file name.png `` | Executed and result displayed as an inline image |
 | `` #+begin_src sh :results output `` | Shell command executed, output inserted |
 
-This means you can ask Claude to "add a TODO to inbox.org", "plot sin(x) from 0 to 2π", or "set the font size to 14" and it happens directly — no copy-pasting.
+This means you can ask the assistant to "add a TODO to inbox.org", "plot sin(x)
+from 0 to 2 pi", or "set the font size to 14" and it can do the work directly,
+subject to the runtime safety policy.
 
 ### Graph and Diagram Generation
 
@@ -770,7 +520,7 @@ All diagrams appear inline in the org buffer after Claude responds — no extern
 
 ### Org-mode Tools
 
-Claude has access to live Emacs state via gptel tools:
+The assistant has access to live Emacs state via gptel tools:
 
 | Tool | What it does |
 |---|---|
@@ -792,15 +542,21 @@ Claude has access to live Emacs state via gptel tools:
 | `get_buffer_content` | Returns the content of an open buffer |
 | `org_export` | Exports an org file to PDF, HTML, or other formats |
 
-`run_elisp` is the primary tool for silent Emacs actions — Claude calls it instead of writing `:AUTORUN` code blocks when no visible code is needed. Combined with the other tools, Claude can query your tasks, reason about them, and update your org files in a single response.
+`run_elisp` is the primary tool for silent Emacs actions. Combined with the
+other tools, the assistant can query tasks, reason about them, and update org
+files in one interaction when policy allows it.
 
 ### LaTeX in Responses
 
-LaTeX fragments in Claude responses are rendered automatically as math images in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
+LaTeX fragments in assistant responses are rendered automatically as math images
+in the org buffer after each reply — no manual `M-x org-latex-preview` needed.
 
 ### Local Models
 
-LM Studio (or any OpenAI-compatible local server) can be selected as backend. The same executor runs on local model responses, but local models follow the custom block conventions less reliably than Claude — graph generation and `:AUTORUN` work best with Claude.
+Gemini is the default startup backend because it works on fresh Macs without a
+local model download. Ollama remains available as an optional local backend:
+install Ollama and pull a model when you want fully local inference. LM Studio
+or any OpenAI-compatible local server can still be selected as a backend.
 
 ---
 
@@ -868,28 +624,33 @@ This section is for the repo owner testing changes before promoting them to `sta
 ### Reinstall from `stable` (new-user path)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh stable
 ```
 
-Bootstrap downloads all scripts from `stable`, configures Bitwarden + GitHub auth, then prompts you to run a setup script.
+Bootstrap downloads all scripts from `stable`, runs the up-front intake,
+configures Bitwarden + GitHub auth when requested, installs emacs-plus, and
+prepares Gemini as the default gptel backend when a Gemini key is available.
 
 ### Reinstall from `main` (dev/testing path)
 
-Bootstrap always pulls `stable` scripts — use it for first-time machine setup only. For testing `main` changes, work with the local clone directly:
+Each branch's `!STARTHERE.md` should pass its own branch to `bootstrap.sh`.
+`bootstrap.sh` still defaults to `stable` when no branch is provided, but branch
+testing should be explicit:
 
 ```bash
-# Refresh scripts from main
-cd /tmp/emacs-mac-setup && git pull origin main
-
-# Run setup directly (brew / gh / Bitwarden already installed)
-bash setup-emacs-native-plus-mac.sh
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh main
 ```
 
-Or from scratch on a fresh machine:
+Any feature branch can be tested the same way:
 
 ```bash
-git clone -b main https://github.com/deno1011/emacs-mac-setup.git /tmp/emacs-mac-setup
-bash /tmp/emacs-mac-setup/setup-emacs-native-plus-mac.sh
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/feature/my-branch/bootstrap.sh -o bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh feature/my-branch
 ```
 
 ### Session tags and rollback

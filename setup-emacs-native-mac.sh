@@ -47,19 +47,11 @@ if [ ! -f "$CONFIG_FILE" ]; then
   exit 1
 fi
 source "$CONFIG_FILE"
-source "$SCRIPT_DIR/bw-unlock.sh"
+source "$SCRIPT_DIR/setup-lib.sh"
 
 # --- Validate required fields (only when GitHub is configured) ---
 if [ -n "$GH_USER" ]; then
-  MISSING=()
-  [ -z "$GIT_NAME" ]  && MISSING+=("GIT_NAME")
-  [ -z "$GIT_EMAIL" ] && MISSING+=("GIT_EMAIL")
-  [ -z "$GH_REPO" ]   && MISSING+=("GH_REPO")
-  if [ ${#MISSING[@]} -gt 0 ]; then
-    echo "ERROR: GH_USER is set but the following fields are missing in $CONFIG_FILE:"
-    for F in "${MISSING[@]}"; do echo "  $F"; done
-    exit 1
-  fi
+  setup_require_config GIT_NAME GIT_EMAIL GH_REPO BW_FIELD BW_ITEM BW_GH_ITEM BW_GEMINI_ITEM BW_KEYCHAIN_SERVICE BW_EMAIL
 fi
 
 # --- Set paths ---
@@ -86,11 +78,8 @@ done
 
 # --- Unlock Bitwarden upfront (GitHub mode only) ---
 if [ -n "$GH_USER" ]; then
-  if ! command -v bw &>/dev/null; then
-    echo "==> Installing Bitwarden CLI..."
-    brew install bitwarden-cli
-  fi
-  bw_ensure_session || exit 1
+  setup_install_bitwarden_tools
+  setup_bw_unlock_with_keychain || exit 1
 fi
 
 # --- Tools (GitHub mode only) ---
@@ -99,6 +88,27 @@ if [ -n "$GH_USER" ]; then
   command -v gh &>/dev/null       && skip "GitHub CLI"     || { echo "==> Installing GitHub CLI...";    brew install gh; }
   command -v git-crypt &>/dev/null && skip "git-crypt"     || { echo "==> Installing git-crypt...";     brew install git-crypt; }
 fi
+
+# --- Local AI runtime (Ollama + default model) ---
+_truthy() {
+  case "$1" in
+    1|yes|YES|true|TRUE|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+unset -f _truthy
+
+# Note: Ollama is no longer installed by default. The default gptel
+# backend is Gemini 2.0 Flash (free tier — see secrets.el block below
+# for the BW-mediated key bootstrap). Local-model fans can still
+# install Ollama manually:
+#
+#   brew install ollama && ollama pull qwen2.5-coder:7b && ollama serve &
+#
+# The Ollama backend remains registered in gptel-setup.org and
+# auto-activates whenever `executable-find "ollama"' succeeds, so no
+# config changes are needed if you opt in.
 
 # --- Install Emacs ---
 brew unlink "$_EMACS_OTHER_PKG" 2>/dev/null || true
@@ -153,7 +163,7 @@ if [ -n "$GH_USER" ]; then
     skip "GitHub CLI auth"
   else
     echo "==> Authenticating GitHub CLI with token from Bitwarden..."
-    GH_TOKEN=$(bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
+    GH_TOKEN=$(setup_bw_get_field "$BW_GH_ITEM" "$BW_FIELD") || true
     if [ -n "$GH_TOKEN" ]; then
       if echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null; then
         gh auth setup-git
@@ -211,24 +221,12 @@ if [ -n "$GH_USER" ]; then
     skip "iCloud repo"
     git -C "$ICLOUD_REPO_PATH" remote set-url origin "https://github.com/${GH_USER}/${GH_REPO}.git"
     git -C "$ICLOUD_REPO_PATH" pull origin main || true
-    # Modular config files are setup-managed — always overwrite from SCRIPT_DIR
-    _CF_CHANGED=false
-    for _CF in core.org org-setup.org gptel-setup.org; do
-      if [ -f "$SCRIPT_DIR/$_CF" ]; then
-        if ! diff -q "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF" &>/dev/null; then
-          cp "$SCRIPT_DIR/$_CF" "$ICLOUD_REPO_PATH/config/$_CF"
-          git -C "$ICLOUD_REPO_PATH" add "config/$_CF"
-          echo "==> $_CF updated in repo."
-          _CF_CHANGED=true
-        fi
-      fi
-    done
-    if [ "$_CF_CHANGED" = true ]; then
-      git -C "$ICLOUD_REPO_PATH" -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" \
-        commit -m "chore: update modular config files" 2>/dev/null || true
-      git -C "$ICLOUD_REPO_PATH" push origin main 2>/dev/null || true
-    fi
-    unset _CF _CF_CHANGED
+    # Config files (config.org + the split files) self-bootstrap from
+    # emacs-mac-setup/stable on first Emacs run via init.el's
+    # my/ensure-config-file-from-url, and via config.org's own
+    # my/ensure-config-file for the split files. No cp from this
+    # script needed — keeps the setup script narrow and the bootstrap
+    # logic in one place.
   else
     echo "==> Cloning repo to iCloud..."
     if [ ! -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ]; then
@@ -239,13 +237,9 @@ if [ -n "$GH_USER" ]; then
     git clone "https://github.com/${GH_USER}/${GH_REPO}.git" "$ICLOUD_REPO_PATH"
 
     mkdir -p "$ICLOUD_REPO_PATH/config" "$ICLOUD_REPO_PATH/data/org"
-    if [ ! -f "$ICLOUD_REPO_PATH/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-      cp "$SCRIPT_DIR/config.org"      "$ICLOUD_REPO_PATH/config/config.org"
-      cp "$SCRIPT_DIR/core.org"        "$ICLOUD_REPO_PATH/config/core.org"        2>/dev/null || true
-      cp "$SCRIPT_DIR/org-setup.org"   "$ICLOUD_REPO_PATH/config/org-setup.org"   2>/dev/null || true
-      cp "$SCRIPT_DIR/gptel-setup.org" "$ICLOUD_REPO_PATH/config/gptel-setup.org" 2>/dev/null || true
-      echo "    Config files copied to config/ subfolder."
-    fi
+    # config.org and the split files (core/org-setup/gptel-setup/wiki-setup/
+    # org-apple-reminders-setup) self-bootstrap from emacs-mac-setup/stable
+    # on first Emacs run via init.el. No cp from SCRIPT_DIR needed.
 
     git -C "$ICLOUD_REPO_PATH" config user.email "$GIT_EMAIL"
     git -C "$ICLOUD_REPO_PATH" config user.name "$GIT_NAME"
@@ -270,7 +264,7 @@ HOOKEOF
   [ -n "$_FIRST_ORG" ] && file "$_FIRST_ORG" | grep -q "data" && _FILES_ENCRYPTED=true
 
   if [ "$_GC_INITIALIZED" = false ] || [ "$_FILES_ENCRYPTED" = true ]; then
-    GC_KEY=$(bw_get_field "$BW_ITEM" "$BW_FIELD") || true
+    GC_KEY=$(setup_bw_get_field "$BW_ITEM" "$BW_FIELD") || true
     if [ -n "$GC_KEY" ]; then
       if echo "$GC_KEY" | tr -d '[:space:]' | python3 -c "import sys,base64; data=sys.stdin.read().strip(); sys.stdout.buffer.write(base64.b64decode(data + '=='))" > /tmp/gckey 2>/dev/null; then
         if [ "$_GC_INITIALIZED" = false ]; then
@@ -317,26 +311,16 @@ HOOKEOF
   git -C "$ICLOUD_REPO_PATH" commit -m "chore: update setup-emacs-mac.conf" \
     -c user.email="$GIT_EMAIL" -c user.name="$GIT_NAME" 2>/dev/null || true
 
-# --- Local mode: config.org from scripts folder ---
+# --- Local mode: config.org self-bootstraps on first Emacs run -----
 else
   if [ ! -d "$EMACS_CONFIG_DIR" ]; then
     mkdir -p "$EMACS_CONFIG_DIR/config" "$EMACS_CONFIG_DIR/data/org"
     echo "==> ~/${GH_REPO}/ created."
   fi
-  if [ ! -f "$EMACS_CONFIG_DIR/config/config.org" ] && [ -f "$SCRIPT_DIR/config.org" ]; then
-    cp "$SCRIPT_DIR/config.org" "$EMACS_CONFIG_DIR/config/config.org"
-    echo "==> config.org copied to ~/${GH_REPO}/config/."
-  elif [ -f "$EMACS_CONFIG_DIR/config/config.org" ]; then
-    skip "config.org (user-managed — not overwritten)"
-  else
-    echo "WARN: No config.org found — Emacs will start with basic setup."
-  fi
-  # Modular files are setup-managed — always update like init.el
-  for _CF in core.org org-setup.org gptel-setup.org; do
-    [ -f "$SCRIPT_DIR/$_CF" ] && cp "$SCRIPT_DIR/$_CF" "$EMACS_CONFIG_DIR/config/$_CF" \
-      && echo "==> $_CF updated."
-  done
-  unset _CF
+  # config.org and the split files self-bootstrap from emacs-mac-setup/
+  # stable on first Emacs run via init.el's my/ensure-config-file-from-url.
+  # No cp from SCRIPT_DIR needed — single source of truth for the
+  # bootstrap logic lives in init.el.
 fi
 
 echo "==> Populating ~/.emacs.d/config-readonly/..."
@@ -355,19 +339,33 @@ else
 fi
 
 # --- secrets.el ---
+# API keys are read from Bitwarden only. Missing keys are repaired through the
+# up-front intake wizard, keeping the installer non-interactive after intake.
 if [ -f "$EMACS_SECRETS" ]; then
   skip "secrets.el"
 else
   mkdir -p "$HOME/.emacs.d"
-  if [ -n "$GH_USER" ] && [ -n "$BW_SESSION" ]; then
-    echo "==> Fetching Anthropic API key from Bitwarden..."
-    ANTHROPIC_API_KEY=$(bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
+  if [ -n "$GH_USER" ]; then
+    echo ";; secrets.el — API keys (not tracked in git)" > "$EMACS_SECRETS"
+
+    ANTHROPIC_API_KEY=$(setup_bw_get_field "$BW_ANTHROPIC_ITEM" "$BW_FIELD") || true
     if [ -n "$ANTHROPIC_API_KEY" ]; then
-      printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" > "$EMACS_SECRETS"
-      echo "    secrets.el written with API key."
+      printf '(setenv "ANTHROPIC_API_KEY" "%s")\n' "$ANTHROPIC_API_KEY" >> "$EMACS_SECRETS"
     else
-      echo "WARN: Anthropic API key not found — empty secrets.el created."
-      echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"
+      echo ";; ANTHROPIC_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
+    fi
+
+    GEMINI_API_KEY=$(setup_bw_get_field "$BW_GEMINI_ITEM" "$BW_FIELD") || true
+    if [ -n "$GEMINI_API_KEY" ]; then
+      printf '(setenv "GEMINI_API_KEY" "%s")\n' "$GEMINI_API_KEY" >> "$EMACS_SECRETS"
+    else
+      echo ";; GEMINI_API_KEY: run setup-intake.sh --repair bitwarden" >> "$EMACS_SECRETS"
+    fi
+
+    echo "==> secrets.el written."
+    if [ -z "$GEMINI_API_KEY" ] || [ -z "$ANTHROPIC_API_KEY" ]; then
+      echo "    Missing API keys can be added with:"
+      echo "      bash ~/emacs-mac-setup/setup-intake.sh --repair bitwarden"
     fi
   else
     echo ";; secrets.el — add API keys here" > "$EMACS_SECRETS"

@@ -1,23 +1,28 @@
 # Start Here
 
-> A one-command setup that turns a fresh Mac into a fully configured Emacs environment — org-mode, LSP, LaTeX, graphs, and Claude AI built in, synced to iCloud and ready in under 20 minutes.
+> A one-command setup that turns a fresh Mac into a fully configured Emacs environment — org-mode, LSP, LaTeX, graphs, and local gptel agent support built in, synced to iCloud and ready to use.
+
+## Open Terminal and Run
 
 Open **Terminal** and run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh)
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh | /bin/bash -s -- stable
 ```
 
-Bootstrap guides you through config and Bitwarden setup, then **automatically starts the emacs-plus install** after a 5-second countdown.
+For development testing, use the same pattern with another branch:
 
-> To install a different variant instead, **Ctrl-C** during the countdown — the other variants are shown on screen before it starts:
-> ```
-> bash ~/emacs-mac-setup/setup-emacs-native-yamamoto-mac.sh  # smooth rendering, trackpad
-> bash ~/emacs-mac-setup/setup-emacs-docker-mac.sh           # isolated in Docker + XQuartz
-> bash ~/emacs-mac-setup/setup-emacs-orbstack-mac.sh         # isolated in OrbStack, no XQuartz
-> ```
+```bash
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh | /bin/bash -s -- main
+```
 
-All scripts land in `~/emacs-mac-setup/` — run any of them at any time without re-running bootstrap.  
+Bootstrap starts with one intake phase for config, Bitwarden/Keychain, and API
+keys, then continues with installation. If something fails, run:
+
+```bash
+bash ~/emacs-mac-setup/setup-doctor.sh
+```
+
 See [README.md](README.md) for full documentation.
 
 ---
@@ -27,8 +32,11 @@ See [README.md](README.md) for full documentation.
 | Software | When | Notes |
 |---|---|---|
 | Homebrew | always | installed if not present; requires sudo once |
-| All setup scripts | always | downloaded to `~/emacs-mac-setup/` |
+| All setup scripts | always | downloaded to the current folder |
 | `gh` (GitHub CLI) | GitHub mode | needed to access your private config repo |
-| `bitwarden-cli` | GitHub mode | used to fetch your GitHub token and API keys |
+| `bitwarden-cli` + Bitwarden app | GitHub mode | used to store/fetch your GitHub token, git-crypt key, and API keys |
+| Gemini API key | default gptel mode | read from Bitwarden into `~/.emacs.d/secrets.el`; Ollama remains optional |
 
-> **GitHub mode** is active when `GH_USER` is set in your config file (filled in interactively during bootstrap).
+> **GitHub mode** is active when bootstrap finds or you enter a GitHub user and your config file has `GH_USER` set.
+
+After bootstrap completes, it starts the emacs-plus setup automatically.

@@ -1,0 +1,15 @@
+#+TITLE: Someday / Maybe
+#+FILETAGS: :someday:
+#+STARTUP: overview
+
+Things you might want to do at some point but haven't committed
+to yet. Review periodically (monthly is a common cadence):
+
+- Still interesting? Leave it.
+- Ready to commit? Promote to a project (gtd/projects.org) or a
+  next action (gtd/next.org) with an actual NEXT/TODO.
+- No longer interesting? Drop it.
+
+The =:someday:= file-tag means items here don't pollute daily
+action views. They surface only via =C-c a S= when you explicitly
+ask to see them.

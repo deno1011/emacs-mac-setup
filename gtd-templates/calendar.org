@@ -1,0 +1,6 @@
+#+TITLE: Calendar
+#+STARTUP: overview
+
+Hard appointments only — fixed-time commitments. Items here should
+have an Org timestamp or =SCHEDULED:= with a specific time. Soft
+to-dos go in gtd/next.org; date-scheduled items in gtd/tickler.org.

@@ -38,6 +38,10 @@ BW_KEYCHAIN_SERVICE=""
 # Account name in Mac Keychain (defaults to Mac username)
 BW_KEYCHAIN_ACCOUNT="$USER"
 
+# Bitwarden login email. Stored in config; the master password is stored only
+# in macOS Keychain under BW_KEYCHAIN_SERVICE.
+BW_EMAIL=""
+
 # Name of the Bitwarden item containing the GitHub CLI token (for gh auth)
 # Example: BW_GH_ITEM="github-cli-token"
 BW_GH_ITEM=""
@@ -45,6 +49,24 @@ BW_GH_ITEM=""
 # Name of the Bitwarden item containing the Anthropic API key (for gptel)
 # Example: BW_ANTHROPIC_ITEM="anthropic-api-key"
 BW_ANTHROPIC_ITEM=""
+
+# Name of the Bitwarden item containing the Gemini API key (free tier —
+# default gptel model is Gemini 2.0 Flash if this key is available).
+# Get a free key at https://aistudio.google.com/apikey
+# Example: BW_GEMINI_ITEM="gemini-api-key"
+BW_GEMINI_ITEM=""
+
+# Optional local AI setup.
+# Gemini 2.0 Flash is the standard gptel default. Ollama remains available as
+# an opt-in local backend: set LOCAL_AI_PROVIDER="ollama" and the toggles below
+# to "true" if you want setup to install/start Ollama and pull a model.
+LOCAL_AI_PROVIDER="gemini"
+LOCAL_AI_INSTALL_OLLAMA="false"
+LOCAL_AI_START_OLLAMA="false"
+LOCAL_AI_PULL_MODEL="false"
+LOCAL_AI_DEFAULT_MODEL="qwen2.5-coder:7b"
+# Optional custom model storage. Leave empty for Ollama's default location.
+OLLAMA_MODELS_DIR=""
 
 # Name of the local Docker image (only relevant for the Docker setup)
 # Example: DOCKER_IMAGE="emacs-dev"

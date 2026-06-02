@@ -12,9 +12,12 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
   :config
   (setq org-directory (expand-file-name "data/org/" my/data-dir)
         org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        org-agenda-files (append (list (expand-file-name "data/org/" my/data-dir))
-                                 (when (eq system-type 'darwin)
-                                   (list (expand-file-name "~/org/reminders.org"))))
+        ;; org-agenda-files is set later by the tag-driven scanner —
+        ;; see the "Agenda — Tag-Driven File Discovery" section. This
+        ;; placeholder is overridden by my/refresh-agenda-files at the
+        ;; end of this file's load, and again by gtd-config.el if it
+        ;; appends specific files.
+        org-agenda-files (list (expand-file-name "data/org/" my/data-dir))
         org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
@@ -124,7 +127,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
     (widen)))
 #+end_src
 
-* TODO States
 #+begin_src emacs-lisp
 (setq org-todo-keywords
       '((sequence "TODO(t)" "NEXT(n)" "|" "DONE(d@/!)")
@@ -152,7 +154,8 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (global-set-key (kbd "C-c l") 'org-store-link)
 #+end_src
 
-* TODO State Tag Triggers
+* State Tag Triggers
+** TODO Not sure what needs to be checked here but probably if those make sense
 #+begin_src emacs-lisp
 (setq org-todo-state-tags-triggers
       '(("CANCELLED" ("CANCELLED" . t))
@@ -163,7 +166,6 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
         ("NEXT"      ("WAITING") ("CANCELLED") ("HOLD"))
         ("DONE"      ("WAITING") ("CANCELLED") ("HOLD"))))
 #+end_src
-
 * Capture Templates
 #+begin_src emacs-lisp
 (let ((org-d (expand-file-name "data/org/" my/data-dir)))
@@ -522,6 +524,202 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 (defun bh/org-auto-exclude-function (tag)
   (and (cond ((string= tag "hold") t)) (concat "-" tag)))
 (setq org-agenda-auto-exclude-function 'bh/org-auto-exclude-function)
+#+end_src
+
+* Agenda — Tag-Driven File Discovery and Categorization
+
+Generic infrastructure that applies on every install (with or without
+=data/org/gtd-config.el=). The scanner walks =~/emacs/= recursively for
+=.org= files, excluding only structural filesystem noise. The
+per-category agenda commands then surface content via the FILETAGS
+each file declares:
+
+| Tag         | What it means                                  | Agenda key |
+|-------------+------------------------------------------------+------------|
+| =:someday:= | Maybe-someday, no commitment                   | =C-c a S=  |
+| =:idea:=    | Backlog / wishlist                             | =C-c a I=  |
+| =:plan:=    | Worked-out plan, ready to schedule             | =C-c a P=  |
+| =:area:=    | Area of focus (20K ft)                         | =C-c a A=  |
+| =:goal:=    | Concrete 1–2 year objective (30K ft)           | =C-c a G=  |
+| =:life:=    | Values / direction (40–50K ft)                 | =C-c a L=  |
+
+Items without a category tag remain GTD action material and surface
+in the default views.
+
+#+begin_src emacs-lisp
+(defvar my/-agenda-scan-roots
+  '("data/org/" "wiki/")
+  "Subdirectories of `my/data-dir' scanned for agenda-relevant .org files.
+Limited on purpose — including the whole ~/emacs/ tree (config/, top-level,
+etc.) bloated the dispatcher to ~20-second initialization. Add a dir
+here and call M-x my/refresh-agenda-files if you need more coverage.
+
+=wiki/= covers any sub-domain (wiki/emacs/, wiki/work/, wiki/research/,
+etc.). New sub-wikis are picked up automatically.")
+
+(defvar my/-agenda-path-excludes
+  '("/\\.git/" "/archive/" "/elpa/" "/#[^/]+#\\'" "/\\.#")
+  "Path regexps universally excluded from the scan within each root.")
+
+(defun my/-agenda-files-scanned ()
+  "Return all .org files in `my/-agenda-scan-roots' (relative to
+`my/data-dir') except those matching `my/-agenda-path-excludes'.
+The directory walk also skips .git/, elpa/, archive/ entirely for
+speed via the directory-files-recursively predicate."
+  (let (result)
+    (dolist (rel my/-agenda-scan-roots)
+      (let ((root (expand-file-name rel my/data-dir)))
+        (when (file-directory-p root)
+          (dolist (f (directory-files-recursively
+                      root "\\.org\\'" nil
+                      (lambda (subdir)
+                        (not (string-match-p
+                              "/\\(\\.git\\|elpa\\|archive\\|node_modules\\)\\'"
+                              subdir)))))
+            (unless (cl-some (lambda (re) (string-match-p re f))
+                             my/-agenda-path-excludes)
+              (push f result))))))
+    (nreverse result)))
+
+(defun my/refresh-agenda-files ()
+  "Re-scan ~/emacs/ for org files; refresh `org-agenda-files'.
+Run after adding new directories or moving files around."
+  (interactive)
+  (setq org-agenda-files (my/-agenda-files-scanned))
+  (message "org-agenda-files: %d files scanned"
+           (length org-agenda-files)))
+
+(setq org-agenda-files (my/-agenda-files-scanned))
+
+;; Tag-driven per-category views, appended to whatever was set above
+;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/R/M/T).
+(setq org-agenda-custom-commands
+      (append
+       org-agenda-custom-commands
+       '(("I" "💡 Ideas / backlog (anywhere)" tags-todo "+idea")
+         ("P" "🗂 Plans (worked-out, ready to schedule)" tags-todo "+plan")
+         ("S" "💤 Someday / Maybe"           tags-todo "+someday")
+         ("M" "📎 Reference material"        tags-todo "+reference")
+         ("A" "🎯 Areas of focus (20K ft)"   tags-todo "+area")
+         ("G" "🚀 Goals (30K ft)"            tags-todo "+goal")
+         ("L" "🌟 Life / values (40–50K ft)" tags-todo "+life")
+         ("R" "📚 Higher-horizon review"
+          ((tags-todo "+life")
+           (tags-todo "+goal")
+           (tags-todo "+area")))
+         ;; "Pure" action view — TODO state items in files/headings
+         ;; that carry NO category tag. The cleanest "what's actually
+         ;; on my plate right now" view across all of ~/emacs/.
+         ("T" "📋 Action TODOs only (excludes categorized)"
+          tags-todo "-someday-idea-plan-area-goal-life-reference"))))
+#+end_src
+
+* GTD Starter — First-Install Bootstrap
+
+Parallel to =my/wiki-bootstrap=: ensures the GTD folder structure
+and starter files exist on a fresh install. The personal layer
+(iCloud-synced =~/emacs/data/org/=) takes priority; missing files
+are seeded from templates shipped in =mac-setup/stable/gtd-templates/=.
+Idempotent — existing files are never touched.
+
+The seeded files carry the right =#+FILETAGS:= for the tag-driven
+agenda views: =gtd/someday.org= → =:someday:=, =gtd/reference.org=
+→ =:reference:=, =gtd/waiting.org= → =:waiting:=,
+=gtd/projects.org= → =:project:=. After the bootstrap, =C-c a g=
+(GTD Dashboard) works immediately without any manual setup.
+
+To skip a file or add your own: just have it present before the
+first Emacs run (e.g., via iCloud sync from another device).
+
+#+begin_src emacs-lisp
+(defvar my/gtd-bootstrap-files
+  '("inbox.org"
+    "calendar.org"
+    "refile.org"
+    "diary.org"
+    "gtd/projects.org"
+    "gtd/next.org"
+    "gtd/waiting.org"
+    "gtd/tickler.org"
+    "gtd/someday.org"
+    "gtd/reference.org")
+  "Generic GTD starter files seeded by `my/gtd-bootstrap'. Paths
+relative to my/data-dir's data/org/. Each is fetched from
+emacs-mac-setup/stable/gtd-templates/<path> on first install if
+absent locally.")
+
+(defvar my/gtd-bootstrap-url
+  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/gtd-templates/"
+  "Base URL for fetching GTD starter templates on first install.")
+
+(defvar my/-gtd-bootstrap-marker
+  (expand-file-name ".bootstrap-completed"
+                    (expand-file-name "data/org/" my/data-dir))
+  "Marker file. Once present, the GTD layer's auto-fetch is locked.
+See the marker file content for the full explanation.")
+
+(defun my/gtd-bootstrap ()
+  "Create ~/emacs/data/org/{gtd,archive}/ and seed missing GTD starter
+files from templates. Idempotent — only creates what is absent.
+Auto-runs on package load; can also be invoked as M-x my/gtd-bootstrap.
+Returns t if anything was created, nil otherwise.
+
+Once `my/-gtd-bootstrap-marker' exists, this is a complete no-op —
+the user owns the GTD layer."
+  (interactive)
+  (if (file-exists-p my/-gtd-bootstrap-marker)
+      nil
+    (my/-gtd-bootstrap-do)))
+
+(defun my/-gtd-bootstrap-do ()
+  "Actual GTD bootstrap work. Internal — call `my/gtd-bootstrap'."
+  (let ((created nil)
+        (org-root (expand-file-name "data/org/" my/data-dir)))
+    ;; 1. Directory tree (data/org/ + gtd/ + archive/)
+    (dolist (sub '("" "gtd" "archive"))
+      (let ((d (expand-file-name sub org-root)))
+        (unless (file-directory-p d)
+          (make-directory d t)
+          (setq created t))))
+    ;; 2. Seed missing GTD files from templates.
+    ;; Resolution order per file: local sibling → adjacent mac-setup
+    ;; checkout → /tmp/emacs-mac-setup → fetch from public stable.
+    (dolist (rel my/gtd-bootstrap-files)
+      (let ((dest (expand-file-name rel org-root)))
+        (unless (file-exists-p dest)
+          (unless (file-directory-p (file-name-directory dest))
+            (make-directory (file-name-directory dest) t))
+          (let ((src (cl-find-if
+                      #'file-readable-p
+                      (list
+                       (expand-file-name (concat "gtd-templates/" rel) my/data-dir)
+                       (expand-file-name (concat "../emacs-mac-setup/gtd-templates/" rel)
+                                         my/data-dir)
+                       (expand-file-name (concat "/tmp/emacs-mac-setup/gtd-templates/" rel))))))
+            (cond
+             (src
+              (copy-file src dest)
+              (setq created t))
+             (t
+              (condition-case err
+                  (progn
+                    (require 'url)
+                    (url-copy-file (concat my/gtd-bootstrap-url rel) dest t)
+                    (setq created t))
+                (error
+                 (message "gtd-bootstrap: could not fetch %s: %s"
+                          rel (error-message-string err))))))))))
+    ;; Drop the marker so future runs skip the entire bootstrap. The
+    ;; marker is a verbose self-documenting file written by
+    ;; my/-bootstrap-write-marker (defined in init.el).
+    (when (fboundp 'my/-bootstrap-write-marker)
+      (my/-bootstrap-write-marker org-root "gtd"))
+    (when (and created (called-interactively-p 'any))
+      (message "GTD bootstrapped at %s" org-root))
+    created))
+
+;; Auto-bootstrap on package load. No-op once files exist.
+(my/gtd-bootstrap)
 #+end_src
 
 * Clocking
@@ -1053,10 +1251,17 @@ not → ~brew install~ in the background + log entry.
                  bin formula)))))
 
 ;; Python packages for org-babel execution
-(dolist (pkg '("matplotlib" "numpy"))
-  (unless (= 0 (call-process "pip3" nil nil nil "show" pkg))
-    (my/pip-install-and-log pkg)
-    (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
+(unless (executable-find "pip3")
+  (when (executable-find "brew")
+    (my/brew-install-and-log "formula" "python" "install" "python")
+    (message "pip3 not found — installing brew python in background. Restart Emacs when done.")))
+
+(if-let ((pip3 (executable-find "pip3")))
+    (dolist (pkg '("matplotlib" "numpy"))
+      (unless (= 0 (call-process pip3 nil nil nil "show" pkg))
+        (my/pip-install-and-log pkg)
+        (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
+  (message "Python packages skipped until pip3 is available. Restart after brew python finishes."))
 #+end_src
 
 ** Enable Babel Languages for Graphics
@@ -1316,9 +1521,57 @@ sequenceDiagram
   (org-agenda-to-appt))
 
 (add-hook 'org-finalize-agenda-hook 'bh/org-agenda-to-appt 'append)
-(bh/org-agenda-to-appt)
+;; At load time, swallow any agenda-scan failure so a single malformed
+;; entry (e.g. when an agenda file is mid-recover from auto-save)
+;; doesn't abort the rest of org-setup.org. Future interactive / hook
+;; calls still surface errors normally.
+(condition-case _err
+    (bh/org-agenda-to-appt)
+  (error (message "bh/org-agenda-to-appt: skipped at load -- %S" _err)))
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
+#+end_src
+
+* Org-Roam — Wiki Backbone
+Persistent, LLM-maintained Emacs knowledge wiki at =~/emacs/wiki/emacs/=.
+Schema and operations defined in [[file:~/emacs/wiki/emacs/WIKI.org][WIKI.org]].
+Pattern based on Karpathy's LLM Wiki gist
+(https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+#+begin_src emacs-lisp
+(use-package org-roam
+  :ensure t
+  :init (setq org-roam-v2-ack t)
+  :custom
+  ;; Derive from my/data-dir so the wiki lives inside whatever GH_REPO
+  ;; the user chose at install time (~/emacs/ by default;
+  ;; ~/emacs-data/ etc. for custom installs).
+  (org-roam-directory (expand-file-name "wiki/emacs" my/data-dir))
+  (org-roam-db-location (expand-file-name "wiki/emacs/.org-roam.db" my/data-dir))
+  (org-roam-completion-everywhere t)
+  :bind (("C-c n l" . org-roam-buffer-toggle)
+         ("C-c n f" . org-roam-node-find)
+         ("C-c n i" . org-roam-node-insert)
+         ("C-c n c" . org-roam-capture))
+  :config
+  (org-roam-db-autosync-mode))
+#+end_src
+
+** Org-Roam UI — interactive graph
+Web-based graph + backlink viewer for the wiki. Toggle with
+=M-x org-roam-ui-mode= — opens a local server on port 35901 and
+launches the browser. Updates live as you edit pages.
+
+#+begin_src emacs-lisp
+(use-package org-roam-ui
+  :ensure t
+  :after org-roam
+  :custom
+  (org-roam-ui-sync-theme t)
+  (org-roam-ui-follow t)
+  (org-roam-ui-update-on-save t)
+  (org-roam-ui-open-on-start nil)
+  :bind ("C-c n u" . org-roam-ui-mode))
 #+end_src
 
 * Apple Reminders

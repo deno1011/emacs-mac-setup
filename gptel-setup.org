@@ -1,34 +1,115 @@
-#+TITLE: AI and gptel Configuration
+#+TITLE: gptel Agent Runtime Loader
+#+STARTUP: overview
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
 Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
-* AI Assistant
+This file intentionally stays small. The AI implementation now lives in the
+separate package repository:
 
-** gptel Base Setup
+[[https://github.com/deno1011/gptel-agent-runtime][deno1011/gptel-agent-runtime]]
 
-#+begin_src emacs-lisp
-(use-package gptel
-  :ensure t
-  :config
-  (setq gptel-default-mode 'org-mode))
+The package was split out so it can later be cleaned up for MELPA. Runtime
+configuration still loads from the private Emacs repo, but the implementation
+is installed and updated from Git.
+
+* Repository Roles
+
+- =~/emacs= is the private live Emacs-plus runtime repo.
+- =~/emacs/config/gptel-setup.org= is only the loader for the AI package.
+- =~/gptel-agent-runtime= is the standalone package development repo.
+- =~/emacs-mac-setup= is the installer/bootstrap/template repo.
+
+* Installation and Auto-Update
+
+Installs =gptel-agent-runtime= from GitHub via =package-vc-install= (Emacs 29+).
+After installation, schedules a silent background update check 10 seconds after
+Emacs becomes idle. Updated package code is active from the next Emacs session.
+
+For day-to-day development use the =main= branch. The =stable= branch currently
+points to the same version and can later become the slower-moving install target.
+
+Once the package is available on MELPA, replace this block with =:ensure t= in
+the use-package form below and remove the =package-vc-install= call.
+
+#+begin_src emacs-lisp :tangle yes
+(unless (package-installed-p 'gptel-agent-runtime)
+  (package-vc-install
+   '(gptel-agent-runtime
+     :url "https://github.com/deno1011/gptel-agent-runtime"
+     :branch "main"
+     :ignored-files ("test/*" "docs/*" "scripts/*"))))
+
+;; Pull latest main asynchronously at startup. This is non-blocking and silent
+;; if offline. Updated code becomes active from the next Emacs session.
+(when-let* ((lib (locate-library "gptel-agent-runtime"))
+            (dir (file-name-directory lib)))
+  (run-with-idle-timer
+   10 nil
+   (lambda (update-dir)
+     (make-process
+      :name "gptel-agent-runtime-update"
+      :command (list "git" "-C" update-dir "pull" "--rebase" "--quiet")
+      :noquery t
+      :sentinel (lambda (proc _)
+                  (when (and (not (process-live-p proc))
+                             (zerop (process-exit-status proc)))
+                    (message "gptel-agent-runtime: updated — restart to apply")))))
+   dir))
 #+end_src
 
-** Multi-Backend Configuration
+* Configuration
 
-Central registry of all available LLM backends.
-New providers: simply append another block.
+The package expects the main Emacs config to have already defined runtime paths
+such as =my/data-dir=, which happens in =~/.emacs.d/init.el= before
+=config.org= loads this file.
 
-API keys are read lazily via lambda from the environment —
-they only need to be set by the time of the first request.
+After 2026-05-26 the package is provider-neutral: it only carries the
+runtime layer (agents, tools, memory, router, mission control) and forward-
+declares =my/gptel-backends= and =my/gptel-ollama-backend=. Backend
+registration (Anthropic, OpenAI, LM Studio, MLX, Ollama) and the default
+model selection live in the next section of this file.
 
-*** Define Backends
+#+begin_src emacs-lisp :tangle yes
+(use-package gptel-agent-runtime
+  :ensure nil
+  :demand t
+  :config
+  (message "gptel-agent-runtime loaded from package"))
+#+end_src
 
-#+begin_src emacs-lisp
-(defvar my/gptel-backends nil
-  "Alist of (DISPLAY-NAME . (BACKEND . MODEL)) for all backends.")
+* Backends Setup (Multi-Provider)
+
+This block runs after =gptel-agent-runtime= has loaded. It:
+
+1. Ensures =gptel= itself is installed and configured for Org mode.
+2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
+   =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
+3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
+   MLX, and Ollama backends with their respective model lists.
+4. Sets the standard gptel default to Gemini 2.0 Flash. If
+   =GEMINI_API_KEY= is present, requests work immediately; if the key is
+   still missing, the selected default remains Gemini and Emacs tells the
+   user to add the key. Ollama remains an optional local backend and no
+   longer steals the default merely because it is installed.
+
+This section carries the API keys and machine preferences, keeping the
+runtime package reusable across machines.
+
+#+begin_src emacs-lisp :tangle yes
+(use-package gptel
+  :ensure t
+  :demand t
+  :config
+  (setq gptel-default-mode 'org-mode))
+
+(require 'gptel-anthropic nil t)
+(require 'gptel-openai nil t)
+(require 'gptel-ollama nil t)
+(require 'gptel-gemini nil t)
 
 ;; -- Anthropic / Claude -----------------------------------------------
+;; Set ANTHROPIC_API_KEY in secrets.el: (setenv "ANTHROPIC_API_KEY" "sk-ant-...")
 (let ((backend (gptel-make-anthropic "Claude"
                   :stream t
                   :key (lambda () (getenv "ANTHROPIC_API_KEY")))))
@@ -36,14 +117,11 @@ they only need to be set by the time of the first request.
         `(("Claude Opus 4.7"    ,backend . claude-opus-4-7)
           ("Claude Sonnet 4.6"  ,backend . claude-sonnet-4-6)
           ("Claude Haiku 4.5"   ,backend . claude-haiku-4-5-20251001)))
-  ;; Preliminary default (overridden below by LM Studio)
-  (setq gptel-backend backend
-        gptel-model   'claude-opus-4-7))
+  nil)
 
 ;; -- OpenAI / ChatGPT -------------------------------------------------
 ;; Set OPENAI_API_KEY in secrets.el: (setenv "OPENAI_API_KEY" "sk-...")
-;; gptel 0.9.9.5 automatically uses the Responses API for api.openai.com
-;; (/v1/responses). Force Chat Completions via an explicit endpoint:
+;; Force Chat Completions via an explicit endpoint to avoid the Responses API.
 (let ((backend (gptel-make-openai "ChatGPT"
                   :stream t
                   :host "api.openai.com"
@@ -51,24 +129,66 @@ they only need to be set by the time of the first request.
                   :key (lambda () (getenv "OPENAI_API_KEY")))))
   (setq my/gptel-backends
         (append my/gptel-backends
-                `(("GPT-4o"           ,backend . gpt-4o)
-                  ("GPT-4o-mini"       ,backend . gpt-4o-mini)
-                  ("o3-mini"           ,backend . o3-mini)
-                  ("o4-mini"           ,backend . o4-mini)))))
+                `(("GPT-4o"       ,backend . gpt-4o)
+                  ("GPT-4o-mini"  ,backend . gpt-4o-mini)
+                  ("o3-mini"      ,backend . o3-mini)
+                  ("o4-mini"      ,backend . o4-mini)))))
 
-;; -- Google Gemini ----------------------------------------------------
-;; Set GEMINI_API_KEY in secrets.el: (setenv "GEMINI_API_KEY" "AIza...")
-;; Commented out until key is available:
-;; (let ((backend (gptel-make-gemini "Gemini"
-;;                  :stream t
-;;                  :key (lambda () (getenv "GEMINI_API_KEY")))))
-;;   (setq my/gptel-backends
-;;         (append my/gptel-backends
-;;                 `(("Gemini 2.0 Flash" ,backend . gemini-2.0-flash)
-;;                   ("Gemini 2.5 Pro"   ,backend . gemini-2.5-pro)))))
+;; -- Google Gemini (free tier: https://aistudio.google.com/apikey) --
+;; Set GEMINI_API_KEY in secrets.el: (setenv "GEMINI_API_KEY" "...")
+;; Free tier quotas vary per model (2.0 Flash has the most generous limits).
+(let ((backend (gptel-make-gemini "Gemini"
+                 :stream t
+                 :key (lambda () (getenv "GEMINI_API_KEY")))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Gemini 2.5 Pro"     ,backend . gemini-2.5-pro)
+                  ("Gemini 2.5 Flash"   ,backend . gemini-2.5-flash)
+                  ("Gemini 2.0 Flash"   ,backend . gemini-2.0-flash)))))
+
+;; -- Groq (free tier: https://console.groq.com/keys) ----------------
+;; OpenAI-compatible. Set GROQ_API_KEY in secrets.el.
+;; Very fast inference (~500 tok/s on Llama 70B).
+(let ((backend (gptel-make-openai "Groq"
+                 :stream t
+                 :host "api.groq.com"
+                 :endpoint "/openai/v1/chat/completions"
+                 :key (lambda () (getenv "GROQ_API_KEY"))
+                 :models '(llama-3.3-70b-versatile
+                           llama-3.1-8b-instant
+                           mixtral-8x7b-32768
+                           qwen-qwq-32b))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Llama 3.3 70B (Groq)"   ,backend . llama-3.3-70b-versatile)
+                  ("Llama 3.1 8B (Groq)"    ,backend . llama-3.1-8b-instant)
+                  ("Mixtral 8x7B (Groq)"    ,backend . mixtral-8x7b-32768)
+                  ("Qwen QwQ 32B (Groq)"    ,backend . qwen-qwq-32b)))))
+
+;; -- GitHub Models (free dev tier: https://github.com/marketplace/models) -
+;; Set GITHUB_TOKEN in secrets.el to a fine-grained PAT with "models" permission.
+;; Tight per-day quotas; intended for dev/test. Model catalog changes — verify
+;; IDs at github.com/marketplace/models if a call returns 404.
+(let ((backend (gptel-make-openai "GitHub Models"
+                 :stream t
+                 :host "models.inference.ai.azure.com"
+                 :endpoint "/chat/completions"
+                 :key (lambda () (getenv "GITHUB_TOKEN"))
+                 :models '(gpt-4o
+                           gpt-4o-mini
+                           Meta-Llama-3.1-405B-Instruct
+                           Mistral-Large-2411
+                           Phi-3.5-mini-instruct))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("GPT-4o (GitHub)"            ,backend . gpt-4o)
+                  ("GPT-4o-mini (GitHub)"       ,backend . gpt-4o-mini)
+                  ("Llama 3.1 405B (GitHub)"    ,backend . Meta-Llama-3.1-405B-Instruct)
+                  ("Mistral Large (GitHub)"     ,backend . Mistral-Large-2411)
+                  ("Phi 3.5 Mini (GitHub)"      ,backend . Phi-3.5-mini-instruct)))))
 
 ;; -- LM Studio (local, OpenAI-compatible) ----------------------------
-;; LM Studio must be running: Sidebar → Local Server → Start Server
+;; LM Studio must be running: Sidebar -> Local Server -> Start Server
 ;; Port: 1234 (default). No API key required.
 ;; Verify model IDs with: curl http://localhost:1234/v1/models
 (let ((backend (gptel-make-openai "LM Studio"
@@ -87,14 +207,10 @@ they only need to be set by the time of the first request.
                   ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b)
                   ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
                   ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
-  ;; Default: LM Studio (local, private, free)
-  ;; If server is offline: C-c M → select Claude or ChatGPT
-  (setq gptel-backend backend
-        gptel-model   'mistralai/ministral-3-14b-reasoning))
+  nil)
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
-;; Models download automatically from HuggingFace on first run.
 (let ((backend (gptel-make-openai "MLX"
                   :stream t
                   :protocol "http"
@@ -112,1879 +228,67 @@ they only need to be set by the time of the first request.
 ;; Only activated when `ollama' is found in PATH.
 ;; Install models first: ollama pull <name>
 (when (executable-find "ollama")
+  (when (fboundp 'gptel-agent-runtime-start-ollama-if-needed)
+    (gptel-agent-runtime-start-ollama-if-needed))
   (let ((backend (gptel-make-ollama "Ollama"
                    :stream t
-                   :models '(llama3.2 mistral phi3 qwen2.5 deepseek-r1))))
+                   :host (if (boundp 'gptel-agent-runtime-ollama-host)
+                             gptel-agent-runtime-ollama-host
+                           "localhost:11434")
+                   :models '((qwen2.5:14b-instruct :capabilities (tool-use json))
+                             (llama3.2 :capabilities (tool-use json))
+                             (mistral :capabilities (tool-use json))
+                             phi3
+                             (deepseek-r1 :capabilities (tool-use json))))))
+    (setq my/gptel-ollama-backend backend)
     (setq my/gptel-backends
           (append my/gptel-backends
-                  `(("Llama 3.2 (Ollama)"    ,backend . llama3.2)
-                    ("Mistral (Ollama)"       ,backend . mistral)
-                    ("DeepSeek R1 (Ollama)"   ,backend . deepseek-r1)
-                    ("Qwen 2.5 (Ollama)"      ,backend . qwen2.5))))))
+                  `(("Qwen 2.5 Instruct 14B (Ollama)"  ,backend . qwen2.5:14b-instruct)
+                    ("Llama 3.2 (Ollama)"             ,backend . llama3.2)
+                    ("Mistral (Ollama)"               ,backend . mistral)
+                    ("DeepSeek R1 (Ollama)"           ,backend . deepseek-r1)))))
+  ;; Promote the new instruct model so the runtime's default-local-model
+  ;; selection lands on it when Ollama has no model loaded yet.
+  (setq gptel-agent-runtime-default-local-model 'qwen2.5:14b-instruct
+        gptel-agent-runtime-default-local-model-label
+        "Qwen 2.5 Instruct 14B (Ollama)")
+  ;; Local default lives at the 14B; PR 11 router target points at
+  ;; Opus for the rare list-completeness-critical cases that even Haiku
+  ;; might miss. When no Anthropic key is set, both stay local-only.
+  (setq gptel-agent-runtime-high-fidelity-model
+        (and (getenv "ANTHROPIC_API_KEY") 'claude-opus-4-7))
+  ;; Ollama stays registered as an opt-in local backend. It no longer changes
+  ;; the global gptel default during startup; choose it explicitly with
+  ;; `gptel-agent-runtime-select-model' when local-only work is desired.
+  nil)
+
+;; -- Standard default: Gemini 2.0 Flash ------------------------------
+;; Runs LAST so it overrides any earlier backend registration. 2.0 Flash has
+;; the most generous free-tier quota (15 RPM / 1500 RPD) and is plenty for
+;; daily use. Switch to 2.5 Flash/Pro or a local backend manually via
+;; `gptel-agent-runtime-select-model' / gptel-menu when needed.
+(when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
+            (backend (cadr entry))
+            (model (cddr entry)))
+  (setq gptel-backend backend
+        gptel-model   model)
+  (when (fboundp 'gptel-agent-runtime-sync-directive-for-current-runtime)
+    (gptel-agent-runtime-sync-directive-for-current-runtime))
+  (when (fboundp 'gptel-agent-runtime-sync-tools)
+    (gptel-agent-runtime-sync-tools))
+  (message "gptel default: Gemini 2.0 Flash%s"
+           (if (getenv "GEMINI_API_KEY")
+               ""
+             " (set GEMINI_API_KEY in secrets.el before sending requests)")))
 #+end_src
 
-*** Helper Functions
+* Architecture Reference
 
-#+begin_src emacs-lisp
-(defun my/gptel-register-model (name backend model)
-  "Register NAME with BACKEND+MODEL in `my/gptel-backends'.
-Overwrites an existing entry with the same name."
-  (setq my/gptel-backends
-        (cons (list name backend . model)
-              (cl-remove name my/gptel-backends
-                         :key #'car :test #'equal))))
-#+end_src
+For the implementation map, read:
 
-*** Model Switcher
+- =~/emacs/notes/gptel-agent-architecture.md=
+- the package repository README
 
-#+begin_src emacs-lisp
-(defun my/gptel-select-model ()
-  "Select backend+model — sets globally AND in the active gptel buffer."
-  (interactive)
-  (let* ((choice  (completing-read
-                   (format "Model [current: %s]: " gptel-model)
-                   my/gptel-backends nil t))
-         (entry   (assoc choice my/gptel-backends))
-         (backend (cadr entry))
-         (model   (cddr entry)))
-    ;; Set globally (applies to new gptel sessions)
-    (setq gptel-backend backend
-          gptel-model   model)
-    ;; Switch all running gptel buffers as well
-    (dolist (buf (buffer-list))
-      (when (buffer-local-value 'gptel-mode buf)
-        (with-current-buffer buf
-          (setq-local gptel-backend backend
-                      gptel-model   model))))
-    (message "→ %s  (%s)" choice model)))
-
-;; C-c M  — quick model switch in the current buffer
-(global-set-key (kbd "C-c M") #'my/gptel-select-model)
-#+end_src
-
-*** Status Bar: Show Active Model
-
-#+begin_src emacs-lisp
-(defun my/gptel-mode-line ()
-  "Show the active gptel model in the mode line."
-  (when (bound-and-true-p gptel-mode)
-    (format " [%s]" gptel-model)))
-
-(unless (member '(:eval (my/gptel-mode-line)) mode-line-format)
-  (setq mode-line-format
-        (append mode-line-format '((:eval (my/gptel-mode-line))))))
-#+end_src
-
-** Adding New Providers (Template)
-
-How to extend the system later without touching existing backends:
-
-#+begin_example
-;; In secrets.el:
-(setenv "MY_API_KEY" "...")
-
-;; In config.org (new block):
-(let ((backend (gptel-make-openai "MyProvider"   ; OpenAI-compatible API
-                  :stream t
-                  :host "api.myprovider.com"
-                  :models '(my-model)
-                  :key (lambda () (getenv "MY_API_KEY")))))
-  (my/gptel-register-model "My Model" backend 'my-model))
-#+end_example
-
-Compatible with: Mistral AI, Groq, Together AI, Perplexity,
-LM Studio (local), llama.cpp HTTP server and many more — all speak
-the OpenAI wire format.
-
-* Image Capture & Multimodal
-
-Pipeline for bringing images from iPhone (via Universal Clipboard) into the
-gptel buffer, automatically attaching them to Claude's next request
-and rendering them inline.
-
-** Overview
-
-*** Workflow
-
-| Step | Action                                                        |
-|------+---------------------------------------------------------------|
-|    1 | Take a photo on iPhone                                        |
-|    2 | Tap the photo → Share sheet → "Copy"                          |
-|    3 | iCloud Universal Clipboard syncs to Mac (5–30 s)              |
-|    4 | In gptel buffer: ~C-c i~ → ~my/insert-clipboard-image~        |
-|    5 | Image is saved, org link inserted, rendered inline            |
-|    6 | Simultaneously the image is attached to gptel's multimodal    |
-|      | context (~gptel-add-file~)                                    |
-|    7 | You type your question ("Solve the tasks") + send             |
-|    8 | Claude (Vision) sees image + text, responds                   |
-
-*** Prerequisites
-
-- ~pngpaste~ (brew) — extracts PNG from the system clipboard
-- iCloud Universal Clipboard active on iPhone and Mac (Settings
-  → General → AirPlay & Handoff → Universal Clipboard)
-- gptel >= 0.9 with multimodal support (present in your setup)
-- Vision-capable model (Opus/Sonnet/Haiku 4.x — ~claude-opus-4-7~ in your case)
-
-** External-Tool Auto-Install (pngpaste / xclip)
-
-#+begin_src emacs-lisp
-(cond
-  ;; macOS: pngpaste via brew
-  ((and (eq system-type 'darwin)
-        (not (executable-find "pngpaste"))
-        (executable-find "brew"))
-   (my/brew-install-and-log "formula" "pngpaste" "install" "pngpaste")
-   (message "pngpaste not found — installing via brew in background. Restart Emacs when done."))
-  ;; Linux/Docker: xclip via apt — try sudo, fall back to plain apt-get
-  ((and (eq system-type 'gnu/linux)
-        (not (executable-find "xclip")))
-   (condition-case nil
-       (let ((cmd (if (executable-find "sudo") "sudo" "apt-get"))
-             (args (if (executable-find "sudo")
-                       '("apt-get" "install" "-y" "xclip")
-                     '("install" "-y" "xclip"))))
-         (apply #'start-process "install-xclip" "*install-xclip*" cmd args)
-         (message "xclip not found — installing via apt in background. Restart Emacs when done."))
-     (error (message "xclip not found — install manually: apt-get install xclip")))))
-#+end_src
-
-** Image Directory & Org-Download Configuration
-
-#+begin_src emacs-lisp
-(defcustom my/gptel-image-dir
-  (expand-file-name "gptel-images" user-emacs-directory)
-  "Directory for images inserted via `my/insert-clipboard-image'."
-  :type 'directory
-  :group 'claude-executor)
-
-(defcustom my/gptel-image-max-dim 1600
-  "Maximum edge length in pixels.
-Larger images are resized via sips. iPhone photos (4032×3024)
-as PNG are ~15 MB → resize to 1600 px edge + optional JPEG: <500 KB.
-Anthropic limit is 5 MB raw, but Base64 encoding (+33%) hits that at
-~3.75 MB. Stay well below that to be safe."
-  :type 'integer
-  :group 'claude-executor)
-
-(defcustom my/gptel-image-max-bytes (* 2 1024 1024)
-  "Soft-limit image size in bytes (2 MB).
-If exceeded after resize → convert to JPEG q=85.
-Conservative due to Base64 overhead (~33%): 2 MB raw → ~2.7 MB encoded,
-safely below the Anthropic 5 MB limit."
-  :type 'integer
-  :group 'claude-executor)
-
-(with-eval-after-load 'org-download
-  (cond
-    ((executable-find "pngpaste")
-     (setq org-download-screenshot-method "pngpaste %s"))
-    ((executable-find "xclip")
-     (setq org-download-screenshot-method "xclip -selection clipboard -t image/png -o > %s")))
-  (setq org-download-image-dir my/gptel-image-dir
-        org-download-method    'directory
-        org-download-heading-lvl nil))
-#+end_src
-
-** Shrink Images (Work Around Anthropic 5 MB Limit)
-
-iPhone photos as PNG are often 10–20 MB. The Anthropic API limits to
-5 MB per image (raw, before Base64). We use the macOS built-in ~sips~
-for resizing without external dependencies.
-
-#+begin_src emacs-lisp
-(defun my/--shrink-image (path)
-  "Shrink PATH if necessary.
-1. Limit edge length to `my/gptel-image-max-dim' (in-place).
-2. If the file still exceeds `my/gptel-image-max-bytes': convert
-   to JPEG q=85, replacing the original file.
-Returns the final path (may change to .jpg on JPEG conversion)."
-  (when (and (executable-find "sips") (file-exists-p path))
-    ;; 1. Limit edge length to max
-    (call-process "sips" nil nil nil
-                  "-Z" (number-to-string my/gptel-image-max-dim)
-                  path "--out" path)
-    ;; 2. Convert to JPEG if needed
-    (when (and (file-exists-p path)
-               (> (nth 7 (file-attributes path)) my/gptel-image-max-bytes))
-      (let* ((dir  (file-name-directory path))
-             (base (file-name-sans-extension (file-name-nondirectory path)))
-             (jpeg (expand-file-name (concat base ".jpg") dir)))
-        (call-process "sips" nil nil nil
-                      "-s" "format" "jpeg"
-                      "-s" "formatOptions" "85"
-                      path "--out" jpeg)
-        (when (and (file-exists-p jpeg)
-                   (> (nth 7 (file-attributes jpeg)) 0))
-          (delete-file path)
-          (setq path jpeg)))))
-  path)
-#+end_src
-
-** Insert Clipboard Image + Attach to gptel
-
-#+begin_src emacs-lisp
-(defun my/--clipboard-to-file (path)
-  "Save clipboard image to PATH using the available backend.
-macOS: pngpaste. Linux/XQuartz: xclip.
-Returns t on success, nil if no backend available or clipboard empty."
-  (cond
-    ((executable-find "pngpaste")
-     (= 0 (call-process "pngpaste" nil nil nil path)))
-    ((executable-find "xclip")
-     ;; XQuartz bridges the macOS clipboard to X11 on focus — click the
-     ;; Emacs window after copying on iPhone to trigger the sync first.
-     (= 0 (shell-command
-           (format "xclip -selection clipboard -t image/png -o > %s"
-                   (shell-quote-argument path)))))
-    (t nil)))
-
-(defun my/insert-clipboard-image (&optional name)
-  "Save clipboard image, shrink if needed, insert as org link and attach to gptel.
-Uses pngpaste on macOS or xclip on Linux (XQuartz).
-If NAME is nil or empty → timestamp filename."
-  (interactive
-   (list (read-string "Filename (without extension, Enter = timestamp): " "")))
-  (unless (or (executable-find "pngpaste") (executable-find "xclip"))
-    (user-error (if (eq system-type 'darwin)
-                    "pngpaste missing — run: brew install pngpaste"
-                  "xclip missing — run: sudo apt-get install xclip")))
-  (make-directory my/gptel-image-dir t)
-  (let* ((basename (if (or (null name) (string-empty-p name))
-                       (format "img-%s" (format-time-string "%Y%m%d-%H%M%S"))
-                     name))
-         (raw-path (expand-file-name (concat basename ".png")
-                                     my/gptel-image-dir))
-         (ok       (my/--clipboard-to-file raw-path))
-         (size     (and ok (file-exists-p raw-path)
-                        (nth 7 (file-attributes raw-path)))))
-    (cond
-     ((and ok size (> size 0))
-      (let* ((final-path (my/--shrink-image raw-path))
-             (final-size (nth 7 (file-attributes final-path))))
-        (insert (format "[[file:%s]]\n" final-path))
-        (when (derived-mode-p 'org-mode)
-          (org-display-inline-images t t))
-        (if (require 'gptel-context nil 'noerror)
-            (progn
-              (gptel-context-add-file final-path)
-              (message "Image inserted + attached to gptel: %s (%s)"
-                       (file-name-nondirectory final-path)
-                       (file-size-human-readable final-size)))
-          (message "Image inserted: %s (gptel-context not available)"
-                   final-path))))
-     (t
-      (when (file-exists-p raw-path) (delete-file raw-path))
-      (user-error "No image in clipboard — on Linux/XQuartz: click Emacs window after copying to trigger clipboard sync")))))
-#+end_src
-
-** Attach Image at Point to gptel
-
-If the image is already present as an org link in the buffer (e.g. via
-drag-and-drop or ~org-download~), you can attach it after the fact.
-
-#+begin_src emacs-lisp
-(defun my/gptel-attach-image-at-point ()
-  "Find the org file: link at/around point and attach PATH to the
-next gptel request. Shrinks first if necessary."
-  (interactive)
-  (require 'gptel-context)
-  (let ((ctx (org-element-context)))
-    (if (and (eq (org-element-type ctx) 'link)
-             (string= (org-element-property :type ctx) "file"))
-        (let ((path (expand-file-name
-                     (org-element-property :path ctx))))
-          (if (file-exists-p path)
-              (let ((final-path (my/--shrink-image path)))
-                (gptel-context-add-file final-path)
-                (message "Attached to gptel: %s (%s)"
-                         (file-name-nondirectory final-path)
-                         (file-size-human-readable
-                          (nth 7 (file-attributes final-path)))))
-            (user-error "File not found: %s" path)))
-      (user-error "No file: link at point"))))
-#+end_src
-
-** Keybindings
-
-#+begin_src emacs-lisp
-(with-eval-after-load 'gptel
-  (define-key gptel-mode-map (kbd "C-c i") #'my/insert-clipboard-image)
-  (define-key gptel-mode-map (kbd "C-c I") #'my/gptel-attach-image-at-point))
-
-;; Also available globally — in case you capture outside gptel-mode
-(global-set-key (kbd "C-c i") #'my/insert-clipboard-image)
-(global-set-key (kbd "C-c I") #'my/gptel-attach-image-at-point)
-#+end_src
-
-** Example Session
-
-In a ~M-x gptel~ buffer:
-
-1. Take a photo of a worksheet on iPhone, copy it
-2. Place cursor in the gptel buffer, ~C-c i~, press Enter at the name prompt
-3. Image appears inline, status line: "Image inserted + attached to gptel"
-4. Type: "Please solve all tasks from the image step by step."
-5. ~C-c RET~ (gptel-send) → Claude responds with solutions + LaTeX + optional plots
-
-* Web & Image Helpers for Claude
-
-Small elisp library that Claude can call via AUTORUN/Babel-elisp to
-fetch web pages, filter search results and display images inline in the
-current buffer.
-
-** Overview
-
-| Function                              | Purpose                                       |
-|---------------------------------------+-----------------------------------------------|
-| ~(my/web-fetch URL)~                  | Raw HTML/body as string                       |
-| ~(my/web-text URL &optional MAX)~     | Web page as readable plain text (via shr)     |
-| ~(my/web-html URL)~                   | Parsed DOM tree (libxml2)                     |
-| ~(my/web-search-ddg QUERY &opt N)~    | DuckDuckGo search, list of (title . url)      |
-| ~(my/web-fetch-image URL &opt DIR)~   | Download image, return path                   |
-| ~(my/web-extract-images URL &opt N)~  | List image URLs found on the page             |
-| ~(my/insert-image-inline FILE/URL)~   | Append image to buffer end + render           |
-
-Prerequisites: Emacs with libxml2 (built into ~emacs-mac@30exp~ and
-~emacs-plus@30~). No external tools needed.
-
-** Web-Fetch & Text Extraction
-
-#+begin_src emacs-lisp
-(require 'url)
-(require 'shr)
-(require 'dom)
-
-(defcustom my/web-fetch-timeout 30
-  "Timeout in seconds for `my/web-fetch'."
-  :type 'integer
-  :group 'claude-executor)
-
-(defcustom my/web-user-agent "Emacs/Claude-Helper"
-  "User-Agent string for web requests."
-  :type 'string
-  :group 'claude-executor)
-
-(defun my/web-fetch (url)
-  "Fetch URL synchronously, return body as string.
-Signals an error on HTTP >= 400 or timeout."
-  (let ((url-user-agent my/web-user-agent))
-    (with-current-buffer
-        (url-retrieve-synchronously url t t my/web-fetch-timeout)
-      (goto-char (point-min))
-      (unless (re-search-forward "\r?\n\r?\n" nil t)
-        (kill-buffer)
-        (error "No HTTP body in response from %s" url))
-      (let ((body (buffer-substring-no-properties (point) (point-max))))
-        (kill-buffer)
-        body))))
-
-(defun my/web-html (url)
-  "Fetch URL and return a parsed DOM tree."
-  (with-temp-buffer
-    (insert (my/web-fetch url))
-    (libxml-parse-html-region (point-min) (point-max))))
-
-(defun my/web-text (url &optional max-chars)
-  "Fetch URL, render as readable plain text via shr.
-If MAX-CHARS is set: truncate to MAX-CHARS characters."
-  (let ((dom              (my/web-html url))
-        (shr-width        80)
-        (shr-use-fonts    nil)
-        (shr-inhibit-images t))
-    (with-temp-buffer
-      (shr-insert-document dom)
-      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-        (if (and max-chars (> (length text) max-chars))
-            (concat (substring text 0 max-chars) "\n…[truncated]")
-          text)))))
-#+end_src
-
-** Search (DuckDuckGo HTML Endpoint)
-
-DDG offers a login-free HTML endpoint at ~html.duckduckgo.com~.
-The hrefs are redirects of the form ~/l/?uddg=<encoded-url>~ — we
-decode them.
-
-#+begin_src emacs-lisp
-(defun my/web-search-ddg (query &optional limit)
-  "DuckDuckGo HTML search. Returns list of (TITLE . URL).
-LIMIT defaults to 5."
-  (let* ((url    (format "https://html.duckduckgo.com/html/?q=%s"
-                         (url-hexify-string query)))
-         (dom    (my/web-html url))
-         (limit  (or limit 5))
-         (anchors (dom-by-tag dom 'a))
-         (results '()))
-    (dolist (a anchors)
-      (let ((class (or (dom-attr a 'class) ""))
-            (href  (dom-attr a 'href))
-            (title (string-trim (dom-text a))))
-        (when (and href
-                   (string-match-p "result__a\\|result__url" class)
-                   (not (string-empty-p title)))
-          (let ((real-url
-                 (cond
-                  ((string-match "uddg=\\([^&]+\\)" href)
-                   (url-unhex-string (match-string 1 href)))
-                  ((string-prefix-p "http" href) href)
-                  (t (concat "https:" href)))))
-            (cl-pushnew (cons title real-url) results
-                        :test (lambda (a b) (equal (cdr a) (cdr b))))))))
-    (seq-take (nreverse results) limit)))
-#+end_src
-
-** Download & Extract Images
-
-#+begin_src emacs-lisp
-(defun my/web-fetch-image (url &optional dir)
-  "Download image from URL to DIR (default temporary-file-directory).
-Returns local path."
-  (let* ((ext  (or (file-name-extension (url-filename
-                                          (url-generic-parse-url url)))
-                   "png"))
-         (base (format "claude-img-%s" (format-time-string "%s%N")))
-         (path (expand-file-name (concat base "." ext)
-                                 (or dir temporary-file-directory))))
-    (url-copy-file url path t)
-    path))
-
-(defun my/web-extract-images (url &optional limit)
-  "Return absolute image URLs from a page, max LIMIT (default 10)."
-  (let* ((dom   (my/web-html url))
-         (imgs  (dom-by-tag dom 'img))
-         (limit (or limit 10))
-         (urls  '()))
-    (dolist (img imgs)
-      (let ((src (dom-attr img 'src)))
-        (when (and src (not (string-prefix-p "data:" src)))
-          (push (url-expand-file-name src url) urls))))
-    (seq-take (nreverse urls) limit)))
-#+end_src
-
-** Inline Insert into Current Buffer
-
-Appends the image **at the end of the current narrowing region** (i.e.
-for AUTORUN: at the end of the Claude response), regardless of cursor position.
-
-#+begin_src emacs-lisp
-(defun my/insert-image-inline (file-or-url)
-  "Append FILE-OR-URL as an org image link to the current buffer end.
-If FILE-OR-URL is a URL it is downloaded to a temp location first.
-In org-mode `org-display-inline-images' is triggered."
-  (let ((file (if (string-match-p "^https?://" file-or-url)
-                  (my/web-fetch-image file-or-url)
-                file-or-url)))
-    (save-excursion
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert (format "[[file:%s]]\n" file)))
-    (when (derived-mode-p 'org-mode)
-      (org-display-inline-images t t))
-    file))
-#+end_src
-
-** Examples
-
-Summarize a web page:
-#+begin_example
-,#+begin_src elisp :results output
-(princ (my/web-text "https://orgmode.org" 2000))
-,#+end_src
-#+end_example
-
-Search for a term (org links as output):
-#+begin_example
-,#+begin_src elisp :results output
-(dolist (r (my/web-search-ddg "emacs lsp tutorial" 5))
-  (princ (format "- [[%s][%s]]\n" (cdr r) (car r))))
-,#+end_src
-#+end_example
-
-Insert an image from the web inline:
-#+begin_example
-,#+begin_src elisp :AUTORUN
-(my/insert-image-inline
- "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/EmacsIcon.svg/240px-EmacsIcon.svg.png")
-,#+end_src
-#+end_example
-
-Extract and insert the first image from a page:
-#+begin_example
-,#+begin_src elisp :AUTORUN
-(let ((imgs (my/web-extract-images "https://example.org" 1)))
-  (when imgs (my/insert-image-inline (car imgs))))
-,#+end_src
-#+end_example
-
-* Claude Executor
-
-Connects [[https://github.com/karthink/gptel][gptel]] with auto-execution hooks so Claude can directly trigger
-actions in Emacs (open agenda, insert TODOs, manage windows, open files, …)
-— and execute arbitrary code blocks in responses.
-
-** Overview
-
-*** Three Execution Mechanisms
-
-1. *AUTORUN elisp blocks* — primary mechanism for Emacs control.
-   Claude responds with ~#+begin_src elisp :AUTORUN ... #+end_src~.
-   The hook finds, evaluates and logs the result.
-2. *Exec tags* — ~<!-- exec: COMMAND -->~ in responses triggers
-   individual shell calls (with confirmation).
-3. *Babel code blocks* — classic ~#+begin_src python/sh/R/...~
-   blocks are written to temp files and executed via the respective
-   language CLI.
-
-Additionally: *Auto-pattern matching* via ~claude-executor-auto-commands~
-(regex on response text → shell command).
-
-*** Response Flow
-
-#+begin_example
-gptel response complete
-        │
-        ▼
-gptel-post-response-functions
-        │
-        ├── claude-executor-response-hook
-        │       when auto-execute = t:
-        │       1. execute all Babel blocks (shell)
-        │       2. execute exec-tags (with confirmation)
-        │       3. match auto-commands patterns
-        │
-        └── claude-executor-autorun-hook
-                always active while mode is on:
-                finds :AUTORUN elisp blocks
-                → whitelist check (optional)
-                → safe-eval with logging in *Claude Actions*
-#+end_example
-
-*** Security
-
-| Switch                                    | Default | Effect                                             |
-|-------------------------------------------+---------+----------------------------------------------------|
-| ~claude-executor-auto-execute~            | nil     | off → Babel + exec-tags + auto-commands inactive   |
-| ~claude-executor-confirm-before-execute~  | nil     | when t → confirmation dialog before Babel & AUTORUN|
-| ~claude-executor-auto-execute-elisp~      | nil     | reserved for future elisp auto-eval control        |
-| ~claude-executor-allowed-functions~       | nil     | nil = all allowed; otherwise whitelist for AUTORUN |
-| ~claude-executor-mode~                    | t       | central on/off switch for *both* hooks             |
-
-** Package Dependencies
-
-We require [[https://github.com/karthink/gptel][gptel]] as the frontend for the Claude API.
-
-#+begin_src elisp :tangle yes
-(use-package gptel
-  :ensure t)
-#+end_src
-
-** Configuration (Defgroup & Defcustoms)
-
-All switches defined centrally — visible via
-~M-x customize-group RET claude-executor RET~.
-
-#+begin_src elisp :tangle yes
-;;; claude-executor.el — Auto-execution hooks for Claude in Emacs
-
-(require 'org)
-(require 'ob)
-(require 'cl-lib)
-
-(defgroup claude-executor nil
-  "Auto-execution of code blocks in Claude responses."
-  :group 'claude)
-
-;;; --- General Switches ----------------------------------------------
-
-(defcustom claude-executor-auto-execute nil
-  "Automatically execute Babel blocks, exec-tags and auto-commands.
-WARNING: security risk, off by default.
-Does NOT affect AUTORUN elisp blocks — those always run when the
-mode is active (with confirmation if `claude-executor-confirm-before-execute')."
-  :type 'boolean
-  :group 'claude-executor)
-
-(defcustom claude-executor-confirm-before-execute nil
-  "Require confirmation before each execution.
-Applies to Babel blocks and AUTORUN elisp blocks."
-  :type 'boolean
-  :group 'claude-executor)
-
-;;; --- Babel Block Configuration -------------------------------------
-
-(defcustom claude-executor-allowed-languages
-  '("python" "sh" "bash" "elisp" "R" "ruby" "js")
-  "Languages for which Babel auto-execution is allowed.
-Checked in `claude-executor--execute-babel-block'."
-  :type '(repeat string)
-  :group 'claude-executor)
-
-;;; --- Pattern-Based Auto Commands -----------------------------------
-
-(defcustom claude-executor-auto-commands nil
-  "Alist of (REGEX . COMMAND) for automatic shell commands.
-When REGEX matches in the response, COMMAND is executed.
-Example:
-  '((\"pip install \\\\(.*\\\\)\" . \"pip install \\\\1\"))"
-  :type '(alist :key-type regexp :value-type string)
-  :group 'claude-executor)
-
-;;; --- AUTORUN Configuration -----------------------------------------
-
-(defcustom claude-executor-auto-execute-elisp nil
-  "Reserved flag for future elisp auto-eval control.
-Currently AUTORUN execution is coupled to `claude-executor-mode' and
-`claude-executor-confirm-before-execute'."
-  :type 'boolean
-  :group 'claude-executor)
-
-(defcustom claude-executor-elisp-tag "AUTORUN"
-  "Tag that marks automatic elisp execution.
-Claude must write ~#+begin_src elisp :AUTORUN~ in responses.
-Can be renamed via this custom variable (e.g. \"RUN\")."
-  :type 'string
-  :group 'claude-executor)
-
-(defcustom claude-executor-allowed-functions nil
-  "Optional whitelist of allowed functions for AUTORUN eval.
-- nil  → no restriction (any elisp call is allowed).
-- list → AUTORUN code that calls a function not in the list is
-        rejected and logged in *Claude Actions*."
-  :type '(repeat symbol)
-  :group 'claude-executor)
-#+end_src
-
-** Babel Block Execution
-
-Finds ~#+begin_src LANG ... #+end_src~ in the response, writes the
-body to a temp file, calls the respective language CLI and logs to
-the buffer ~*Claude Execution Results*~.
-
-*** Find Block
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--find-babel-blocks ()
-  "Find all Babel code blocks in the current (possibly narrowed) region.
-Returns a list of plists with :lang, :header, :body, :begin, :end."
-  (let (blocks)
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              "^#\\+begin_src\\s-+\\(\\w+\\)\\(.*\\)\n\\(\\(?:.*\n\\)*?\\)#\\+end_src"
-              nil t)
-        (push (list :lang   (match-string-no-properties 1)
-                    :header (match-string-no-properties 2)
-                    :body   (match-string-no-properties 3)
-                    :begin  (match-beginning 0)
-                    :end    (match-end 0))
-              blocks)))
-    (nreverse blocks)))
-#+end_src
-
-*** Language Mapping
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--lang-extension (lang)
-  "File extension for LANG (used for temp file)."
-  (cdr (assoc lang '(("python" . ".py")
-                     ("sh"     . ".sh")
-                     ("bash"   . ".sh")
-                     ("elisp"  . ".el")
-                     ("R"      . ".R")
-                     ("ruby"   . ".rb")
-                     ("js"     . ".js")))))
-
-(defun claude-executor--lang-command (lang file)
-  "Shell invocation for language LANG with file FILE."
-  (cdr (assoc lang
-              `(("python" . ,(format "python3 %s" file))
-                ("sh"     . ,(format "sh %s" file))
-                ("bash"   . ,(format "bash %s" file))
-                ("elisp"  . ,(format "emacs --batch --load %s" file))
-                ("R"      . ,(format "Rscript %s" file))
-                ("ruby"   . ,(format "ruby %s" file))
-                ("js"     . ,(format "node %s" file))))))
-#+end_src
-
-*** Execute & Log
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--do-execute (lang body)
-  "Write BODY to a temp file, call the matching language CLI,
-log in *Claude Execution Results* and delete the temp file."
-  (let* ((ext        (or (claude-executor--lang-extension lang) ""))
-         (tmp-file   (make-temp-file "claude-exec-" nil ext))
-         (result-buf (get-buffer-create "*Claude Execution Results*")))
-    (with-temp-file tmp-file
-      (insert body))
-    (with-current-buffer result-buf
-      (goto-char (point-max))
-      (insert (format "\n=== %s [%s] ===\n" lang
-                      (format-time-string "%H:%M:%S")))
-      (insert body)
-      (insert "\n--- Output ---\n")
-      (let ((cmd (claude-executor--lang-command lang tmp-file)))
-        (if cmd
-            (insert (shell-command-to-string cmd))
-          (insert (format "No executor for language: %s\n" lang))))
-      (insert "\n"))
-    (display-buffer result-buf)
-    (delete-file tmp-file)))
-
-(defun claude-executor--execute-babel-block (block)
-  "Execute a Babel block.
-Checks `claude-executor-allowed-languages' and optionally
-`claude-executor-confirm-before-execute'."
-  (let ((lang (plist-get block :lang))
-        (body (plist-get block :body)))
-    (when (member lang claude-executor-allowed-languages)
-      (if claude-executor-confirm-before-execute
-          (when (yes-or-no-p
-                 (format "Execute block (%s):\n%s\n?" lang body))
-            (claude-executor--do-execute lang body))
-        (claude-executor--do-execute lang body)))))
-#+end_src
-
-** Exec-Tag Execution
-
-Allows individual shell commands via HTML comment in the response:
-~<!-- exec: ls -la ~/projects -->~. Executed with confirmation.
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--find-commands ()
-  "Find commands in tags of the form '<!-- exec: COMMAND -->'."
-  (let (commands)
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              "<!--\\s-*exec:\\s-*\\(.*?\\)\\s-*-->" nil t)
-        (push (match-string-no-properties 1) commands)))
-    (nreverse commands)))
-
-(defun claude-executor-run-command (command)
-  "Execute COMMAND in the shell.
-Output goes to the buffer *Claude Commands*.
-Also callable interactively: M-x or C-c C-x c."
-  (interactive "sCommand: ")
-  (let ((result-buf (get-buffer-create "*Claude Commands*")))
-    (with-current-buffer result-buf
-      (goto-char (point-max))
-      (insert (format "\n$ %s\n" command))
-      (insert (shell-command-to-string command))
-      (insert "\n"))
-    (display-buffer result-buf)))
-#+end_src
-
-** AUTORUN Elisp Blocks
-
-Primary mechanism for Emacs control. Claude marks executable elisp
-blocks with the tag from ~claude-executor-elisp-tag~ (default
-"AUTORUN"). The hook finds them, optionally checks against the
-whitelist, evaluates them with error handling and logs results/errors
-in ~*Claude Actions*~.
-
-*** Find Block
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--find-autorun-blocks ()
-  "Find elisp blocks whose header contains the AUTORUN tag.
-Search depends on `claude-executor-elisp-tag'."
-  (let (blocks)
-    (save-excursion
-      (goto-char (point-min))
-      (while (re-search-forward
-              (format "^#\\+begin_src elisp.*%s.*\n\\(\\(?:.*\n\\)*?\\)#\\+end_src"
-                      claude-executor-elisp-tag)
-              nil t)
-        (push (match-string-no-properties 1) blocks)))
-    (nreverse blocks)))
-#+end_src
-
-*** Whitelist Check
-
-Optional: only allow calls to functions in ~claude-executor-allowed-functions~.
-If the list is empty, everything is allowed.
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--whitelist-allows-p (code)
-  "Check whether CODE (string) only calls functions from
-`claude-executor-allowed-functions'.
-If no whitelist is set → t (all allowed)."
-  (if (null claude-executor-allowed-functions)
-      t
-    (let ((sexp    (read code))
-          (allowed claude-executor-allowed-functions)
-          (ok      t))
-      (cl-labels ((walk (form)
-                    (cond
-                     ((and (consp form) (symbolp (car form)))
-                      (unless (memq (car form) allowed)
-                        (setq ok nil))
-                      (mapc #'walk (cdr form)))
-                     ((consp form)
-                      (mapc #'walk form)))))
-        (walk sexp))
-      ok)))
-#+end_src
-
-*** Safe-Eval with Logging
-
-#+begin_src elisp :tangle yes
-(defun claude-executor--safe-eval (code)
-  "Evaluate CODE (string) with error handling and logging.
-- Whitelist violation → ⚠ entry, no eval.
-- Success             → ✓ entry with result.
-- Error               → ✗ entry with error message.
-Logs go to the buffer *Claude Actions*."
-  (let ((log-buf (get-buffer-create "*Claude Actions*")))
-    (cond
-     ((not (claude-executor--whitelist-allows-p code))
-      (with-current-buffer log-buf
-        (goto-char (point-max))
-        (insert (format "\n⚠ [%s]\n  Code: %s\n  Rejected: not in whitelist.\n"
-                        (format-time-string "%H:%M:%S") code))
-        (display-buffer log-buf)))
-     (t
-      (condition-case err
-          (let ((result (eval (read code))))
-            (with-current-buffer log-buf
-              (goto-char (point-max))
-              (insert (format "\n✓ [%s]\n  Code: %s\n  Result: %s\n"
-                              (format-time-string "%H:%M:%S")
-                              code result))
-              (display-buffer log-buf))
-            result)
-        (error
-         (with-current-buffer log-buf
-           (goto-char (point-max))
-           (insert (format "\n✗ [%s]\n  Code: %s\n  Error: %s\n"
-                           (format-time-string "%H:%M:%S")
-                           code err))
-           (display-buffer log-buf))))))))
-#+end_src
-
-** Response Hooks
-
-Hooks that run after each gptel response. Centrally registered and
-unregistered by the minor mode (see below).
-
-*** Response Hook (Babel + exec-tags + auto-commands)
-
-#+begin_src elisp :tangle yes
-(defun claude-executor-response-hook (beg end)
-  "Hook for Babel blocks, exec-tags and auto-pattern matching.
-Active only when `claude-executor-auto-execute' = t.
-Registered in `gptel-post-response-functions'."
-  (when claude-executor-auto-execute
-    (save-restriction
-      (narrow-to-region beg end)
-      ;; 1. Babel blocks
-      (dolist (block (claude-executor--find-babel-blocks))
-        (claude-executor--execute-babel-block block))
-      ;; 2. Explicit exec-tags
-      (dolist (cmd (claude-executor--find-commands))
-        (when (yes-or-no-p (format "Execute command: %s ?" cmd))
-          (claude-executor-run-command cmd)))
-      ;; 3. User-defined patterns from claude-executor-auto-commands
-      (dolist (pattern-cmd claude-executor-auto-commands)
-        (save-excursion
-          (goto-char (point-min))
-          (when (re-search-forward (car pattern-cmd) nil t)
-            (claude-executor-run-command (cdr pattern-cmd))))))))
-#+end_src
-
-*** AUTORUN Hook (Elisp Eval)
-
-#+begin_src elisp :tangle yes
-(defun claude-executor-autorun-hook (beg end)
-  "Hook for AUTORUN elisp blocks.
-Always active while `claude-executor-mode' is on.
-Respects `claude-executor-confirm-before-execute'."
-  (save-restriction
-    (narrow-to-region beg end)
-    (dolist (code (claude-executor--find-autorun-blocks))
-      (if claude-executor-confirm-before-execute
-          (when (yes-or-no-p
-                 (format "Claude wants to execute:\n%s\nAllow?" code))
-            (claude-executor--safe-eval code))
-        (claude-executor--safe-eval code)))))
-#+end_src
-
-** Interactive Commands
-
-Commands that are not hook-driven but invoked explicitly via keyboard
-or ~M-x~.
-
-#+begin_src elisp :tangle yes
-(defun claude-executor-execute-all-blocks ()
-  "Manual variant: execute all Babel blocks in the current buffer."
-  (interactive)
-  (let ((blocks (claude-executor--find-babel-blocks)))
-    (if blocks
-        (dolist (block blocks)
-          (claude-executor--execute-babel-block block))
-      (message "No code blocks found."))))
-
-(defun claude-executor-execute-block-at-point ()
-  "Execute the Babel block under the cursor."
-  (interactive)
-  (let* ((elem (org-element-at-point))
-         (lang (org-element-property :language elem))
-         (body (org-element-property :value elem)))
-    (if (and lang body)
-        (claude-executor--do-execute lang body)
-      (message "No code block under cursor."))))
-#+end_src
-
-** Minor Mode
-
-Central on/off switch. Registers *both* hooks (response +
-AUTORUN) on ~gptel-post-response-functions~ so that
-~(claude-executor-mode 0)~ really turns everything off.
-
-#+begin_src elisp :tangle yes
-(defvar claude-executor-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-x e") #'claude-executor-execute-all-blocks)
-    (define-key map (kbd "C-c C-x b") #'claude-executor-execute-block-at-point)
-    (define-key map (kbd "C-c C-x c") #'claude-executor-run-command)
-    map)
-  "Keymap for `claude-executor-mode'.")
-
-(define-minor-mode claude-executor-mode
-  "Global mode for automatic execution of Claude responses.
-Activates the response and AUTORUN hooks on
-`gptel-post-response-functions'."
-  :lighter " CE"
-  :keymap claude-executor-mode-map
-  :global t
-  (if claude-executor-mode
-      (progn
-        (add-hook 'gptel-post-response-functions
-                  #'claude-executor-response-hook)
-        (add-hook 'gptel-post-response-functions
-                  #'claude-executor-autorun-hook)
-        (message "Claude Executor activated."))
-    (remove-hook 'gptel-post-response-functions
-                 #'claude-executor-response-hook)
-    (remove-hook 'gptel-post-response-functions
-                 #'claude-executor-autorun-hook)
-    (message "Claude Executor deactivated.")))
-
-(provide 'claude-executor)
-#+end_src
-
-** GPtel Directives
-
-System prompts that explain the conventions to Claude.
-Both directives are registered in ~gptel-directives~; the active one is
-~emacs-assistant~ (see below).
-
-*** Short Directive: =assistant=
-
-Focused on TODO insertion. Shorter, older — remains available as an
-alternative system prompt (switchable via ~gptel-system-prompt~).
-
-#+begin_src elisp :tangle yes
-(setq gptel-directives
-      (append gptel-directives
-              `((assistant . ,(format "You are an Emacs assistant.
-When the user wants to perform an action in Emacs, respond with a
-,#+begin_src elisp :AUTORUN
-(your-elisp-code-here)
-,#+end_src
-block. It is executed automatically.
-For org-mode TODO in inbox.org:
-  (find-file \"%s\")
-  (goto-char (point-max))
-  (insert \"* TODO Task\")
-For arbitrary M-x commands use call-interactively or funcall."
-                                      (expand-file-name "data/org/inbox.org" my/data-dir))))))
-#+end_src
-
-*** Full Directive: =emacs-assistant= (Default)
-
-Detailed variant with examples for window management, TODO insertion,
-opening files. Set as the default system prompt.
-
-#+begin_src elisp :tangle yes
-(let* ((data-d (directory-file-name my/data-dir)))
-  (setq gptel-directives
-        (append gptel-directives
-                `((emacs-assistant
-                   . ,(replace-regexp-in-string
-                       "~/emacs-data" data-d
-                       "You are an Emacs assistant running directly inside the live Emacs instance.
-Always respond in English. Execute actions directly without explaining.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ABSOLUTELY FORBIDDEN
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-NEVER write:
-• \"I cannot execute code\"
-• \"As a language model I cannot generate images\"
-• \"You need to press C-c C-c\" or explain any manual step
-• Create external files that the user has to find/open themselves
-Everything runs automatically. You write the block — the hook executes it.
-
-NEVER call write_file or write_org_file on:
-  config.org, init.el, config.el
-These are protected config files. Use read_file to inspect them, never write.
-The tools will return an error if you try — do not retry with a different path.
-
-════════════════════════════════════════════════
-WORKSPACE LAYOUT
-════════════════════════════════════════════════
-Org directory : ~/emacs-data/data/org/
-
-  inbox.org        — capture all new tasks here first
-  Erledigen.org    — main task list
-  Gewohnheiten.org — habits tracker
-  refile.org       — items pending filing
-  mode.org         — workflow and mode notes
-TODO states (in order): TODO → NEXT → WAITING → DONE
-Image directory: ~/.emacs.d/gptel-images/
-Presentations : export org subtree via org-reveal (reveal.js)
-
-════════════════════════════════════════════════
-HOW EXECUTION WORKS
-════════════════════════════════════════════════
-After EVERY response three hooks run automatically:
-
-  Hook A — :AUTORUN blocks
-    #+begin_src elisp :AUTORUN → executed immediately via eval.
-    Has access to the entire live Emacs state.
-    Result goes to *Claude Actions* (not visible in the buffer).
-
-  Hook B — :results output blocks  (auto-execute = t, active)
-    #+begin_src LANG :results output → executed via shell/interpreter.
-    Output appears as #+RESULTS: directly below the block.
-    Allowed languages: python sh bash elisp R ruby js
-
-  Hook C — :file blocks  (always active, even without auto-execute)
-    #+begin_src LANG :file NAME.png → executed via org-babel-execute-src-block.
-    The generated image appears immediately inline in the buffer.
-    Trigger: language IN {gnuplot dot plantuml mermaid R}
-             OR header contains \":file <name>\"
-
-RULE: Every block you write MUST have one of these three headers.
-      NEVER write a bare #+begin_src without :AUTORUN / :results output
-      / :file — the user would otherwise have to start it manually.
-
-════════════════════════════════════════════════
-DECISION TREE — WHICH BLOCK FOR WHAT
-════════════════════════════════════════════════
-
-  Emacs action — user just wants it done (no code to show)?
-    → Call run_elisp tool directly (silent, nothing in buffer)
-    Example: open file, switch buffer, insert TODO, close window
-
-  Emacs action — user wants to SEE the code or keep it in buffer?
-    → #+begin_src elisp :AUTORUN
-
-  Output data/text (calculation, agenda, system info)?
-    → #+begin_src LANG :results output
-
-  Graph / plot / diagram / image?
-    → #+begin_src LANG :file name.png
-    No :AUTORUN needed — Hook C handles it automatically.
-
-  Multi-step task needing intermediate results?
-    → Use native tools (Claude/GPT-4o only — see NATIVE TOOLS below)
-
-PREFER tools over :AUTORUN when:
-  • The user says "open", "go to", "switch", "insert", "add", "close"
-    and does not ask to SEE the code
-  • The action produces no meaningful output to display
-  • The buffer should stay clean (only the answer lands here, not code blocks)
-
-════════════════════════════════════════════════
-NATIVE TOOLS (Claude & GPT-4o only)
-════════════════════════════════════════════════
-When tool calling is active you have these Emacs-native tools.
-Use them for multi-step tasks where you need results before deciding next action.
-
-  get_todos           — list all open TODO items with states, tags, deadlines
-  read_org_file       — read any org file's full content
-  write_org_file      — write/overwrite an org file
-  add_todo            — add a task to inbox.org (title, tags, deadline)
-  change_todo_state   — change state of a heading (TODO/NEXT/WAITING/DONE)
-  set_deadline        — set a deadline on a heading
-  add_tag             — add a tag to a heading
-  move_heading        — move a heading to another org file
-  get_org_structure   — get heading outline of a file
-
-  execute_code        — run python/bash/sh/R code and get output back
-  run_elisp           — evaluate Emacs Lisp and get result back
-
-  read_file           — read any file
-  write_file          — write content to any file
-  list_directory      — list files in a directory
-  search_files        — search text in files (ripgrep)
-
-  list_buffers        — list all open Emacs buffers
-  get_buffer_content  — get current content of any buffer
-
-  org_export          — export org to: html / pdf / md / reveal / beamer
-
-════════════════════════════════════════════════
-MATHEMATICS — ALWAYS INLINE, ALWAYS COMPLETE
-════════════════════════════════════════════════
-For EVERY mathematical question, immediately and without being asked:
-
-1. FORMULAS as LaTeX — org-fragtog renders automatically on cursor move:
-     Inline:  $f(x) = x^2 + 3^{x-1}$
-     Display: $$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
-
-2. ALWAYS INCLUDE A GRAPH when a function appears.
-   Default choice: gnuplot (fast, no Python import needed):
-   ,#+begin_src gnuplot :file graph.png
-   set terminal png size 900,600
-   set xlabel \"x\"; set ylabel \"f(x)\"; set grid; set zeroaxis lw 2
-   plot [-3:4] x**2 + 3**(x-1) title \"f(x) = x^2 + 3^(x-1)\" lw 2
-   ,#+end_src
-
-   3D function with gnuplot:
-   ,#+begin_src gnuplot :file graph3d.png
-   set terminal png size 900,700
-   set hidden3d; set pm3d depthorder
-   splot [-5:5][-5:5] sin(sqrt(x**2+y**2)) title \"f(x,y)\"
-   ,#+end_src
-
-   Complex plot with matplotlib (always use Agg backend!):
-   ,#+begin_src python :results file graphics :file plot.png
-   import matplotlib; matplotlib.use('Agg')
-   import matplotlib.pyplot as plt, numpy as np
-   x = np.linspace(-3, 4, 400)
-   y = x**2 + 3**(x-1)
-   plt.figure(figsize=(8,5)); plt.plot(x, y, lw=2)
-   plt.xlabel('x'); plt.ylabel('f(x)'); plt.grid(True, alpha=0.3)
-   plt.title('f(x) = x² + 3^(x-1)')
-   plt.savefig('plot.png', dpi=100, bbox_inches='tight'); plt.close()
-   ,#+end_src
-
-   3D matplotlib:
-   ,#+begin_src python :results file graphics :file plot3d.png
-   import matplotlib; matplotlib.use('Agg')
-   import matplotlib.pyplot as plt, numpy as np
-   from mpl_toolkits.mplot3d import Axes3D
-   x = np.linspace(-6, 6, 80); y = np.linspace(-6, 6, 80)
-   X, Y = np.meshgrid(x, y); Z = np.sin(np.sqrt(X**2 + Y**2))
-   fig = plt.figure(figsize=(9,7))
-   ax = fig.add_subplot(111, projection='3d')
-   ax.plot_surface(X, Y, Z, cmap='viridis', edgecolor='none')
-   ax.set_title('f(x,y) = sin(√(x²+y²))')
-   plt.savefig('plot3d.png', dpi=100, bbox_inches='tight'); plt.close()
-   ,#+end_src
-
-3. VALUE TABLE as org table (| x | f(x) | ...), never as running text.
-
-4. NO separate document — everything stays in this buffer.
-
-════════════════════════════════════════════════
-EMACS ACTIONS (AUTORUN examples)
-════════════════════════════════════════════════
-Open file:
-,#+begin_src elisp :AUTORUN
-(find-file \"~/emacs-data/data/org/inbox.org\")
-,#+end_src
-
-Insert TODO:
-,#+begin_src elisp :AUTORUN
-(with-current-buffer (find-file-noselect \"~/emacs-data/data/org/inbox.org\")
-  (goto-char (point-max))
-  (insert \"\n* TODO New task\")
-  (save-buffer))
-,#+end_src
-
-Close right window:
-,#+begin_src elisp :AUTORUN
-(let ((win (window-in-direction 'right)))
-  (when win (delete-window win)))
-,#+end_src
-
-Re-render images inline (if needed):
-,#+begin_src elisp :AUTORUN
-(org-display-inline-images t t)
-,#+end_src
-
-════════════════════════════════════════════════
-OUTPUT DATA (:results output examples)
-════════════════════════════════════════════════
-List agenda TODOs:
-,#+begin_src elisp :results output
-(dolist (file (org-agenda-files))
-  (with-current-buffer (find-file-noselect file)
-    (org-map-entries
-     (lambda ()
-       (when (org-get-todo-state)
-         (princ (format \"%-8s %s\\n\"
-                        (org-get-todo-state)
-                        (org-get-heading t t t t))))))))
-,#+end_src
-
-Python calculation:
-,#+begin_src python :results output
-import math; print(math.factorial(20))
-,#+end_src
-
-Shell:
-,#+begin_src sh :results output
-df -h | head -5
-,#+end_src
-
-════════════════════════════════════════════════
-WEB & IMAGES — AVAILABLE FUNCTIONS (EXACT CODE)
-════════════════════════════════════════════════
-All functions are defined and directly callable:
-
-(my/web-fetch URL)
-  → String: raw HTTP body. Error on HTTP≥400 or timeout (30s).
-
-(my/web-text URL &optional MAX-CHARS)
-  → String: readable plain text (shr, 80 chars wide).
-  → Example: (my/web-text \"https://example.com\" 3000)
-
-(my/web-search-ddg QUERY &optional LIMIT)
-  → List of (\"Title\" . \"https://...\") cons cells. LIMIT default 5.
-  → Example: (my/web-search-ddg \"emacs org-mode\" 5)
-
-(my/web-fetch-image URL &optional DIR)
-  → String: local file path. DIR default: temporary-file-directory.
-
-(my/web-extract-images URL &optional LIMIT)
-  → List of absolute image URL strings. LIMIT default 10.
-
-(my/insert-image-inline FILE-OR-URL)
-  → Appends [[file:PATH]] to buffer end + calls org-display-inline-images.
-  → For URL: downloads first. Returns local path.
-
-Rule: Data/text → :results output.  Insert image → :AUTORUN.
-
-Summarize webpage:
-,#+begin_src elisp :results output
-(princ (my/web-text \"https://orgmode.org\" 2000))
-,#+end_src
-
-Search with org links as output:
-,#+begin_src elisp :results output
-(dolist (r (my/web-search-ddg \"emacs tutorial\" 5))
-  (princ (format \"- [[%s][%s]]\\n\" (cdr r) (car r))))
-,#+end_src
-
-Insert image from URL:
-,#+begin_src elisp :AUTORUN
-(my/insert-image-inline \"https://example.com/image.png\")
-,#+end_src
-
-════════════════════════════════════════════════
-ANALYZE IMAGES (worksheets, photos, sketches)
-════════════════════════════════════════════════
-When the user attaches an image:
-1. Identify content: math, text, diagrams, tables.
-2. Solve each task with LaTeX formulas + gnuplot graph.
-3. One org heading per task (** Task 1).
-4. No separate document — everything inline here.
-
-Example:
-** Task 1: $x^2 + 4x - 5 = 0$
-$(x+5)(x-1)=0 \\Rightarrow x_1=-5,\\; x_2=1$
-,#+begin_src gnuplot :file parabola.png
-set terminal png size 800,500
-set xlabel \"x\"; set ylabel \"y\"; set grid; set zeroaxis lw 2
-plot [-7:3] x**2 + 4*x - 5 title \"f(x) = x² + 4x − 5\" lw 2
-,#+end_src"
-                       t t))))))
-#+end_src
-
-*** Set Default Directive
-
-#+begin_src elisp :tangle yes
-;; emacs-assistant globally as default
-(setq gptel--system-message
-      (alist-get 'emacs-assistant gptel-directives))
-
-;; Also set emacs-assistant for each new gptel session
-(add-hook 'gptel-mode-hook
-          (lambda ()
-            (setq-local gptel--system-message
-                        (alist-get 'emacs-assistant gptel-directives))))
-
-#+end_src
-
-** Personal Settings
-
-Values to adjust — all defcustoms from the configuration block,
-plus API key/model and the mode activation.
-
-#+begin_src elisp :tangle yes
-;;; --- Security -----------------------------------------------------
-;; Confirmation dialog before execution (Babel + AUTORUN)
-(setq claude-executor-confirm-before-execute nil)
-
-;; Automatically execute Babel blocks, exec-tags, auto-commands.
-;; t = every Babel block with :results output / :file etc. runs directly
-;; after a Claude response and produces visible output (or an image).
-(setq claude-executor-auto-execute t)
-
-;;; --- Allowed Babel Languages --------------------------------------
-(setq claude-executor-allowed-languages
-      '("python" "sh" "bash" "elisp" "R" "ruby" "js"))
-
-;;; --- Pattern-Based Auto Commands (example commented out) ----------
-;; (setq claude-executor-auto-commands
-;;       '(("pip install \\(.*\\)" . "pip install \\1")))
-
-;;; --- AUTORUN Whitelist (optional) ---------------------------------
-;; nil = no restriction. For more security, enter symbols here:
-;; (setq claude-executor-allowed-functions
-;;       '(find-file find-file-noselect with-current-buffer
-;;         goto-char point-max insert save-buffer
-;;         org-todo org-insert-heading org-agenda message))
-
-;;; --- Activate Mode ------------------------------------------------
-;; Backend + model is set in the "Multi-Backend Configuration" section.
-(claude-executor-mode 1)
-#+end_src
-
-** Keybindings Overview
-
-| Key           | Function                                     |
-|---------------+----------------------------------------------|
-| ~C-c C-x e~   | Execute all Babel blocks in the buffer        |
-| ~C-c C-x b~   | Execute Babel block under cursor              |
-| ~C-c C-x c~   | Enter a custom shell command                 |
-
-Active while ~claude-executor-mode~ is running.
-
-** Examples & Workflows
-
-*** AUTORUN: Insert TODO
-
-In the gptel buffer:
-
-#+begin_example
-Add "Buy milk" as a TODO in inbox.org
-#+end_example
-
-Claude responds with an AUTORUN block:
-
-#+begin_example
-,#+begin_src elisp :AUTORUN
-(with-current-buffer (find-file-noselect "~/org/inbox.org")
-  (goto-char (point-max))
-  (insert "\n* TODO Milch kaufen")
-  (save-buffer))
-,#+end_src
-#+end_example
-
-→ Hook detects =AUTORUN= → (optional confirmation) → eval → entry in
-~*Claude Actions*~.
-
-*** AUTORUN: Open Agenda
-
-You ask: "Show me the agenda for this week".
-
-Claude responds:
-
-#+begin_example
-,#+begin_src elisp :AUTORUN
-(org-agenda nil "a")
-,#+end_src
-#+end_example
-
-*** Exec-Tag: Shell Command
-
-Claude responds with:
-
-#+begin_example
-<!-- exec: ls -la ~/projects -->
-#+end_example
-
-→ Executed (with confirmation), output in ~*Claude Commands*~.
-Requires: ~claude-executor-auto-execute~ = t.
-
-*** Babel: Execute a Python Snippet
-
-Response contains:
-
-#+begin_example
-,#+begin_src python
-print("hello")
-,#+end_src
-#+end_example
-
-→ With ~claude-executor-auto-execute~ = t: temp file → ~python3~ →
-output in ~*Claude Execution Results*~.
-
-** Known Inconsistencies / TODOs
-
-- ~claude-executor-auto-execute-elisp~ is defined as a defcustom
-  but not yet wired anywhere — reserved for a future separation
-  between "mode on" and "elisp-eval on".
-- ~gptel-api-key~ is commented out here. Recommendation: load via
-  ~auth-source~ from ~~/.authinfo.gpg~ instead of plain text.
-
-* Workspace Context
-
-** Context Collector
-
-#+begin_src emacs-lisp :tangle yes
-(defun my/collect-org-todos (&optional limit)
-  "Return a list of TODO entries from all org agenda files.
-Each entry is a plist with :state :heading :file :deadline :tags."
-  (let ((limit (or limit 120))
-        results)
-    (dolist (file (org-agenda-files))
-      (when (file-exists-p file)
-        (with-current-buffer (or (find-buffer-visiting file)
-                                 (find-file-noselect file t))
-          (org-map-entries
-           (lambda ()
-             (when (< (length results) limit)
-               (push (list :state    (org-get-todo-state)
-                           :heading  (org-get-heading t t t t)
-                           :file     (abbreviate-file-name file)
-                           :tags     (mapconcat #'identity (org-get-tags) " ")
-                           :deadline (org-entry-get nil "DEADLINE"))
-                     results)))
-           "/TODO|NEXT|IN-PROGRESS|WAIT|REVIEW" 'agenda))))
-    (nreverse results)))
-
-(defun my/build-workspace-context ()
-  "Build a compact workspace context string for the gptel system prompt."
-  (let* ((todos (my/collect-org-todos 80))
-         (by-state (seq-group-by (lambda (e) (plist-get e :state)) todos))
-         (format-entries
-          (lambda (state entries)
-            (when entries
-              (concat (format "\n[%s]\n" state)
-                      (mapconcat
-                       (lambda (e)
-                         (let ((dl (plist-get e :deadline))
-                               (tags (plist-get e :tags)))
-                           (format "  - %s%s%s"
-                                   (plist-get e :heading)
-                                   (if (and dl (not (string-empty-p dl)))
-                                       (format " [due: %s]" dl) "")
-                                   (if (and tags (not (string-empty-p tags)))
-                                       (format " :%s:" tags) ""))))
-                       entries "\n")))))
-         (buf (current-buffer))
-         (buf-name (buffer-name buf))
-         (major (format "%s" major-mode))
-         (open-org (seq-filter
-                    (lambda (b) (with-current-buffer b
-                                  (derived-mode-p 'org-mode)))
-                    (buffer-list))))
-    (concat
-     "=== WORKSPACE CONTEXT ===\n"
-     (format "Active buffer: %s  [%s]\n" buf-name major)
-     (when open-org
-       (format "Open org buffers: %s\n"
-               (mapconcat #'buffer-name open-org ", ")))
-     "\nTODO summary:\n"
-     (mapconcat (lambda (state)
-                  (funcall format-entries state (cdr (assoc state by-state))))
-                '("NEXT" "IN-PROGRESS" "TODO" "WAIT" "REVIEW") "")
-     "\n=== END WORKSPACE CONTEXT ===\n")))
-#+end_src
-
-** Context Cache
-
-#+begin_src emacs-lisp :tangle yes
-(defvar my/gptel-context--cache nil)
-(defvar my/gptel-context--time 0)
-(defconst my/gptel-context--ttl 60)
-
-(defun my/workspace-context-string ()
-  "Return cached workspace context, refreshing if stale."
-  (when (> (- (float-time) my/gptel-context--time)
-           my/gptel-context--ttl)
-    (setq my/gptel-context--cache (my/build-workspace-context)
-          my/gptel-context--time  (float-time)))
-  my/gptel-context--cache)
-
-(defun my/gptel-context-invalidate ()
-  "Force workspace context to be rebuilt on next gptel call."
-  (interactive)
-  (setq my/gptel-context--time 0)
-  (message "gptel workspace context cache cleared."))
-
-(add-hook 'after-save-hook
-          (lambda ()
-            (when (derived-mode-p 'org-mode)
-              (my/gptel-context-invalidate))))
-#+end_src
-
-** Auto-Injection
-
-#+begin_src emacs-lisp :tangle yes
-(defvar my/gptel-context-enabled t
-  "When non-nil, inject workspace context into every gptel-send call.")
-
-(defun my/gptel--inject-context (orig-fn &rest args)
-  "Around advice for `gptel-send': prepend workspace context to system prompt."
-  (if (not my/gptel-context-enabled)
-      (apply orig-fn args)
-    (let* ((ctx   (my/workspace-context-string))
-           (orig  gptel--system-message)
-           (gptel--system-message (if (and ctx (not (string-empty-p ctx)))
-                                      (concat orig "\n\n" ctx)
-                                    orig)))
-      (apply orig-fn args))))
-
-(advice-add 'gptel-send :around #'my/gptel--inject-context)
-#+end_src
-
-
-* AI Tools
-
-** Org Tools
-
-#+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'gptel
-  ;; get_todos — return the current TODO list as text
-  (gptel-make-tool
-   :name "get_todos"
-   :description "Return all open TODO entries from the org agenda."
-   :function (lambda ()
-               (mapconcat
-                (lambda (e)
-                  (format "[%s] %s%s"
-                          (plist-get e :state)
-                          (plist-get e :heading)
-                          (let ((dl (plist-get e :deadline)))
-                            (if (and dl (not (string-empty-p dl)))
-                                (format " (due %s)" dl) ""))))
-                (my/collect-org-todos 200) "\n")))
-
-  ;; read_org_file — get raw text of an org file
-  (gptel-make-tool
-   :name "read_org_file"
-   :description "Read the contents of an org file. Path relative to ~ is accepted."
-   :args '((:name "path" :type string :description "Org file path, e.g. ~/emacs-data/data/org/todo.org — use your actual data dir"))
-   :function (lambda (path)
-               (let ((p (expand-file-name path)))
-                 (if (file-exists-p p)
-                     (with-temp-buffer
-                       (insert-file-contents p)
-                       (buffer-string))
-                   (format "File not found: %s" p)))))
-
-  ;; write_org_file — overwrite an org file
-  (gptel-make-tool
-   :name "write_org_file"
-   :description "Overwrite an org file with new content. Creates the file if absent. Cannot write to protected config files."
-   :args '((:name "path"    :type string :description "File path")
-           (:name "content" :type string :description "Full new file content"))
-   :function (lambda (path content)
-               (let ((p (file-truename (expand-file-name path))))
-                 (if (my/gptel-protected-p p)
-                     (format "Error: %s is a protected config file — use read_file to inspect it, never write." p)
-                   (make-directory (file-name-directory p) t)
-                   (with-temp-file p (insert content))
-                   (format "Written: %s" p)))))
-
-  ;; add_todo — append a new TODO heading to a file
-  (gptel-make-tool
-   :name "add_todo"
-   :description "Append a new TODO entry to an org file."
-   :args '((:name "file"    :type string :description "Target org file path")
-           (:name "heading" :type string :description "Heading text (without TODO keyword)")
-           (:name "state"   :type string :description "TODO state, e.g. TODO, NEXT")
-           (:name "body"    :type string :description "Optional body text"))
-   :function (lambda (file heading state body)
-               (let ((p (expand-file-name file)))
-                 (with-current-buffer (find-file-noselect p)
-                   (goto-char (point-max))
-                   (insert (format "\n* %s %s\n%s" state heading (or body "")))
-                   (save-buffer))
-                 (format "Added %s: %s to %s" state heading p))))
-
-  ;; change_todo_state — change state of a heading by exact title match
-  (gptel-make-tool
-   :name "change_todo_state"
-   :description "Change the TODO state of a heading that matches the given title."
-   :args '((:name "file"    :type string :description "Org file path")
-           (:name "heading" :type string :description "Exact heading text (case-insensitive)")
-           (:name "state"   :type string :description "New state, e.g. DONE, IN-PROGRESS"))
-   :function (lambda (file heading state)
-               (let ((p (expand-file-name file))
-                     found)
-                 (with-current-buffer (find-file-noselect p)
-                   (goto-char (point-min))
-                   (while (re-search-forward
-                           (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
-                           nil t)
-                     (org-todo state)
-                     (setq found t))
-                   (when found (save-buffer)))
-                 (if found
-                     (format "State set to %s for: %s" state heading)
-                   (format "Heading not found: %s" heading)))))
-
-  ;; set_deadline — set or update deadline on a heading
-  (gptel-make-tool
-   :name "set_deadline"
-   :description "Set a DEADLINE on a heading. Use ISO date format YYYY-MM-DD."
-   :args '((:name "file"    :type string :description "Org file path")
-           (:name "heading" :type string :description "Exact heading text")
-           (:name "date"    :type string :description "Date string YYYY-MM-DD"))
-   :function (lambda (file heading date)
-               (let ((p (expand-file-name file))
-                     found)
-                 (with-current-buffer (find-file-noselect p)
-                   (goto-char (point-min))
-                   (when (re-search-forward
-                          (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
-                          nil t)
-                     (org-deadline nil date)
-                     (setq found t)
-                     (save-buffer)))
-                 (if found
-                     (format "Deadline %s set on: %s" date heading)
-                   (format "Heading not found: %s" heading)))))
-
-  ;; add_tag — add a tag to a heading
-  (gptel-make-tool
-   :name "add_tag"
-   :description "Add a tag to a matching org heading."
-   :args '((:name "file"    :type string :description "Org file path")
-           (:name "heading" :type string :description "Exact heading text")
-           (:name "tag"     :type string :description "Tag to add (no colons)"))
-   :function (lambda (file heading tag)
-               (let ((p (expand-file-name file))
-                     found)
-                 (with-current-buffer (find-file-noselect p)
-                   (goto-char (point-min))
-                   (when (re-search-forward
-                          (concat "^\\*+ \\(?:[A-Z]+ \\)?" (regexp-quote heading))
-                          nil t)
-                     (org-set-tags (cons tag (org-get-tags nil t)))
-                     (setq found t)
-                     (save-buffer)))
-                 (if found
-                     (format "Tag :%s: added to: %s" tag heading)
-                   (format "Heading not found: %s" heading)))))
-
-  ;; get_org_structure — outline of an org file (headings only)
-  (gptel-make-tool
-   :name "get_org_structure"
-   :description "Return the heading outline of an org file without body text."
-   :args '((:name "path" :type string :description "Org file path"))
-   :function (lambda (path)
-               (let ((p (expand-file-name path)))
-                 (if (not (file-exists-p p))
-                     (format "File not found: %s" p)
-                   (with-temp-buffer
-                     (insert-file-contents p)
-                     (org-mode)
-                     (let (lines)
-                       (org-map-entries
-                        (lambda ()
-                          (push (concat (make-string (org-outline-level) ?*) " "
-                                        (org-get-heading t t t t))
-                                lines)))
-                       (mapconcat #'identity (nreverse lines) "\n"))))))))
-#+end_src
-
-** Code Execution Tools
-
-#+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'gptel
-  ;; execute_code — run a snippet in a temp org babel block
-  (gptel-make-tool
-   :name "execute_code"
-   :description "Execute a code snippet and return the output. Supported languages: python, bash, sh, R, emacs-lisp."
-   :args '((:name "language" :type string :description "Language: python, bash, sh, R, emacs-lisp")
-           (:name "code"     :type string :description "Source code to execute"))
-   :function (lambda (language code)
-               (let* ((lang (downcase language))
-                      (tmp  (make-temp-file "gptel-exec-" nil ".org"))
-                      result)
-                 (with-temp-file tmp
-                   (insert (format "#+begin_src %s\n%s\n#+end_src\n" lang code)))
-                 (with-temp-buffer
-                   (insert-file-contents tmp)
-                   (org-mode)
-                   (goto-char (point-min))
-                   (when (search-forward "#+begin_src" nil t)
-                     (beginning-of-line)
-                     (condition-case err
-                         (let* ((info (org-babel-get-src-block-info))
-                                (res  (org-babel-execute-src-block nil info)))
-                           (setq result (if res (format "%s" res) "(no output)")))
-                       (error (setq result (format "Error: %s" err))))))
-                 (delete-file tmp)
-                 (or result "(no output)"))))
-
-  ;; run_elisp — evaluate elisp and return the result
-  (gptel-make-tool
-   :name "run_elisp"
-   :description "Evaluate Emacs Lisp and return the printed result. Use for Emacs introspection and automation. Cannot write to protected config files."
-   :args '((:name "code" :type string :description "Elisp expression(s) to evaluate"))
-   :function (lambda (code)
-               (condition-case err
-                   (cl-letf (((symbol-function 'write-file)
-                              (lambda (file &rest args)
-                                (if (my/gptel-protected-p (expand-file-name file))
-                                    (error "write-file blocked by run_elisp: %s is protected" file)
-                                  (apply #'write-file file args))))
-                             ((symbol-function 'set-visited-file-name)
-                              (lambda (file &rest args)
-                                (if (and file (not (string-empty-p file))
-                                         (my/gptel-protected-p (expand-file-name file)))
-                                    (error "set-visited-file-name blocked by run_elisp: %s is protected" file)
-                                  (apply #'set-visited-file-name file args)))))
-                     (let ((result (eval (car (read-from-string
-                                               (concat "(progn " code ")"))))))
-                       (format "%S" result)))
-                 (error (format "Error: %s" err))))))
-#+end_src
-
-** File System Tools
-
-#+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'gptel
-  ;; read_file — read any text file
-  (gptel-make-tool
-   :name "read_file"
-   :description "Read the contents of any text file on disk."
-   :args '((:name "path" :type string :description "Absolute or ~-relative file path"))
-   :function (lambda (path)
-               (let ((p (expand-file-name path)))
-                 (if (file-exists-p p)
-                     (with-temp-buffer
-                       (insert-file-contents p)
-                       (buffer-string))
-                   (format "File not found: %s" p)))))
-
-  ;; write_file — write content to any file
-  (gptel-make-tool
-   :name "write_file"
-   :description "Write content to a file, creating parent directories if needed. Cannot write to protected config files."
-   :args '((:name "path"    :type string :description "File path")
-           (:name "content" :type string :description "Content to write"))
-   :function (lambda (path content)
-               (let ((p (file-truename (expand-file-name path))))
-                 (if (my/gptel-protected-p p)
-                     (format "Error: %s is a protected config file — use read_file to inspect it, never write." p)
-                   (make-directory (file-name-directory p) t)
-                   (with-temp-file p (insert content))
-                   (format "Written: %s" p)))))
-
-  ;; list_directory — list files in a directory
-  (gptel-make-tool
-   :name "list_directory"
-   :description "List files and directories at a given path."
-   :args '((:name "path"      :type string  :description "Directory path")
-           (:name "recursive" :type boolean :description "If true, list recursively"))
-   :function (lambda (path recursive)
-               (let ((p (expand-file-name path)))
-                 (if (not (file-directory-p p))
-                     (format "Not a directory: %s" p)
-                   (if recursive
-                       (mapconcat #'identity
-                                  (directory-files-recursively p "." nil nil t)
-                                  "\n")
-                     (mapconcat #'identity
-                                (directory-files p t nil t)
-                                "\n"))))))
-
-  ;; search_files — grep-style search
-  (gptel-make-tool
-   :name "search_files"
-   :description "Search for a regex pattern across files under a directory."
-   :args '((:name "directory" :type string :description "Root directory for search")
-           (:name "pattern"   :type string :description "Regex pattern")
-           (:name "glob"      :type string :description "File glob, e.g. *.org (optional)"))
-   :function (lambda (directory pattern glob)
-               (let* ((dir  (expand-file-name directory))
-                      (args (if (and glob (not (string-empty-p glob)))
-                                (list "grep" "-r" "--include" glob "-n" pattern dir)
-                              (list "grep" "-r" "-n" pattern dir))))
-                 (with-temp-buffer
-                   (apply #'call-process (car args) nil t nil (cdr args))
-                   (if (string-empty-p (buffer-string))
-                       "No matches found."
-                     (buffer-string)))))))
-#+end_src
-
-** Buffer Tools
-
-#+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'gptel
-  ;; list_buffers — list all open buffers
-  (gptel-make-tool
-   :name "list_buffers"
-   :description "Return the names of all currently open Emacs buffers."
-   :function (lambda ()
-               (mapconcat #'buffer-name (buffer-list) "\n")))
-
-  ;; get_buffer_content — get text of a named buffer
-  (gptel-make-tool
-   :name "get_buffer_content"
-   :description "Return the full text content of an open Emacs buffer."
-   :args '((:name "name" :type string :description "Buffer name as shown by list_buffers"))
-   :function (lambda (name)
-               (let ((buf (get-buffer name)))
-                 (if buf
-                     (with-current-buffer buf (buffer-string))
-                   (format "Buffer not found: %s" name))))))
-#+end_src
-
-** Export Tools
-
-#+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'gptel
-  ;; org_export — export an org file to a target format
-  (gptel-make-tool
-   :name "org_export"
-   :description "Export an org file to html, pdf, md, reveal (slides), or beamer. Returns the output file path."
-   :args '((:name "path"   :type string :description "Org file to export")
-           (:name "format" :type string :description "Output format: html, pdf, md, reveal, beamer"))
-   :function (lambda (path format)
-               (let ((p (expand-file-name path)))
-                 (if (not (file-exists-p p))
-                     (format "File not found: %s" p)
-                   (with-current-buffer (find-file-noselect p)
-                     (condition-case err
-                         (pcase (downcase format)
-                           ("html"
-                            (org-html-export-to-html)
-                            (format "Exported to: %s.html" (file-name-sans-extension p)))
-                           ("pdf"
-                            (org-latex-export-to-pdf)
-                            (format "Exported to: %s.pdf" (file-name-sans-extension p)))
-                           ("md"
-                            (org-md-export-to-markdown)
-                            (format "Exported to: %s.md" (file-name-sans-extension p)))
-                           ("reveal"
-                            (if (fboundp 'org-reveal-export-to-html)
-                                (progn (org-reveal-export-to-html)
-                                       (format "Exported to: %s.html" (file-name-sans-extension p)))
-                              "org-reveal not installed."))
-                           ("beamer"
-                            (org-beamer-export-to-pdf)
-                            (format "Exported to: %s.pdf" (file-name-sans-extension p)))
-                           (_ (format "Unknown format: %s" format)))
-                       (error (format "Export error: %s" err)))))))))
-#+end_src
-
-** Tool Activation
-
-#+begin_src emacs-lisp :tangle yes
-(defun my/gptel-tools-all ()
-  "Return list of all registered gptel-tool structs.
-gptel--known-tools is a two-level alist: (category . ((name . struct) ...))."
-  (cl-loop for (_cat . tools) in gptel--known-tools
-           append (cl-loop for (_name . tool) in tools
-                           when (gptel-tool-p tool) collect tool)))
-
-(with-eval-after-load 'gptel
-  ;; Set globally — all tools are registered by this point since this section
-  ;; is the last with-eval-after-load 'gptel block in config.el.
-  (setq gptel-tools (my/gptel-tools-all)))
-#+end_src
+The package is still a first extraction. The next cleanup should split the
+monolithic package file into modules for core, backends, prompts, executor,
+tools, context, and planner behavior.
