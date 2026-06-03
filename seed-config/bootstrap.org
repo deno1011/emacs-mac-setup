@@ -629,7 +629,11 @@ with :imported and :conflicts lists."
 (defun my/-repo-commit-and-push-if-needed (dir message)
   "Commit and push changes in DIR with MESSAGE when the worktree changed."
   (let ((default-directory dir))
-    (unless (zerop (call-process "git" nil nil nil "diff" "--quiet" "--"))
+    (unless (string-empty-p
+             (string-trim
+              (with-output-to-string
+                (with-current-buffer standard-output
+                  (call-process "git" nil t nil "status" "--porcelain")))))
       (call-process "git" nil nil nil "add" ".")
       (call-process "git" nil nil nil "commit" "-m" message)
       (call-process "git" nil nil nil "push" "origin" "main"))))
@@ -643,16 +647,19 @@ be recovered manually."
   (let* ((user (plist-get identity :username))
          (repo (plist-get identity :repo))
          (dir my/data-dir)
+         (dir-parent (file-name-directory (directory-file-name dir)))
          (stamp (format-time-string "%Y%m%d-%H%M%S"))
          (backup (format "%s.bak-%s" (directory-file-name dir) stamp))
-         (tmp (make-temp-file "emacs-data-adopt-" t)))
+         (tmp (make-temp-file (expand-file-name ".emacs-data-adopt-" dir-parent) t)))
     (if (not (my/-repo-exists-on-gh-p user repo))
-        (display-warning
-         'emacs-setup
-         (format "%s exists with content, but %s/%s does not exist on GitHub.
+        (progn
+          (delete-directory tmp t)
+          (display-warning
+           'emacs-setup
+           (format "%s exists with content, but %s/%s does not exist on GitHub.
 Leaving local files untouched. Create the repo first or move %s aside manually."
-                 dir user repo dir)
-         :warning)
+                   dir user repo dir)
+           :warning))
       (message "Bootstrap: cloning %s/%s into temporary adoption dir %s…" user repo tmp)
       (unless (zerop (call-process "gh" nil nil nil "repo" "clone"
                                    (format "%s/%s" user repo) tmp))
@@ -662,15 +669,27 @@ Leaving local files untouched. Create the repo first or move %s aside manually."
              (imported (plist-get result :imported))
              (conflicts (plist-get result :conflicts)))
         (message "Bootstrap: moving existing %s → %s before adopting clone" dir backup)
-        (rename-file dir backup)
-        (my/-repo-write-adoption-report backup imported conflicts user repo)
-        (rename-file tmp dir)
-        (when imported
-          (my/-repo-commit-and-push-if-needed
-           dir "sync: import local-only files from bootstrap adoption"))
-        (message
-         "Bootstrap: adopted %s/%s into %s. Imported %d local-only file(s); kept %d remote version(s) where paths differed. Previous local tree: %s"
-         user repo dir (length imported) (length conflicts) backup)))))
+        (condition-case err
+            (progn
+              (rename-file dir backup)
+              (my/-repo-write-adoption-report backup imported conflicts user repo)
+              (rename-file tmp dir)
+              (when imported
+                (my/-repo-commit-and-push-if-needed
+                 dir "sync: import local-only files from bootstrap adoption"))
+              (message
+               "Bootstrap: adopted %s/%s into %s. Imported %d local-only file(s); kept %d remote version(s) where paths differed. Previous local tree: %s"
+               user repo dir (length imported) (length conflicts) backup))
+          (error
+           (when (and (not (file-exists-p dir)) (file-exists-p backup))
+             (rename-file backup dir))
+           (when (file-exists-p tmp)
+             (delete-directory tmp t))
+           (display-warning
+            'emacs-setup
+            (format "Repo adoption failed and was rolled back: %s"
+                    (error-message-string err))
+            :warning)))))))
 
 (defun my/repo-sync (identity)
   "Sync the user's private data repo into my/data-dir.
