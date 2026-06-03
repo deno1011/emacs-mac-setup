@@ -52,9 +52,17 @@ if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
   brew install "$EMACS_FORMULA" $EMACS_BREW_ARGS
 fi
 
-# Symlink the actual installed .app into /Applications so macOS sees it.
-# (Re-run is idempotent: ln -sfn replaces an existing symlink; a stale
-# broken symlink from an earlier install also gets cleaned up here.)
+# Place the actual .app bundle in /Applications using `ditto` — Apple's
+# recommended tool for copying .app bundles (preserves metadata, code
+# signatures, extended attributes, resource forks). Symlinks satisfy
+# LaunchServices but DON'T reliably populate Launchpad's icon grid or
+# Spotlight's index; a real bundle does.
+#
+# Trade-off accepted: after `brew upgrade $EMACS_FORMULA`, the copy at
+# /Applications/Emacs.app stays at the OLD version until install.sh
+# runs again. Re-running install.sh is fast (brew install is a no-op
+# if the formula is already current) so the workflow is: `brew
+# upgrade` → `bash ~/emacs-mac-setup-src/install.sh` to re-copy.
 EMACS_APP_SRC="$(brew --prefix "$EMACS_FORMULA")/Emacs.app"
 if [ ! -d "$EMACS_APP_SRC" ]; then
   echo "ERROR: $EMACS_APP_SRC not found after `brew install $EMACS_FORMULA`."
@@ -63,30 +71,49 @@ if [ ! -d "$EMACS_APP_SRC" ]; then
 fi
 
 EMACS_APP_DST="/Applications/Emacs.app"
-# If destination is a real (non-symlink) directory, leave it alone — the
-# user has a separately installed Emacs.app we shouldn't overwrite.
-if [ -d "$EMACS_APP_DST" ] && [ ! -L "$EMACS_APP_DST" ]; then
-  echo "==> $EMACS_APP_DST is a real directory; symlinking into ~/Applications/ instead."
-  EMACS_APP_DST="$HOME/Applications/Emacs.app"
-  mkdir -p "$HOME/Applications"
-fi
-# Replace any existing symlink (stale or pointing at the wrong version).
-if [ -L "$EMACS_APP_DST" ] || [ ! -e "$EMACS_APP_DST" ]; then
-  ln -sfn "$EMACS_APP_SRC" "$EMACS_APP_DST" 2>/dev/null \
-    || { EMACS_APP_DST="$HOME/Applications/Emacs.app"; \
-         mkdir -p "$HOME/Applications"; \
-         ln -sfn "$EMACS_APP_SRC" "$EMACS_APP_DST"; }
-  echo "==> Symlink $EMACS_APP_DST -> $EMACS_APP_SRC"
+# Clean up: remove a previous symlink (any version of this script),
+# remove a previous ditto copy (will be replaced), or leave alone if
+# someone else's Emacs.app is there (use ~/Applications/ instead).
+if [ -L "$EMACS_APP_DST" ]; then
+  rm "$EMACS_APP_DST"
+elif [ -d "$EMACS_APP_DST" ]; then
+  # Heuristic for "ours": Info.plist's CFBundleIdentifier is org.gnu.Emacs.
+  # If yes, replace. If no, leave alone and use ~/Applications/.
+  if [ "$(defaults read "$EMACS_APP_DST/Contents/Info.plist" CFBundleIdentifier 2>/dev/null)" = "org.gnu.Emacs" ]; then
+    rm -rf "$EMACS_APP_DST"
+  else
+    echo "==> $EMACS_APP_DST is a third-party app — falling back to ~/Applications/"
+    EMACS_APP_DST="$HOME/Applications/Emacs.app"
+    mkdir -p "$HOME/Applications"
+    [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
+  fi
 fi
 
-# Register the .app with LaunchServices so Spotlight / Launchpad /
-# "Open With" find it immediately. Without this, the app shows up only
-# after the next logout.
+# Copy the bundle. `ditto` follows symlinks inside the source bundle
+# correctly and writes a real .app on disk that Launchpad indexes.
+if ! ditto "$EMACS_APP_SRC" "$EMACS_APP_DST" 2>/dev/null; then
+  # /Applications/ write may fail under SIP / managed-machine policies.
+  # Fall back to ~/Applications/.
+  EMACS_APP_DST="$HOME/Applications/Emacs.app"
+  mkdir -p "$HOME/Applications"
+  [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
+  ditto "$EMACS_APP_SRC" "$EMACS_APP_DST"
+fi
+echo "==> Copied .app to $EMACS_APP_DST ($(du -sh "$EMACS_APP_DST" 2>/dev/null | cut -f1))"
+
+# Register with LaunchServices so Spotlight / Launchpad / "Open With"
+# find it immediately. Without this, the app shows up only after the
+# next logout.
 LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
 if [ -x "$LSREG" ]; then
   "$LSREG" -f "$EMACS_APP_DST" 2>/dev/null || true
-  echo "==> Registered with LaunchServices ($EMACS_APP_DST)"
+  echo "==> Registered with LaunchServices"
 fi
+# Nudge Spotlight to index the new bundle immediately.
+mdimport "$EMACS_APP_DST" 2>/dev/null || true
+# Restart the Dock so Launchpad reads its cache fresh.
+killall Dock 2>/dev/null || true
+echo "==> Dock restarted; Launchpad will show Emacs after it respawns (~2s)"
 
 # 3. Clone or update the distro -------------------------------------------
 if [ -d "$SRC_DIR/.git" ]; then
