@@ -698,9 +698,10 @@ Append-only timeline of wiki operations.
 If the user's private data repo uses git-crypt to encrypt sensitive
 files (typical for org files that contain personal data, API keys
 they've inlined, GTD content, etc.), we need to provide the symmetric
-key on each new Mac. The key is stored as the =login.password= of the
-BW item =my/bw-git-crypt-item= (=emacs-git-crypt-key= by default),
-base64-encoded so it round-trips cleanly through BW's string fields.
+key on each new Mac. The key is stored as the =GitCryptKey= custom
+field of =my/bw-github-item= (the same BW item that holds the GitHub
+PAT + identity bundle), base64-encoded so it round-trips cleanly
+through BW's string fields.
 
 Three cases handled:
 
