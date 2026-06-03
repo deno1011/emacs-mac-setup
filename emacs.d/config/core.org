@@ -44,14 +44,77 @@ file is iCloud-synced.
             (run-with-idle-timer 60 t #'garbage-collect)))
 #+end_src
 
-* System Packages
-#+begin_src emacs-lisp
+* System Package Auto-Install (currently macOS-only — extend here for other OSes)
+
+This config auto-installs external binaries it depends on (ripgrep,
+aspell, gnuplot, plantuml, texlive, python, ...) in the background on
+first use. The dispatcher today is =my/brew-install-and-log= below,
+which knows only Homebrew. *The configuration is otherwise
+OS-agnostic*: package archives, key bindings, org-mode setup, gptel,
+the wiki — all of that works on Linux and (mostly) Windows out of the
+box. The auto-install is the only macOS-only piece.
+
+** Adding support for another OS
+
+To use this config on Debian/Ubuntu, Fedora, Arch, Windows, etc., port
+the auto-install dispatcher. There are exactly two helpers to
+extend; everything else routes through them.
+
+1. *=my/brew-install-and-log=* — called by aspell, texlive, gnuplot/R/
+   graphviz/plantuml/mermaid-cli, python. Currently invokes ~brew~
+   only. To extend, wrap the body in a ~cond~ on ~system-type~ and add
+   per-OS branches. See [[*Install ripgrep automatically][Install ripgrep automatically]] further down for a
+   complete worked example (macOS / Debian / Fedora / Arch / fallback).
+2. *=my/pip-install-and-log=* — already cross-platform; uses ~pip3~
+   which is universal. No changes needed.
+
+The =my/brew-install-and-log= call sites are intentionally simple
+(pass a brew formula name). When extending, you'll need a per-OS
+package-name lookup table or per-call-site additions because formula
+names differ across distros (e.g. macOS ~texlive~ vs Debian
+~texlive-full~ vs Fedora ~texlive-scheme-basic~).
+
+A worked-out shape for the dispatcher's =cond= block — *not* tangled,
+just documentation:
+
+#+begin_src emacs-lisp :tangle no
+(cond
+ ;; macOS — current behaviour
+ ((and (eq system-type 'darwin) (executable-find "brew"))
+  (apply #'start-process ... "brew" brew-args))
+ ;; Debian / Ubuntu — add `:debian "<apt-package>"' to each call site
+ ((and (eq system-type 'gnu/linux) (executable-find "apt"))
+  (start-process ... "sudo" "apt" "install" "-y" debian-package))
+ ;; Fedora
+ ((and (eq system-type 'gnu/linux) (executable-find "dnf"))
+  (start-process ... "sudo" "dnf" "install" "-y" fedora-package))
+ ;; Arch
+ ((and (eq system-type 'gnu/linux) (executable-find "pacman"))
+  (start-process ... "sudo" "pacman" "-S" "--noconfirm" arch-package))
+ ;; Windows (winget / scoop / choco — pick one)
+ ((eq system-type 'windows-nt)
+  (start-process ... "winget" "install" winget-id))
+ ;; Unknown
+ (t
+  (message "Cannot auto-install %s on this OS — install manually." package)))
+#+end_src
+
+When you implement one of these, the corresponding call sites
+(=my/brew-install-and-log "formula" "texlive" "install" "texlive"=
+etc.) keep working unchanged; they just gain a new branch under the
+hood. The user-facing semantics ("install if missing, log it for clean
+uninstall later") stay the same.
+
+** Helpers (tangled)
+
+#+begin_src emacs-lisp :tangle yes
 ;;; -*- lexical-binding: t -*-
 (message "Loading config... (first start may take a few minutes while packages install)")
 
 ;; GUI Emacs does not always inherit the shell PATH on a fresh macOS install.
 ;; Keep both common Homebrew prefixes visible without assuming CPU architecture:
 ;; Apple Silicon usually uses /opt/homebrew, Intel usually uses /usr/local.
+;; On Linux/Windows this loop is a harmless no-op (the directories don't exist).
 (dolist (dir '("/opt/homebrew/bin" "/usr/local/bin"))
   (when (file-directory-p dir)
     (add-to-list 'exec-path dir)
@@ -62,6 +125,8 @@ file is iCloud-synced.
         (setenv "PATH" (concat dir path-separator path))))))
 
 ;; Install a brew package in the background and log it for clean uninstall.
+;; macOS-only.  See the section above for how to extend this with Linux
+;; / Windows branches — every call site routes through this function.
 ;; TYPE is "formula" or "cask", PACKAGE is the brew package name, BREW-ARGS are
 ;; the full brew arguments (e.g. "install" "--cask" "font-jetbrains-mono").
 (defun my/brew-install-and-log (type package &rest brew-args)
@@ -81,9 +146,13 @@ file is iCloud-synced.
                             (insert-file-contents log-file)
                             (search-forward entry nil t)))
                (append-to-file entry nil log-file))))))
-    (message "brew not found — cannot auto-install %s" package)))
+    ;; ADD-OTHER-OS HERE: branch on system-type + apt / dnf / pacman /
+    ;; winget instead of silently giving up.  See the documentation
+    ;; block at the top of this section for the recommended shape.
+    (message "brew not found — cannot auto-install %s on this OS (see core.org `System Package Auto-Install')" package)))
 
 ;; Install a pip package in the background and log it for clean uninstall.
+;; Cross-platform: pip3 is universal.  No OS-specific extension needed.
 (defun my/pip-install-and-log (package)
   (if-let ((pip3 (executable-find "pip3")))
       (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
