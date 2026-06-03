@@ -41,7 +41,7 @@ fi
 if ! [ -d /Applications/Emacs.app ] && ! [ -d "$HOME/Applications/Emacs.app" ]; then
   echo "==> Installing emacs-plus (this takes ~10 minutes on first install)..."
   brew tap d12frosted/emacs-plus 2>/dev/null || true
-  brew install emacs-plus --with-modern-icon
+  brew install emacs-plus@30 --with-xwidgets
   brew_prefix="$(brew --prefix)"
   ln -sfn "$brew_prefix/opt/emacs-plus/Emacs.app" /Applications/Emacs.app 2>/dev/null \
     || ln -sfn "$brew_prefix/opt/emacs-plus/Emacs.app" "$HOME/Applications/Emacs.app"
