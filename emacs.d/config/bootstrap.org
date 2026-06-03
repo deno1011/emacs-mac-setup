@@ -143,7 +143,7 @@ Master is wiped from memory in the caller."
                        nil t))))))
         (if (and tok (> (length tok) 30)) tok nil))))))
 
-(defun my/bw-unlock (&optional interactive-prompt)
+(cl-defun my/bw-unlock (&optional interactive-prompt)
   "Ensure my/bw-session is set. Use cached creds from Keychain if present,
 otherwise prompt for email + master and cache to Keychain on success.
 INTERACTIVE-PROMPT non-nil forces a prompt even if Keychain has values.
@@ -177,34 +177,33 @@ Returns the session token or nil if the user declined / unlock failed."
       nil)
      (t
       (let ((session (my/bw--unlock-internal email master)))
-        (clear-string master)
         (cond
          (session
           (setq my/bw-session session)
-          ;; Cache to Keychain on first successful unlock
+          ;; Cache email + master to Keychain BEFORE wiping the local
+          ;; copies. Only on a first successful unlock (when not already
+          ;; cached). Master caching is opt-in via my/bw-cache-master-on-
+          ;; first-launch (defaults to t).
           (unless use-cached
-            (my/keychain-set my/bw-keychain-service-email  email)
-            (my/keychain-set my/bw-keychain-service-master
-                             (or cached-master "<cached-after-unlock>")))
-          ;; Re-set the master in Keychain — read-passwd is the canonical place
-          (when (and (not cached-master) (stringp master))
-            ;; (We already cleared master above; redo from initial prompt
-            ;; isn't possible here without storing it. For first-launch
-            ;; we cached email; master gets cached on the SECOND launch
-            ;; if user re-enters. Trade-off: marginally less convenient
-            ;; first-launch UX vs not holding the master in elisp memory
-            ;; longer than needed.)
-            nil)
+            (my/keychain-set my/bw-keychain-service-email email)
+            (when (and my/bw-cache-master-on-first-launch
+                       (stringp master)
+                       (not (string-empty-p master)))
+              (my/keychain-set my/bw-keychain-service-master master)))
+          (clear-string master)
           (call-process-shell-command
            (format "bw sync --session %s >/dev/null 2>&1" (shell-quote-argument session))
            nil nil)
           (message "Bitwarden unlocked.")
           session)
          (t
+          (clear-string master)
           (display-warning 'emacs-setup
                            "Bitwarden unlock failed — wrong password or 2FA required."
                            :warning)
           (when use-cached
+            ;; Cached master rejected: it's stale (BW password rotated?).
+            ;; Wipe so next launch re-prompts.
             (my/keychain-delete my/bw-keychain-service-master))
           nil)))))))
 
@@ -242,6 +241,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 * Step 3 — Bitwarden item read / write helpers
 
 #+begin_src emacs-lisp :tangle yes
+(require 'cl-lib)
 (require 'json)
 
 (defun my/bw-get-item (item-name)
@@ -370,7 +370,7 @@ the user's private data repo:
                   ("Fullname" . ,(read-string "Git commit name: "))
                   ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
 
-(defun my/github-load-identity ()
+(cl-defun my/github-load-identity ()
   "Read GitHub bundle from BW item; create item if absent.
 Returns plist with :username :token :email :fullname :repo, or nil if BW unavailable."
   (unless my/bw-session
@@ -462,8 +462,12 @@ IDENTITY is the plist returned by my/github-load-identity."
                           (string= url (replace-regexp-in-string "\\.git\\'" "" expected-url))))))
       (message "my/data-dir is a clone of %s/%s — pulling…" user repo)
       (let ((default-directory dir))
+        ;; --rebase + --autostash: replay local commits on top of fetched
+        ;; remote; stash any unstaged changes for the duration. Conflicts
+        ;; cause the rebase to pause; we detect that and abort below.
+        ;; (--ff-only is incompatible with --rebase and was a bug.)
         (call-process-shell-command
-         "git pull --rebase --autostash --ff-only origin main 2>&1"
+         "git pull --rebase --autostash origin main 2>&1"
          nil "*repo-pull*" nil)
         (with-current-buffer (get-buffer-create "*repo-pull*")
           (when (string-match-p "CONFLICT\\|Could not apply" (buffer-string))
@@ -493,14 +497,22 @@ IDENTITY is the plist returned by my/github-load-identity."
           (message "Repo %s/%s does not exist on GitHub. Generating starter, creating private repo, pushing…" user repo)
           (make-directory dir t)
           (my/generate-starter-data dir identity)
-          (let ((default-directory dir))
-            (call-process-shell-command (format "git init -b main") nil nil)
+          (let ((default-directory dir)
+                ;; Git refuses to commit with empty user.name / user.email,
+                ;; so we always pass a non-empty value. The user can fix
+                ;; later via `git config --global` if needed.
+                (git-name  (or (plist-get identity :fullname) (user-login-name) "anonymous"))
+                (git-email (or (plist-get identity :email)
+                               (format "%s@users.noreply.github.com" user))))
+            (call-process-shell-command "git init -b main" nil nil)
             (call-process-shell-command
              (format "git config user.name %s && git config user.email %s"
-                     (shell-quote-argument (or (plist-get identity :fullname) ""))
-                     (shell-quote-argument (or (plist-get identity :email) "")))
+                     (shell-quote-argument git-name)
+                     (shell-quote-argument git-email))
              nil nil)
-            (call-process-shell-command "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1" nil nil)
+            (call-process-shell-command
+             "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1"
+             nil nil)
             (call-process-shell-command
              (format "gh repo create %s/%s --private --source=. --push >/dev/null 2>&1"
                      (shell-quote-argument user) (shell-quote-argument repo))
