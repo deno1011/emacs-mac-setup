@@ -761,13 +761,35 @@ string when prompted on the new Mac.
   "Cheap check: a key file is materialised under .git/git-crypt/keys/."
   (file-exists-p (expand-file-name ".git/git-crypt/keys/default" dir)))
 
+(defun my/-normalize-base64 (s)
+  "Strip whitespace and translate base64url chars to standard base64.
+`pbcopy' / shell pipelines often produce trailing newlines; some tools
+emit `_' / `-' instead of `/' / `+'."
+  (when s
+    (replace-regexp-in-string
+     "_" "/"
+     (replace-regexp-in-string
+      "-" "+"
+      (replace-regexp-in-string "[ \t\n\r]" "" s)))))
+
+(defun my/-valid-base64-p (s)
+  "Return non-nil if S (after normalization) decodes as base64."
+  (and s
+       (condition-case nil
+           (progn (base64-decode-string (my/-normalize-base64 s)) t)
+         (error nil))))
+
 (defun my/git-crypt-key-prompt-and-save ()
-  "Prompt the user for a base64-encoded git-crypt key. If non-empty,
-save it to the github BW item (custom field GitCryptKey) so subsequent
-Macs / re-runs pick it up automatically. Returns the key or nil."
-  (let ((entered
-         (read-string
-          "Base64-encoded git-crypt key (paste from another Mac, empty to skip): ")))
+  "Prompt for a base64-encoded git-crypt key. Validate before saving.
+On success, save the NORMALIZED form to the github BW item (custom
+field GitCryptKey) so subsequent Macs / re-runs pick it up. Returns
+the normalized key or nil.
+
+Tip: on a Mac that already has the repo unlocked, generate the input
+with:  `git-crypt export-key /tmp/k && base64 -i /tmp/k | pbcopy`"
+  (let* ((entered (read-string
+                   "Base64-encoded git-crypt key (paste, empty to skip): "))
+         (normalized (and entered (my/-normalize-base64 entered))))
     (cond
      ((my/-blank-p entered)
       (display-warning
@@ -775,40 +797,83 @@ Macs / re-runs pick it up automatically. Returns the key or nil."
        "git-crypt key not provided — encrypted files in the private repo will appear as binary on this Mac."
        :warning)
       nil)
+     ((not (my/-valid-base64-p entered))
+      (display-warning
+       'emacs-setup
+       "What you pasted isn't valid base64. Re-export with:
+  git-crypt export-key /tmp/k && base64 -i /tmp/k | pbcopy
+then paste again (M-x my/git-crypt-step). NOT saved to BW."
+       :warning)
+      nil)
      (t
       (when my/bw-session
         ;; my/bw-update-item merges new fields into existing — preserves
         ;; Email / Fullname / Repo / login.* untouched.
         (my/bw-update-item my/bw-github-item
-                           :fields `(("GitCryptKey" . ,entered)))
+                           :fields `(("GitCryptKey" . ,normalized)))
         (message "Bootstrap: git-crypt key added to BW '%s' (GitCryptKey field)."
                  my/bw-github-item))
-      entered))))
+      normalized))))
+
+(defun my/git-crypt-clear-key ()
+  "Clear the GitCryptKey custom field on my/bw-github-item.
+Use when you've saved an invalid key and want bootstrap to re-prompt."
+  (interactive)
+  (unless my/bw-session (my/bw-unlock t))
+  (cond
+   (my/bw-session
+    (my/bw-update-item my/bw-github-item :fields '(("GitCryptKey" . "")))
+    (message "Cleared GitCryptKey in BW '%s'. Re-run bootstrap (or M-x my/git-crypt-step) to enter a new key."
+             my/bw-github-item))
+   (t
+    (display-warning 'emacs-setup "Bitwarden not unlocked — can't clear GitCryptKey." :warning))))
 
 (defun my/git-crypt-unlock (dir base64-key)
   "Unlock the git-crypt repo at DIR using BASE64-KEY (a string).
 Writes the decoded key to a temp file, runs `git-crypt unlock`, then
-deletes the temp file regardless of outcome."
-  (let ((keyfile (make-temp-file "git-crypt-key-")))
+deletes the temp file regardless of outcome.
+
+If the key fails to decode OR git-crypt rejects it, AUTO-WIPE the bad
+value from BW (so next launch re-prompts) and surface a clear warning.
+Bootstrap continues — it does NOT halt."
+  (let ((keyfile (make-temp-file "git-crypt-key-"))
+        (ok nil))
     (unwind-protect
-        (progn
-          (with-temp-file keyfile
-            (set-buffer-multibyte nil)
-            (insert (base64-decode-string base64-key)))
-          (let ((default-directory dir))
-            (call-process-shell-command
-             (format "git-crypt unlock %s 2>&1" (shell-quote-argument keyfile))
-             nil "*git-crypt-unlock*" nil))
-          (with-current-buffer (get-buffer-create "*git-crypt-unlock*")
-            (cond
-             ((string-match-p "Error\\|fatal\\|invalid" (buffer-string))
-              (display-warning
-               'emacs-setup
-               "git-crypt unlock failed — see *git-crypt-unlock* buffer. The key in BW may be wrong."
-               :warning))
-             (t
-              (message "Bootstrap: git-crypt unlocked %s." dir)))))
-      (delete-file keyfile))))
+        (condition-case err
+            (progn
+              (with-temp-file keyfile
+                (set-buffer-multibyte nil)
+                (insert (base64-decode-string (my/-normalize-base64 base64-key))))
+              (let ((default-directory dir))
+                (call-process-shell-command
+                 (format "git-crypt unlock %s 2>&1" (shell-quote-argument keyfile))
+                 nil "*git-crypt-unlock*" nil))
+              (with-current-buffer (get-buffer-create "*git-crypt-unlock*")
+                (cond
+                 ((string-match-p "Error\\|fatal\\|invalid" (buffer-string))
+                  (display-warning
+                   'emacs-setup
+                   "git-crypt unlock failed — see *git-crypt-unlock* buffer. Clearing GitCryptKey in BW so next bootstrap re-prompts; run M-x my/git-crypt-step after providing the correct key."
+                   :warning)
+                  (when my/bw-session
+                    (my/bw-update-item my/bw-github-item
+                                       :fields '(("GitCryptKey" . "")))))
+                 (t
+                  (setq ok t)
+                  (message "Bootstrap: git-crypt unlocked %s." dir)))))
+          (error
+           ;; base64-decode-string failure or write-file failure.
+           (display-warning
+            'emacs-setup
+            (format "git-crypt unlock errored at decode step: %s.
+Clearing GitCryptKey in BW so the next bootstrap re-prompts."
+                    (error-message-string err))
+            :warning)
+           (when my/bw-session
+             (my/bw-update-item my/bw-github-item
+                                :fields '(("GitCryptKey" . ""))))))
+      (delete-file keyfile))
+    ok))
 
 (defun my/git-crypt-step (identity)
   "Top-level dispatcher invoked from my/bootstrap after repo sync.
