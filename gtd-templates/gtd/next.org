@@ -1,0 +1,12 @@
+#+TITLE: Next Actions
+#+STARTUP: overview
+
+Single, ready-to-do actions that are NOT part of a multi-step
+project. (Project sub-actions live in gtd/projects.org.)
+
+Use =NEXT= state (=n=) for what you'll actually work on next;
+=TODO= for items queued behind something else.
+
+Tag with contexts (=:@home:=, =:@office:=, =:@computer:=, =:@calls:=,
+=:@errand:=, =:quick:=, =:focus:=) so the context views (=C-c a h=,
+=C-c a o=, …) surface only what you can do right now.

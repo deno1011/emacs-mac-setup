@@ -1,0 +1,8 @@
+#+TITLE: Log — Emacs Knowledge Wiki
+#+STARTUP: overview
+
+Append-only timeline of wiki operations. Greppable: every entry begins
+with =** [YYYY-MM-DD] <op> | <subject>=.
+
+Operation types: =scaffold=, =refactor=, =ingest=, =query=, =lint=,
+=plan=.

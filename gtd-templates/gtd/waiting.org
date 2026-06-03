@@ -1,0 +1,13 @@
+#+TITLE: Waiting For
+#+FILETAGS: :waiting:
+#+STARTUP: overview
+
+Items blocked on someone else. Mark with =WAITING= state. Review
+weekly:
+
+- Still waiting? Leave it.
+- Chase needed? Send a reminder; consider scheduling a follow-up.
+- Unblocked? Convert back to =NEXT= and move to gtd/next.org.
+
+The =:waiting:= file-tag groups these under the Waiting view in the
+GTD dashboard (=C-c a g=).

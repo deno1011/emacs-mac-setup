@@ -10,6 +10,7 @@ downloading any that are missing on first install from the bundled defaults in
 - [[file:core.org][core.org]] — Emacs base: packages, UI, font, version control, protected files, startup sync
 - [[file:org-setup.org][org-setup.org]] — Org mode: agenda, capture, tags, clocking, export, LaTeX, graphics
 - [[file:gptel-setup.org][gptel-setup.org]] — AI: gptel backends, tools, Claude Executor, workspace context, system prompt
+- [[file:wiki-setup.org][wiki-setup.org]] — LLM-maintained Emacs-knowledge wiki (Karpathy pattern) — directive, helpers (=C-c n I/M/U/Q/L=), capture template
 - [[file:org-apple-reminders-setup.org][org-apple-reminders-setup.org]] — Apple Reminders via [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] Paket (JXA/osascript, kein CLI) — /nur macOS/
 
 To apply changes after editing a sub-file, run =M-x org-babel-tangle= in that file,
@@ -18,7 +19,7 @@ then =M-x load-file= on the generated =.el= file (or restart Emacs).
 * Bootstrap
 
 #+begin_src elisp :tangle yes
-(defvar my/config-split-files '("core.org" "org-setup.org" "gptel-setup.org"))
+(defvar my/config-split-files '("core.org" "org-setup.org" "gptel-setup.org" "wiki-setup.org"))
 (when (eq system-type 'darwin)
   (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
 

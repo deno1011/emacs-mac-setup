@@ -37,7 +37,8 @@ the use-package form below and remove the =package-vc-install= call.
   (package-vc-install
    '(gptel-agent-runtime
      :url "https://github.com/deno1011/gptel-agent-runtime"
-     :branch "main")))
+     :branch "main"
+     :ignored-files ("test/*" "docs/*" "scripts/*"))))
 
 ;; Pull latest main asynchronously at startup. This is non-blocking and silent
 ;; if offline. Updated code becomes active from the next Emacs session.
@@ -84,12 +85,13 @@ This block runs after =gptel-agent-runtime= has loaded. It:
 1. Ensures =gptel= itself is installed and configured for Org mode.
 2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
    =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
-3. Registers Anthropic, OpenAI, LM Studio, MLX, and Ollama backends with
-   the model lists previously embedded in the package.
-4. Sets a preliminary default model (LM Studio Ministral, matching the
-   prior package behavior) and then asks the runtime to switch to local
-   Ollama. Cloud models remain registered for manual switching, but the
-   runtime/planner default stays local.
+3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
+   MLX, and Ollama backends with their respective model lists.
+4. Sets the standard gptel default to Gemini 2.0 Flash. If
+   =GEMINI_API_KEY= is present, requests work immediately; if the key is
+   still missing, the selected default remains Gemini and Emacs tells the
+   user to add the key. Ollama remains an optional local backend and no
+   longer steals the default merely because it is installed.
 
 This section carries the API keys and machine preferences, keeping the
 runtime package reusable across machines.
@@ -115,9 +117,7 @@ runtime package reusable across machines.
         `(("Claude Opus 4.7"    ,backend . claude-opus-4-7)
           ("Claude Sonnet 4.6"  ,backend . claude-sonnet-4-6)
           ("Claude Haiku 4.5"   ,backend . claude-haiku-4-5-20251001)))
-  ;; Preliminary default (overridden below by LM Studio).
-  (setq gptel-backend backend
-        gptel-model   'claude-opus-4-7))
+  nil)
 
 ;; -- OpenAI / ChatGPT -------------------------------------------------
 ;; Set OPENAI_API_KEY in secrets.el: (setenv "OPENAI_API_KEY" "sk-...")
@@ -134,14 +134,58 @@ runtime package reusable across machines.
                   ("o3-mini"      ,backend . o3-mini)
                   ("o4-mini"      ,backend . o4-mini)))))
 
-;; -- Google Gemini (commented until a key is available) -------------
-;; (let ((backend (gptel-make-gemini "Gemini"
-;;                  :stream t
-;;                  :key (lambda () (getenv "GEMINI_API_KEY")))))
-;;   (setq my/gptel-backends
-;;         (append my/gptel-backends
-;;                 `(("Gemini 2.0 Flash" ,backend . gemini-2.0-flash)
-;;                   ("Gemini 2.5 Pro"   ,backend . gemini-2.5-pro)))))
+;; -- Google Gemini (free tier: https://aistudio.google.com/apikey) --
+;; Set GEMINI_API_KEY in secrets.el: (setenv "GEMINI_API_KEY" "...")
+;; Free tier quotas vary per model (2.0 Flash has the most generous limits).
+(let ((backend (gptel-make-gemini "Gemini"
+                 :stream t
+                 :key (lambda () (getenv "GEMINI_API_KEY")))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Gemini 2.5 Pro"     ,backend . gemini-2.5-pro)
+                  ("Gemini 2.5 Flash"   ,backend . gemini-2.5-flash)
+                  ("Gemini 2.0 Flash"   ,backend . gemini-2.0-flash)))))
+
+;; -- Groq (free tier: https://console.groq.com/keys) ----------------
+;; OpenAI-compatible. Set GROQ_API_KEY in secrets.el.
+;; Very fast inference (~500 tok/s on Llama 70B).
+(let ((backend (gptel-make-openai "Groq"
+                 :stream t
+                 :host "api.groq.com"
+                 :endpoint "/openai/v1/chat/completions"
+                 :key (lambda () (getenv "GROQ_API_KEY"))
+                 :models '(llama-3.3-70b-versatile
+                           llama-3.1-8b-instant
+                           mixtral-8x7b-32768
+                           qwen-qwq-32b))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("Llama 3.3 70B (Groq)"   ,backend . llama-3.3-70b-versatile)
+                  ("Llama 3.1 8B (Groq)"    ,backend . llama-3.1-8b-instant)
+                  ("Mixtral 8x7B (Groq)"    ,backend . mixtral-8x7b-32768)
+                  ("Qwen QwQ 32B (Groq)"    ,backend . qwen-qwq-32b)))))
+
+;; -- GitHub Models (free dev tier: https://github.com/marketplace/models) -
+;; Set GITHUB_TOKEN in secrets.el to a fine-grained PAT with "models" permission.
+;; Tight per-day quotas; intended for dev/test. Model catalog changes — verify
+;; IDs at github.com/marketplace/models if a call returns 404.
+(let ((backend (gptel-make-openai "GitHub Models"
+                 :stream t
+                 :host "models.inference.ai.azure.com"
+                 :endpoint "/chat/completions"
+                 :key (lambda () (getenv "GITHUB_TOKEN"))
+                 :models '(gpt-4o
+                           gpt-4o-mini
+                           Meta-Llama-3.1-405B-Instruct
+                           Mistral-Large-2411
+                           Phi-3.5-mini-instruct))))
+  (setq my/gptel-backends
+        (append my/gptel-backends
+                `(("GPT-4o (GitHub)"            ,backend . gpt-4o)
+                  ("GPT-4o-mini (GitHub)"       ,backend . gpt-4o-mini)
+                  ("Llama 3.1 405B (GitHub)"    ,backend . Meta-Llama-3.1-405B-Instruct)
+                  ("Mistral Large (GitHub)"     ,backend . Mistral-Large-2411)
+                  ("Phi 3.5 Mini (GitHub)"      ,backend . Phi-3.5-mini-instruct)))))
 
 ;; -- LM Studio (local, OpenAI-compatible) ----------------------------
 ;; LM Studio must be running: Sidebar -> Local Server -> Start Server
@@ -163,9 +207,7 @@ runtime package reusable across machines.
                   ("DeepSeek R1 7B (LM Studio)"             ,backend . deepseek-r1-distill-qwen-7b)
                   ("Gemma 4 31B (LM Studio)"                ,backend . gemma-4-31b-it)
                   ("Gemma 3 12B Q4 (LM Studio)"             ,backend . gemma-3-12b-it))))
-  ;; Preliminary local default; Ollama active model may further override.
-  (setq gptel-backend backend
-        gptel-model   'mistralai/ministral-3-14b-reasoning))
+  nil)
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
 ;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
@@ -215,70 +257,29 @@ runtime package reusable across machines.
   ;; might miss. When no Anthropic key is set, both stay local-only.
   (setq gptel-agent-runtime-high-fidelity-model
         (and (getenv "ANTHROPIC_API_KEY") 'claude-opus-4-7))
-  ;; Keep local Ollama as the default runtime/planner backend. Cloud models stay
-  ;; registered in `my/gptel-backends' and can be selected manually with
-  ;; `gptel-agent-runtime-select-model', but the autonomous runtime should not
-  ;; silently depend on a cloud key for planning.
-  (when (fboundp 'gptel-agent-runtime-use-default-local-model)
-    (gptel-agent-runtime-use-default-local-model)))
-#+end_src
+  ;; Ollama stays registered as an opt-in local backend. It no longer changes
+  ;; the global gptel default during startup; choose it explicitly with
+  ;; `gptel-agent-runtime-select-model' when local-only work is desired.
+  nil)
 
-* Wiki Maintainer Directive
-
-User-side gptel directive for the Emacs-knowledge LLM Wiki at
-=~/emacs/wiki/emacs/=. Pattern: Karpathy's LLM Wiki — a persistent,
-LLM-maintained knowledge base of interlinked org-roam pages.
-
-The directive is built dynamically from =WIKI.org= (the schema) and
-=index.org= (the catalog), so edits to either propagate after
-=M-x my/wiki-maintainer-refresh=. The directive is *not* auto-selected
-by =gptel-agent-runtime-directive-for-current-runtime=; switch to it
-manually via gptel's directive menu.
-
-#+begin_src emacs-lisp
-(defvar my/wiki-base-dir (expand-file-name "~/emacs/wiki/emacs/")
-  "Root of the Emacs-knowledge LLM Wiki.")
-
-(defun my/wiki-maintainer-build-prompt ()
-  "Build the Wiki Maintainer system prompt from WIKI.org and index.org."
-  (let* ((schema-path (expand-file-name "WIKI.org" my/wiki-base-dir))
-         (index-path  (expand-file-name "index.org" my/wiki-base-dir))
-         (file->str (lambda (p) (when (file-readable-p p)
-                                  (with-temp-buffer
-                                    (insert-file-contents p)
-                                    (buffer-string)))))
-         (schema (funcall file->str schema-path))
-         (index  (funcall file->str index-path)))
-    (concat
-     "You are the Wiki Maintainer for the user's Emacs-knowledge LLM Wiki at "
-     my/wiki-base-dir ".\n"
-     "Pattern: Karpathy LLM-Wiki — a persistent, incrementally built knowledge\n"
-     "base of interlinked org-roam pages. You own wiki/; the user curates raw/\n"
-     "and asks questions.\n\n"
-     "## Operating rules (load-bearing)\n"
-     "- Read index.org first when answering a query; drill into linked pages as needed.\n"
-     "- NEVER commit — the repo auto-pushes on commit. Surface diffs; let the user commit.\n"
-     "- One source at a time, with 2–4 bullets of discussion before writing wiki pages.\n"
-     "- Use [[id:UUID]] org-roam links for wiki-internal references; never [[file:...]].\n"
-     "- Append every operation to log.org: ** [YYYY-MM-DD] <op> | <subject>.\n"
-     "- Lint reports findings only; never auto-fix.\n\n"
-     "## Full schema (WIKI.org)\n\n"
-     (or schema "[WIKI.org not readable — abort and ask the user]")
-     "\n\n## Current index (index.org)\n\n"
-     (or index "[index.org not readable]"))))
-
-(defun my/wiki-maintainer-refresh ()
-  "Rebuild the wiki-maintainer gptel directive from disk.
-Call after editing WIKI.org or significant index changes."
-  (interactive)
-  (with-eval-after-load 'gptel
-    (setq gptel-directives
-          (cons (cons 'wiki-maintainer (my/wiki-maintainer-build-prompt))
-                (assq-delete-all 'wiki-maintainer gptel-directives)))
-    (message "wiki-maintainer directive refreshed")))
-
-(with-eval-after-load 'gptel
-  (my/wiki-maintainer-refresh))
+;; -- Standard default: Gemini 2.0 Flash ------------------------------
+;; Runs LAST so it overrides any earlier backend registration. 2.0 Flash has
+;; the most generous free-tier quota (15 RPM / 1500 RPD) and is plenty for
+;; daily use. Switch to 2.5 Flash/Pro or a local backend manually via
+;; `gptel-agent-runtime-select-model' / gptel-menu when needed.
+(when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
+            (backend (cadr entry))
+            (model (cddr entry)))
+  (setq gptel-backend backend
+        gptel-model   model)
+  (when (fboundp 'gptel-agent-runtime-sync-directive-for-current-runtime)
+    (gptel-agent-runtime-sync-directive-for-current-runtime))
+  (when (fboundp 'gptel-agent-runtime-sync-tools)
+    (gptel-agent-runtime-sync-tools))
+  (message "gptel default: Gemini 2.0 Flash%s"
+           (if (getenv "GEMINI_API_KEY")
+               ""
+             " (set GEMINI_API_KEY in secrets.el before sending requests)")))
 #+end_src
 
 * Architecture Reference
