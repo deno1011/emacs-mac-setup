@@ -19,13 +19,17 @@ REPO_URL="${EMACS_MAC_REPO_URL:-https://github.com/deno1011/emacs-mac-setup.git}
 BRANCH="${EMACS_MAC_BRANCH:-main}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-$HOME/emacs-mac-setup-src}"
 EMACS_D="$HOME/.emacs.d"
-DATA_DIR="$HOME/emacs"
+# Override DATA_DIR per-Mac with EMACS_DATA_DIR=<path>. init.el reads the
+# same env var so the installer's seed location and Emacs's runtime data
+# root stay in sync. For GUI Emacs (launched from Finder/Dock), also run:
+#   launchctl setenv EMACS_DATA_DIR "<path>"
+DATA_DIR="${EMACS_DATA_DIR:-$HOME/emacs}"
 
 echo "==> Emacs-for-Mac installer"
 echo "    repo:    $REPO_URL  (branch: $BRANCH)"
 echo "    distro:  $SRC_DIR"
 echo "    config:  $EMACS_D (-> $SRC_DIR/emacs.d)"
-echo "    data:    $DATA_DIR"
+echo "    data:    $DATA_DIR$([ -n "${EMACS_DATA_DIR:-}" ] && echo "  (from EMACS_DATA_DIR)")"
 echo ""
 
 # 1. Homebrew --------------------------------------------------------------

@@ -15,7 +15,19 @@
 ;; Personal data root. The distro never writes here after first install.
 ;; If you symlink ~/emacs to iCloud Drive / Syncthing / a private git
 ;; repo, cross-Mac sync is your concern, not the distro's.
-(defvar my/data-dir (expand-file-name "~/emacs/")
+;;
+;; Default: ~/emacs/. Override per-Mac by setting EMACS_DATA_DIR in your
+;; shell startup (zshrc/zprofile) AND, for GUI Emacs launched from
+;; Finder/Dock, by running once:
+;;
+;;   launchctl setenv EMACS_DATA_DIR "/your/path"
+;;
+;; The installer (install.sh) honours the same env var when seeding
+;; starter data, so set it BEFORE the first `bash install.sh` run.
+(defvar my/data-dir
+  (expand-file-name
+   (file-name-as-directory
+    (or (getenv "EMACS_DATA_DIR") "~/emacs/")))
   "Root directory for the user's personal data (org files, wiki, notes).")
 
 (defvar my/config-dir (expand-file-name "config/" user-emacs-directory)
