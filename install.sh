@@ -42,13 +42,50 @@ fi
 [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 
 # 2. emacs-plus ------------------------------------------------------------
-if ! [ -d /Applications/Emacs.app ] && ! [ -d "$HOME/Applications/Emacs.app" ]; then
-  echo "==> Installing emacs-plus (this takes ~10 minutes on first install)..."
+EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
+EMACS_BREW_ARGS="${EMACS_BREW_ARGS:---with-xwidgets}"
+
+if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
+  echo "==> Installing $EMACS_FORMULA $EMACS_BREW_ARGS (this takes ~10 minutes on first install)..."
   brew tap d12frosted/emacs-plus 2>/dev/null || true
-  brew install emacs-plus@30 --with-xwidgets
-  brew_prefix="$(brew --prefix)"
-  ln -sfn "$brew_prefix/opt/emacs-plus/Emacs.app" /Applications/Emacs.app 2>/dev/null \
-    || ln -sfn "$brew_prefix/opt/emacs-plus/Emacs.app" "$HOME/Applications/Emacs.app"
+  # shellcheck disable=SC2086
+  brew install "$EMACS_FORMULA" $EMACS_BREW_ARGS
+fi
+
+# Symlink the actual installed .app into /Applications so macOS sees it.
+# (Re-run is idempotent: ln -sfn replaces an existing symlink; a stale
+# broken symlink from an earlier install also gets cleaned up here.)
+EMACS_APP_SRC="$(brew --prefix "$EMACS_FORMULA")/Emacs.app"
+if [ ! -d "$EMACS_APP_SRC" ]; then
+  echo "ERROR: $EMACS_APP_SRC not found after `brew install $EMACS_FORMULA`."
+  echo "       Run `brew reinstall $EMACS_FORMULA $EMACS_BREW_ARGS` and re-run install.sh."
+  exit 1
+fi
+
+EMACS_APP_DST="/Applications/Emacs.app"
+# If destination is a real (non-symlink) directory, leave it alone — the
+# user has a separately installed Emacs.app we shouldn't overwrite.
+if [ -d "$EMACS_APP_DST" ] && [ ! -L "$EMACS_APP_DST" ]; then
+  echo "==> $EMACS_APP_DST is a real directory; symlinking into ~/Applications/ instead."
+  EMACS_APP_DST="$HOME/Applications/Emacs.app"
+  mkdir -p "$HOME/Applications"
+fi
+# Replace any existing symlink (stale or pointing at the wrong version).
+if [ -L "$EMACS_APP_DST" ] || [ ! -e "$EMACS_APP_DST" ]; then
+  ln -sfn "$EMACS_APP_SRC" "$EMACS_APP_DST" 2>/dev/null \
+    || { EMACS_APP_DST="$HOME/Applications/Emacs.app"; \
+         mkdir -p "$HOME/Applications"; \
+         ln -sfn "$EMACS_APP_SRC" "$EMACS_APP_DST"; }
+  echo "==> Symlink $EMACS_APP_DST -> $EMACS_APP_SRC"
+fi
+
+# Register the .app with LaunchServices so Spotlight / Launchpad /
+# "Open With" find it immediately. Without this, the app shows up only
+# after the next logout.
+LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+if [ -x "$LSREG" ]; then
+  "$LSREG" -f "$EMACS_APP_DST" 2>/dev/null || true
+  echo "==> Registered with LaunchServices ($EMACS_APP_DST)"
 fi
 
 # 3. Clone or update the distro -------------------------------------------
