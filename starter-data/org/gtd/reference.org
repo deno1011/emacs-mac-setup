@@ -1,9 +1,0 @@
-#+TITLE: Reference — non-actionable but worth keeping
-#+FILETAGS: :reference:
-#+STARTUP: overview
-
-Information to preserve without an action attached. Anything useful
-for later lookup but not requiring you to do something now.
-
-The =:reference:= file-tag keeps these items out of daily action
-views. They surface only via =C-c a M= when you explicitly ask.

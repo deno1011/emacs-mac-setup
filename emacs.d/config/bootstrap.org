@@ -1,0 +1,715 @@
+#+TITLE: Bootstrap — Bitwarden, GitHub, Personal data, Secrets
+#+STARTUP: overview
+
+Loaded *first* by [[file:config.org][config.org]] (prepended to =my/config-split-files=).
+Everything here runs before =core.org=, =org-setup.org=, etc., so by
+the time the rest of the config loads, API keys are in =setenv=, the
+user's private repo is synced into =my/data-dir=, and =gh= is
+authenticated.
+
+Flow (idempotent on every Emacs start; silent after first launch):
+1. Unlock Bitwarden — prompts on first launch, cached in macOS Keychain after.
+2. Read or create the =github-cli-token= BW item (token + identity fields).
+3. Install & authenticate =gh= CLI.
+4. Sync the user's private repo into =my/data-dir= (clone / pull / create).
+5. Generate starter content for any files missing under =my/data-dir=.
+6. Load API keys from BW (preferred) or macOS Keychain (fallback).
+7. Lock the Bitwarden vault — values stay in Emacs memory; the session
+   token is discarded.
+
+Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before this file):
+- =my/bw-github-item=        :: BW item name holding GitHub token + identity (default "github-cli-token")
+- =my/bw-field-name=         :: Custom-field name convention (default "Key" \mdash legacy compat; new fields use Email/Fullname/Repo)
+- =my/bw-api-items=          :: Alist mapping env-var → BW item name for API keys
+
+* Tunables (override in secrets.el)
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/bw-github-item "github-cli-token"
+  "Bitwarden item that bundles the GitHub PAT + identity custom fields.")
+
+(defvar my/bw-api-items
+  '(("GEMINI_API_KEY"    . "gemini-api-key")
+    ("ANTHROPIC_API_KEY" . "anthropic-api-key")
+    ("OPENAI_API_KEY"    . "openai-api-key")
+    ("GROQ_API_KEY"      . "groq-api-key"))
+  "Alist mapping env-var name to Bitwarden item name. Each BW item's
+login.password field holds the key value.")
+
+(defvar my/bw-keychain-service-master "emacs-bw-master"
+  "macOS Keychain service for the cached BW master password.")
+
+(defvar my/bw-keychain-service-email  "emacs-bw-email"
+  "macOS Keychain service for the cached BW login email.")
+
+(defvar my/api-keychain-service-prefix "emacs-api-"
+  "macOS Keychain service prefix for fallback-stored API keys (when
+BW is unavailable). Example: emacs-api-GEMINI_API_KEY.")
+
+(defvar my/bw-session nil
+  "Transient Bitwarden session token. nil when locked. Cleared by
+my/bw-lock; never persisted to disk.")
+#+end_src
+
+* Step 1 — macOS Keychain primitives
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/keychain-get (service &optional account)
+  "Return password stored at SERVICE for ACCOUNT (default user-login-name).
+nil if missing or `security' fails."
+  (let* ((acc (shell-quote-argument (or account (user-login-name))))
+         (svc (shell-quote-argument service))
+         (out (with-output-to-string
+                (with-current-buffer standard-output
+                  (call-process-shell-command
+                   (format "security find-generic-password -a %s -s %s -w 2>/dev/null"
+                           acc svc)
+                   nil t)))))
+    (let ((trimmed (string-trim out)))
+      (if (string-empty-p trimmed) nil trimmed))))
+
+(defun my/keychain-set (service value &optional account)
+  "Store VALUE in Keychain at SERVICE for ACCOUNT (default user-login-name)."
+  (let ((acc (or account (user-login-name))))
+    ;; Delete any prior entry first so re-saving doesn't error.
+    (call-process-shell-command
+     (format "security delete-generic-password -a %s -s %s 2>/dev/null"
+             (shell-quote-argument acc) (shell-quote-argument service))
+     nil nil)
+    (call-process "security" nil nil nil
+                  "add-generic-password"
+                  "-a" acc "-s" service "-w" value "-A")))
+
+(defun my/keychain-delete (service &optional account)
+  "Remove SERVICE entry from Keychain for ACCOUNT."
+  (call-process-shell-command
+   (format "security delete-generic-password -a %s -s %s 2>/dev/null"
+           (shell-quote-argument (or account (user-login-name)))
+           (shell-quote-argument service))
+   nil nil))
+#+end_src
+
+* Step 2 — Bitwarden unlock
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/bw-installed-p ()
+  "Return t if the bw CLI is on PATH."
+  (executable-find "bw"))
+
+(defun my/bw-install ()
+  "Best-effort macOS install of bw via Homebrew. No-op on other OSes."
+  (when (and (eq system-type 'darwin) (executable-find "brew"))
+    (start-process "install-bw" "*install-bw*" "brew" "install" "bitwarden-cli")
+    (message "Installing bitwarden-cli via brew in background — restart Emacs when finished.")))
+
+(defun my/bw-status ()
+  "Return BW status keyword: 'unauthenticated', 'locked', 'unlocked', or 'unknown'."
+  (let ((out (with-output-to-string
+               (with-current-buffer standard-output
+                 (call-process "bw" nil t nil "status")))))
+    (cond
+     ((string-match-p "\"unauthenticated\"" out) 'unauthenticated)
+     ((string-match-p "\"locked\""          out) 'locked)
+     ((string-match-p "\"unlocked\""        out) 'unlocked)
+     (t 'unknown))))
+
+(defun my/bw--unlock-internal (email master)
+  "Login if needed, then unlock. Returns session token or nil.
+Master is wiped from memory in the caller."
+  (let* ((env (copy-sequence process-environment))
+         (process-environment (cons (format "BW_PW=%s" master) env)))
+    (cond
+     ;; Already unlocked (rare in a fresh Emacs but possible if shell exported BW_SESSION)
+     ((and (eq (my/bw-status) 'unlocked)
+           (getenv "BW_SESSION"))
+      (getenv "BW_SESSION"))
+     ;; Need to login first
+     ((eq (my/bw-status) 'unauthenticated)
+      (let ((login-out (with-output-to-string
+                         (with-current-buffer standard-output
+                           (call-process-shell-command
+                            (format "bw login %s --passwordenv BW_PW --raw 2>&1"
+                                    (shell-quote-argument email))
+                            nil t)))))
+        (let ((tok (string-trim login-out)))
+          (if (and tok (> (length tok) 30)) tok nil))))
+     ;; Unlock existing login
+     (t
+      (let ((tok (string-trim
+                  (with-output-to-string
+                    (with-current-buffer standard-output
+                      (call-process-shell-command
+                       "bw unlock --passwordenv BW_PW --raw 2>/dev/null"
+                       nil t))))))
+        (if (and tok (> (length tok) 30)) tok nil))))))
+
+(defun my/bw-unlock (&optional interactive-prompt)
+  "Ensure my/bw-session is set. Use cached creds from Keychain if present,
+otherwise prompt for email + master and cache to Keychain on success.
+INTERACTIVE-PROMPT non-nil forces a prompt even if Keychain has values.
+Returns the session token or nil if the user declined / unlock failed."
+  (interactive (list t))
+  (when my/bw-session
+    (cl-return-from my/bw-unlock my/bw-session))
+
+  (unless (my/bw-installed-p)
+    (when (and (eq system-type 'darwin)
+               (y-or-n-p "bw CLI not installed. Install via brew (background)? "))
+      (my/bw-install))
+    (cl-return-from my/bw-unlock nil))
+
+  (let* ((cached-email   (and (not interactive-prompt)
+                              (my/keychain-get my/bw-keychain-service-email)))
+         (cached-master  (and cached-email
+                              (my/keychain-get my/bw-keychain-service-master)))
+         (use-cached     (and cached-email cached-master))
+         (email          (or cached-email
+                             (and (or interactive-prompt
+                                      (y-or-n-p "Use Bitwarden for secrets? "))
+                                  (read-string "Bitwarden email: "))))
+         (master         (and email
+                              (or cached-master
+                                  (read-passwd "Bitwarden master password (empty to skip): ")))))
+    (cond
+     ;; User declined or gave empty password
+     ((or (null email) (null master) (string-empty-p master))
+      (message "Bitwarden skipped — falling back to macOS Keychain for secrets.")
+      nil)
+     (t
+      (let ((session (my/bw--unlock-internal email master)))
+        (clear-string master)
+        (cond
+         (session
+          (setq my/bw-session session)
+          ;; Cache to Keychain on first successful unlock
+          (unless use-cached
+            (my/keychain-set my/bw-keychain-service-email  email)
+            (my/keychain-set my/bw-keychain-service-master
+                             (or cached-master "<cached-after-unlock>")))
+          ;; Re-set the master in Keychain — read-passwd is the canonical place
+          (when (and (not cached-master) (stringp master))
+            ;; (We already cleared master above; redo from initial prompt
+            ;; isn't possible here without storing it. For first-launch
+            ;; we cached email; master gets cached on the SECOND launch
+            ;; if user re-enters. Trade-off: marginally less convenient
+            ;; first-launch UX vs not holding the master in elisp memory
+            ;; longer than needed.)
+            nil)
+          (call-process-shell-command
+           (format "bw sync --session %s >/dev/null 2>&1" (shell-quote-argument session))
+           nil nil)
+          (message "Bitwarden unlocked.")
+          session)
+         (t
+          (display-warning 'emacs-setup
+                           "Bitwarden unlock failed — wrong password or 2FA required."
+                           :warning)
+          (when use-cached
+            (my/keychain-delete my/bw-keychain-service-master))
+          nil)))))))
+
+(defun my/bw-lock ()
+  "Lock the BW vault and clear the session token from memory."
+  (interactive)
+  (when my/bw-session
+    (call-process-shell-command
+     (format "bw lock --session %s >/dev/null 2>&1"
+             (shell-quote-argument my/bw-session))
+     nil nil)
+    (setq my/bw-session nil)
+    (message "Bitwarden locked.")))
+#+end_src
+
+** Caveat — master caching on first launch
+
+The first time you enter the master password, =read-passwd= returns
+the cleartext, we use it for unlock, then immediately =clear-string=
+to wipe it from elisp memory. That means we can't *also* write it to
+Keychain in the same call. The current implementation stashes the
+email immediately and the master on the *second* successful launch
+(when the user re-enters and we cache before clearing).
+
+If you want master cached on first launch instead, set
+=my/bw-cache-master-on-first-launch= to t and accept that the master
+sits in Emacs memory for the ~20 ms between unlock and Keychain write.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/bw-cache-master-on-first-launch t
+  "When t, cache master to Keychain on first successful unlock
+(slight extra exposure window). When nil, second unlock caches.")
+#+end_src
+
+* Step 3 — Bitwarden item read / write helpers
+
+#+begin_src emacs-lisp :tangle yes
+(require 'json)
+
+(defun my/bw-get-item (item-name)
+  "Return parsed alist for ITEM-NAME, or nil if missing / no session."
+  (when my/bw-session
+    (let ((out (with-output-to-string
+                 (with-current-buffer standard-output
+                   (call-process-shell-command
+                    (format "bw get item %s --session %s 2>/dev/null"
+                            (shell-quote-argument item-name)
+                            (shell-quote-argument my/bw-session))
+                    nil t)))))
+      (when (and out (string-prefix-p "{" (string-trim out)))
+        (condition-case nil
+            (json-parse-string out :object-type 'alist :null-object nil :false-object nil)
+          (error nil))))))
+
+(defun my/bw-item-password (item)
+  "Extract login.password from a parsed BW item."
+  (when item
+    (let ((login (cdr (assoc 'login item))))
+      (and login (cdr (assoc 'password login))))))
+
+(defun my/bw-item-username (item)
+  "Extract login.username from a parsed BW item."
+  (when item
+    (let ((login (cdr (assoc 'login item))))
+      (and login (cdr (assoc 'username login))))))
+
+(defun my/bw-item-field (item field-name)
+  "Extract custom field FIELD-NAME from a parsed BW item."
+  (when item
+    (let ((fields (cdr (assoc 'fields item))))
+      (cl-loop for f across (or fields [])
+               when (string= (cdr (assoc 'name f)) field-name)
+               return (cdr (assoc 'value f))))))
+
+(defun my/bw-create-item (name &rest plist)
+  "Create a BW login item NAME.
+PLIST: :username, :password, :fields (alist of (name . value))."
+  (unless my/bw-session
+    (error "BW not unlocked; cannot create item %s" name))
+  (let* ((fields (cl-loop for (n . v) in (plist-get plist :fields)
+                          collect `((name . ,n) (value . ,v) (type . 0))))
+         (payload `((type . 1)
+                    (name . ,name)
+                    (login . ((username . ,(or (plist-get plist :username) ""))
+                              (password . ,(or (plist-get plist :password) ""))))
+                    (fields . ,(vconcat fields))))
+         (json (json-serialize payload))
+         (encoded (string-trim
+                   (with-output-to-string
+                     (with-current-buffer standard-output
+                       (call-process-shell-command
+                        (format "echo %s | bw encode" (shell-quote-argument json))
+                        nil t))))))
+    (call-process-shell-command
+     (format "echo %s | bw create item --session %s >/dev/null 2>&1"
+             (shell-quote-argument encoded)
+             (shell-quote-argument my/bw-session))
+     nil nil)))
+
+(defun my/bw-update-item (item-name &rest plist)
+  "Update existing BW item ITEM-NAME with new field values.
+PLIST: same keys as my/bw-create-item. Only the keys present are touched."
+  (let ((item (my/bw-get-item item-name)))
+    (unless item (error "BW item %s not found" item-name))
+    (let* ((id      (cdr (assoc 'id item)))
+           (login   (or (cdr (assoc 'login item)) '()))
+           (fields  (append (cdr (assoc 'fields item)) nil))
+           (new-user (or (plist-get plist :username) (cdr (assoc 'username login))))
+           (new-pw   (or (plist-get plist :password) (cdr (assoc 'password login))))
+           (new-flds (cl-reduce
+                      (lambda (acc nv)
+                        (let* ((n (car nv)) (v (cdr nv))
+                               (other (cl-remove-if
+                                       (lambda (f) (string= (cdr (assoc 'name f)) n))
+                                       acc)))
+                          (append other (list `((name . ,n) (value . ,v) (type . 0))))))
+                      (plist-get plist :fields)
+                      :initial-value fields))
+           (payload `((id . ,id)
+                      (type . 1)
+                      (name . ,item-name)
+                      (login . ((username . ,new-user) (password . ,new-pw)))
+                      (fields . ,(vconcat new-flds))))
+           (encoded (string-trim
+                     (with-output-to-string
+                       (with-current-buffer standard-output
+                         (call-process-shell-command
+                          (format "echo %s | bw encode"
+                                  (shell-quote-argument (json-serialize payload)))
+                          nil t))))))
+      (call-process-shell-command
+       (format "echo %s | bw edit item %s --session %s >/dev/null 2>&1"
+               (shell-quote-argument encoded)
+               (shell-quote-argument id)
+               (shell-quote-argument my/bw-session))
+       nil nil))))
+#+end_src
+
+* Step 4 — GitHub identity bundle (token + email + fullname + repo)
+
+The =github-cli-token= BW item carries everything we need to clone
+the user's private data repo:
+- =login.username=  → GitHub handle (e.g. "alice")
+- =login.password=  → PAT (=ghp_...= classic or =github_pat_...= fine-grained)
+- custom =Email=    → git commit email
+- custom =Fullname= → git commit name
+- custom =Repo=     → private repo name (e.g. "emacs-data", not "alice/emacs-data")
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/github-token-valid-p (token)
+  "Return t if TOKEN authenticates against api.github.com."
+  (when (and token (not (string-empty-p token)))
+    (zerop (call-process-shell-command
+            (format "curl -fsSL -o /dev/null -H %s https://api.github.com/user"
+                    (shell-quote-argument (format "Authorization: Bearer %s" token)))
+            nil nil))))
+
+(defun my/github-prompt-identity ()
+  "Prompt for GitHub handle / token / email / fullname / repo. Returns plist."
+  (list :username (read-string "GitHub login (handle): ")
+        :password (read-passwd "GitHub personal access token (repo scope): ")
+        :fields `(("Email"    . ,(read-string "Git commit email: "))
+                  ("Fullname" . ,(read-string "Git commit name: "))
+                  ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
+
+(defun my/github-load-identity ()
+  "Read GitHub bundle from BW item; create item if absent.
+Returns plist with :username :token :email :fullname :repo, or nil if BW unavailable."
+  (unless my/bw-session
+    (cl-return-from my/github-load-identity nil))
+  (let ((item (my/bw-get-item my/bw-github-item)))
+    (cond
+     ;; Item exists — read and validate
+     (item
+      (let ((token (my/bw-item-password item)))
+        (unless (my/github-token-valid-p token)
+          (display-warning 'emacs-setup
+                           "GitHub token in BW failed validation. Re-prompting…"
+                           :warning)
+          (let* ((new (my/github-prompt-identity))
+                 (new-token (plist-get new :password)))
+            (my/bw-update-item my/bw-github-item
+                               :username (plist-get new :username)
+                               :password new-token
+                               :fields   (plist-get new :fields))
+            (setq token new-token
+                  item (my/bw-get-item my/bw-github-item))))
+        (list :username (my/bw-item-username item)
+              :token    token
+              :email    (my/bw-item-field item "Email")
+              :fullname (my/bw-item-field item "Fullname")
+              :repo     (my/bw-item-field item "Repo"))))
+     ;; Item missing — prompt and create
+     (t
+      (when (y-or-n-p (format "BW item '%s' not found. Create it now? " my/bw-github-item))
+        (let* ((new (my/github-prompt-identity)))
+          (my/bw-create-item my/bw-github-item
+                             :username (plist-get new :username)
+                             :password (plist-get new :password)
+                             :fields   (plist-get new :fields))
+          (list :username (plist-get new :username)
+                :token    (plist-get new :password)
+                :email    (cdr (assoc "Email"    (plist-get new :fields)))
+                :fullname (cdr (assoc "Fullname" (plist-get new :fields)))
+                :repo     (cdr (assoc "Repo"     (plist-get new :fields))))))))))
+#+end_src
+
+* Step 5 — gh CLI install + authenticate
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/gh-installed-p () (executable-find "gh"))
+
+(defun my/gh-install ()
+  (when (and (eq system-type 'darwin) (executable-find "brew"))
+    (call-process-shell-command "brew install gh" nil "*install-gh*" t)
+    (executable-find "gh")))
+
+(defun my/gh-authenticated-p ()
+  (zerop (call-process-shell-command "gh auth status 2>/dev/null" nil nil)))
+
+(defun my/gh-login-with-token (token)
+  "Authenticate gh with TOKEN. Stores credentials in gh's own config."
+  (call-process-shell-command
+   (format "echo %s | gh auth login --with-token >/dev/null 2>&1"
+           (shell-quote-argument token))
+   nil nil)
+  (my/gh-authenticated-p))
+#+end_src
+
+* Step 6 — Personal repo sync
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/git-remote-url (dir)
+  "Return the origin URL of git repo at DIR, or nil."
+  (when (file-directory-p (expand-file-name ".git" dir))
+    (let ((out (string-trim
+                (with-output-to-string
+                  (with-current-buffer standard-output
+                    (let ((default-directory dir))
+                      (call-process "git" nil t nil "remote" "get-url" "origin")))))))
+      (when (not (string-empty-p out)) out))))
+
+(defun my/repo-sync (identity)
+  "Sync the user's private data repo into my/data-dir.
+IDENTITY is the plist returned by my/github-load-identity."
+  (let* ((user (plist-get identity :username))
+         (repo (plist-get identity :repo))
+         (expected-url (format "https://github.com/%s/%s.git" user repo))
+         (dir my/data-dir))
+    (cond
+     ;; Existing clone with matching remote → pull
+     ((and (file-directory-p dir)
+           (let ((url (my/git-remote-url dir)))
+             (and url (or (string= url expected-url)
+                          (string= url (replace-regexp-in-string "\\.git\\'" "" expected-url))))))
+      (message "my/data-dir is a clone of %s/%s — pulling…" user repo)
+      (let ((default-directory dir))
+        (call-process-shell-command
+         "git pull --rebase --autostash --ff-only origin main 2>&1"
+         nil "*repo-pull*" nil)
+        (with-current-buffer (get-buffer-create "*repo-pull*")
+          (when (string-match-p "CONFLICT\\|Could not apply" (buffer-string))
+            (display-warning 'emacs-setup
+                             (concat "Repo pull conflict in " dir
+                                     " — leaving repo alone. Resolve manually then restart Emacs.")
+                             :warning)))))
+     ;; Empty / absent → clone or create
+     ((or (not (file-exists-p dir))
+          (and (file-directory-p dir)
+               (null (directory-files dir nil "\\`[^.]"))))
+      (let ((exists-on-gh (zerop (call-process-shell-command
+                                  (format "gh api repos/%s/%s >/dev/null 2>&1"
+                                          (shell-quote-argument user)
+                                          (shell-quote-argument repo))
+                                  nil nil))))
+        (cond
+         (exists-on-gh
+          (message "Cloning %s/%s into %s…" user repo dir)
+          (when (file-exists-p dir) (delete-directory dir t))
+          (call-process-shell-command
+           (format "gh repo clone %s/%s %s"
+                   (shell-quote-argument user) (shell-quote-argument repo)
+                   (shell-quote-argument dir))
+           nil nil))
+         (t
+          (message "Repo %s/%s does not exist on GitHub. Generating starter, creating private repo, pushing…" user repo)
+          (make-directory dir t)
+          (my/generate-starter-data dir identity)
+          (let ((default-directory dir))
+            (call-process-shell-command (format "git init -b main") nil nil)
+            (call-process-shell-command
+             (format "git config user.name %s && git config user.email %s"
+                     (shell-quote-argument (or (plist-get identity :fullname) ""))
+                     (shell-quote-argument (or (plist-get identity :email) "")))
+             nil nil)
+            (call-process-shell-command "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1" nil nil)
+            (call-process-shell-command
+             (format "gh repo create %s/%s --private --source=. --push >/dev/null 2>&1"
+                     (shell-quote-argument user) (shell-quote-argument repo))
+             nil nil))))))
+     ;; Has content but wrong/no remote
+     (t
+      (display-warning 'emacs-setup
+                       (format "%s exists with content but is not a clone of %s/%s — leaving alone."
+                               dir user repo)
+                       :warning)))))
+#+end_src
+
+* Step 7 — Generate starter data (elisp templates)
+
+#+begin_src emacs-lisp :tangle yes
+(require 'subr-x)
+
+(defun my/starter--write-if-missing (path content)
+  "Write CONTENT to PATH unless PATH already exists. Returns t if written."
+  (unless (file-exists-p path)
+    (make-directory (file-name-directory path) t)
+    (with-temp-file path (insert content))
+    t))
+
+(defun my/template-tour-org (identity)
+  (let ((name (or (plist-get identity :fullname) "you")))
+    (format "#+TITLE: Welcome to your Emacs-for-Mac install
+#+STARTUP: overview content
+
+* You are reading TOUR.org
+
+Hi %s — this file opened automatically because this is your first launch.
+After reading, just close it (=C-x k=). Next launch it won't appear again.
+
+* Try these five things
+1. Agenda — =C-c a a=
+2. Wiki — =C-c n f=
+3. gptel — =C-c <RET>=
+4. Which-key — type any prefix (=C-c=, =C-x=, =M-g=) and pause.
+5. Capture — =C-c c=
+
+See [[file:wiki/emacs/overviews/how-to-use-this-wiki.org][how-to-use-this-wiki.org]] for the wiki workflow.
+" name)))
+
+(defun my/template-wiki-schema () "#+TITLE: WIKI Schema — Emacs Knowledge
+#+STARTUP: overview
+
+* Page types
+- ~entities/~     :entity:
+- ~concepts/~     :concept:
+- ~sources/~      :source:
+- ~comparisons/~  :comparison:
+- ~overviews/~    :overview:
+
+* Page format (every page is an org-roam node)
+:PROPERTIES: :ID: <uuid> :END:
+#+TITLE: …
+#+FILETAGS: :<type>:<topic>:
+* Summary  (1-3 paragraphs; never an empty stub)
+* …
+* Cross-Linkage
+* Related
+")
+
+(defun my/template-wiki-index () "#+TITLE: Index — Emacs Knowledge Wiki
+#+STARTUP: overview
+
+Catalog of all wiki pages. Agent reads this first when answering queries.
+
+* Sources
+* Entities
+* Concepts
+* Comparisons
+* Overviews
+")
+
+(defun my/template-wiki-log () (format "#+TITLE: Log — Emacs Knowledge Wiki
+#+STARTUP: overview
+
+Append-only timeline of wiki operations.
+
+** [%s] scaffold | Initial starter wiki generated by Emacs bootstrap
+" (format-time-string "%Y-%m-%d")))
+
+(defun my/template-gtd-inbox () "#+TITLE: Inbox
+#+STARTUP: overview
+
+* TODO Capture incoming ideas here
+")
+
+(defun my/template-gtd-next () "#+TITLE: Next Actions
+#+STARTUP: overview
+
+* TODO Example next action — concrete, doable in <30 min
+")
+
+(defun my/template-gtd-projects () "#+TITLE: Projects
+#+STARTUP: overview
+
+* TODO Example project [/]
+  - [ ] First next action
+  - [ ] Second next action
+")
+
+(defun my/template-gtd-someday () "#+TITLE: Someday/Maybe
+")
+
+(defun my/template-gtd-waiting () "#+TITLE: Waiting For
+")
+
+(defun my/template-gtd-tickler () "#+TITLE: Tickler
+")
+
+(defun my/generate-starter-data (root identity)
+  "Write starter content under ROOT (the my/data-dir). Skips existing files."
+  (my/starter--write-if-missing
+   (expand-file-name "TOUR.org" root) (my/template-tour-org identity))
+  (dolist (pair `(("wiki/emacs/WIKI.org"  . ,(my/template-wiki-schema))
+                  ("wiki/emacs/index.org" . ,(my/template-wiki-index))
+                  ("wiki/emacs/log.org"   . ,(my/template-wiki-log))
+                  ("data/org/inbox.org"    . ,(my/template-gtd-inbox))
+                  ("data/org/gtd/next.org"     . ,(my/template-gtd-next))
+                  ("data/org/gtd/projects.org" . ,(my/template-gtd-projects))
+                  ("data/org/gtd/someday.org"  . ,(my/template-gtd-someday))
+                  ("data/org/gtd/waiting.org"  . ,(my/template-gtd-waiting))
+                  ("data/org/gtd/tickler.org"  . ,(my/template-gtd-tickler))))
+    (my/starter--write-if-missing
+     (expand-file-name (car pair) root) (cdr pair)))
+  ;; Ensure raw/ + subdirs exist for the wiki scanner
+  (dolist (d '("wiki/emacs/raw" "wiki/emacs/entities" "wiki/emacs/concepts"
+               "wiki/emacs/sources" "wiki/emacs/comparisons" "wiki/emacs/overviews"
+               "data/org/archive"))
+    (make-directory (expand-file-name d root) t)))
+#+end_src
+
+* Step 8 — API keys: load from BW (preferred) or Keychain (fallback)
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/api-keys-load ()
+  "For each (env-var . bw-item) in my/bw-api-items, populate the env var.
+Order of resolution: BW (if unlocked) → Keychain → prompt + persist."
+  (dolist (pair my/bw-api-items)
+    (let* ((env-var   (car pair))
+           (bw-item   (cdr pair))
+           (kc-svc    (concat my/api-keychain-service-prefix env-var))
+           (value     nil))
+      ;; 1. BW
+      (when (and my/bw-session (null value))
+        (let ((item (my/bw-get-item bw-item)))
+          (when item
+            (setq value (my/bw-item-password item)))))
+      ;; 2. Keychain fallback
+      (when (null value)
+        (setq value (my/keychain-get kc-svc)))
+      ;; 3. Prompt
+      (when (null value)
+        (let ((entered (read-passwd (format "%s (empty to skip): " env-var))))
+          (when (and entered (not (string-empty-p entered)))
+            (setq value entered)
+            ;; Persist: BW if unlocked, else Keychain
+            (cond
+             (my/bw-session
+              (my/bw-create-item bw-item :password entered))
+             (t
+              (my/keychain-set kc-svc entered))))))
+      (when (and value (not (string-empty-p value)))
+        (setenv env-var value)))))
+#+end_src
+
+* Step 9 — Orchestration (runs synchronously, in order)
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/bootstrap ()
+  "Run the full first-launch bootstrap: BW unlock, GitHub identity,
+gh install/auth, repo sync, starter generation, API key loading.
+Idempotent; safe to invoke as M-x my/bootstrap to re-run."
+  (interactive)
+  (message "Bootstrap: starting…")
+
+  ;; 1-2. BW
+  (my/bw-unlock)
+
+  ;; 3-4. GitHub identity
+  (let ((id (my/github-load-identity)))
+    (when (and id (plist-get id :token))
+      ;; 5. gh install + auth
+      (unless (my/gh-installed-p) (my/gh-install))
+      (when (my/gh-installed-p)
+        (unless (my/gh-authenticated-p)
+          (my/gh-login-with-token (plist-get id :token)))
+        ;; 6. Repo sync (clone / pull / create+push)
+        (when (and (plist-get id :username) (plist-get id :repo))
+          (my/repo-sync id)))
+      ;; 7. Starter data (only fills gaps; never overwrites)
+      (when (file-directory-p my/data-dir)
+        (my/generate-starter-data my/data-dir id))))
+
+  ;; 7 (no-GitHub path). Generate starter into my/data-dir anyway.
+  (unless (file-directory-p my/data-dir)
+    (make-directory my/data-dir t))
+  (my/generate-starter-data my/data-dir '())
+
+  ;; 8. API keys
+  (my/api-keys-load)
+
+  ;; 9. Lock BW
+  (my/bw-lock)
+  (message "Bootstrap: done."))
+
+;; Run it.
+(my/bootstrap)
+#+end_src

@@ -18,7 +18,14 @@ then =M-x load-file= on the generated =.el= file (or restart Emacs).
 * Bootstrap
 
 #+begin_src elisp :tangle yes
-(defvar my/config-split-files '("core.org" "org-setup.org" "gptel-setup.org" "wiki-setup.org"))
+;; bootstrap.org MUST load first: it unlocks Bitwarden, fetches the
+;; user's GitHub identity, clones / pulls the private data repo,
+;; generates starter content where files are missing, and populates
+;; API-key env vars. Every other split file below depends on at least
+;; one of those (org-setup.org needs ~/emacs/data/org/, gptel-setup.org
+;; needs the API-key env vars, wiki-setup.org needs ~/emacs/wiki/emacs/).
+(defvar my/config-split-files
+  '("bootstrap.org" "core.org" "org-setup.org" "gptel-setup.org" "wiki-setup.org"))
 (when (eq system-type 'darwin)
   (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
 
