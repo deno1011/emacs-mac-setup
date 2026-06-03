@@ -509,6 +509,9 @@ my/data-dir's post-commit auto-push hook) fall back to
 * Step 6 — Personal repo sync
 
 #+begin_src emacs-lisp :tangle yes
+(require 'cl-lib)
+(require 'subr-x)
+
 (defun my/git-remote-url (dir)
   "Return the origin URL of git repo at DIR, or nil."
   (when (file-directory-p (expand-file-name ".git" dir))
@@ -565,6 +568,110 @@ Used by both the empty-dir branch and the override-existing branch."
                  (shell-quote-argument user) (shell-quote-argument repo))
          nil nil))))))
 
+(defun my/-repo-exists-on-gh-p (user repo)
+  "Return non-nil when USER/REPO exists on GitHub."
+  (zerop (call-process-shell-command
+          (format "gh api repos/%s/%s >/dev/null 2>&1"
+                  (shell-quote-argument user)
+                  (shell-quote-argument repo))
+          nil nil)))
+
+(defun my/-file-same-content-p (a b)
+  "Return non-nil when files A and B have identical content."
+  (zerop (call-process "cmp" nil nil nil "-s" a b)))
+
+(defun my/-repo-copy-local-only-files (local-dir repo-dir)
+  "Copy files that exist only in LOCAL-DIR into REPO-DIR.
+For files present on both sides with different content, keep the repo
+version and record the relative path as a conflict.  Return a plist
+with :imported and :conflicts lists."
+  (let ((imported nil)
+        (conflicts nil))
+    (dolist (src (directory-files-recursively local-dir ".*" t))
+      (when (file-regular-p src)
+        (let* ((rel (file-relative-name src local-dir))
+               (dst (expand-file-name rel repo-dir)))
+          (unless (or (string-prefix-p ".git/" rel)
+                      (member (file-name-nondirectory rel)
+                              '(".DS_Store" ".localized")))
+            (cond
+             ((not (file-exists-p dst))
+              (make-directory (file-name-directory dst) t)
+              (copy-file src dst t t t t)
+              (push rel imported))
+             ((not (my/-file-same-content-p src dst))
+              (push rel conflicts)))))))
+    (list :imported (nreverse imported)
+          :conflicts (nreverse conflicts))))
+
+(defun my/-repo-write-adoption-report (backup imported conflicts user repo)
+  "Write an adoption report into BACKUP for IMPORTED and CONFLICTS."
+  (let ((report (expand-file-name "BOOTSTRAP-ADOPTION-REPORT.org" backup)))
+    (with-temp-file report
+      (insert "#+TITLE: Bootstrap Adoption Report\n\n")
+      (insert (format "* Remote\n%s/%s\n\n" user repo))
+      (insert "* Policy\n")
+      (insert "- Remote files win when the same relative path differs.\n")
+      (insert "- Local-only files are copied into the GitHub clone and pushed.\n")
+      (insert "- Differing local files remain in this backup for manual review.\n\n")
+      (insert (format "* Imported local-only files (%d)\n" (length imported)))
+      (if imported
+          (dolist (rel imported) (insert "- " rel "\n"))
+        (insert "- none\n"))
+      (insert (format "\n* Conflicts kept from remote (%d)\n" (length conflicts)))
+      (if conflicts
+          (dolist (rel conflicts)
+            (insert "- " rel "\n")
+            (insert "  - remote kept at: " rel "\n")
+            (insert "  - local backup at: " (expand-file-name rel backup) "\n"))
+        (insert "- none\n")))))
+
+(defun my/-repo-commit-and-push-if-needed (dir message)
+  "Commit and push changes in DIR with MESSAGE when the worktree changed."
+  (let ((default-directory dir))
+    (unless (zerop (call-process "git" nil nil nil "diff" "--quiet" "--"))
+      (call-process "git" nil nil nil "add" ".")
+      (call-process "git" nil nil nil "commit" "-m" message)
+      (call-process "git" nil nil nil "push" "origin" "main"))))
+
+(defun my/-repo-adopt-existing-dir (identity current-remote)
+  "Adopt existing my/data-dir into the configured GitHub repo.
+The GitHub repo is authoritative for paths that exist on both sides.
+Local-only files are imported and pushed.  The original directory is
+always kept as a timestamped backup so conflicting local versions can
+be recovered manually."
+  (let* ((user (plist-get identity :username))
+         (repo (plist-get identity :repo))
+         (dir my/data-dir)
+         (stamp (format-time-string "%Y%m%d-%H%M%S"))
+         (backup (format "%s.bak-%s" (directory-file-name dir) stamp))
+         (tmp (make-temp-file "emacs-data-adopt-" t)))
+    (if (not (my/-repo-exists-on-gh-p user repo))
+        (display-warning
+         'emacs-setup
+         (format "%s exists with content, but %s/%s does not exist on GitHub.
+Leaving local files untouched. Create the repo first or move %s aside manually."
+                 dir user repo dir)
+         :warning)
+      (message "Bootstrap: cloning %s/%s into temporary adoption dir %s…" user repo tmp)
+      (unless (zerop (call-process "gh" nil nil nil "repo" "clone"
+                                   (format "%s/%s" user repo) tmp))
+        (delete-directory tmp t)
+        (error "Could not clone %s/%s for adoption" user repo))
+      (let* ((result (my/-repo-copy-local-only-files dir tmp))
+             (imported (plist-get result :imported))
+             (conflicts (plist-get result :conflicts)))
+        (message "Bootstrap: moving existing %s → %s before adopting clone" dir backup)
+        (rename-file dir backup)
+        (my/-repo-write-adoption-report backup imported conflicts user repo)
+        (rename-file tmp dir)
+        (when imported
+          (my/-repo-commit-and-push-if-needed
+           dir "sync: import local-only files from bootstrap adoption"))
+        (message
+         "Bootstrap: adopted %s/%s into %s. Imported %d local-only file(s); kept %d remote version(s) where paths differed. Previous local tree: %s"
+         user repo dir (length imported) (length conflicts) backup)))))
+
 (defun my/repo-sync (identity)
   "Sync the user's private data repo into my/data-dir.
 IDENTITY is the plist returned by my/github-load-identity."
@@ -597,25 +704,20 @@ IDENTITY is the plist returned by my/github-load-identity."
           (and (file-directory-p dir)
                (null (directory-files dir nil "\\`[^.]"))))
       (my/-repo-fetch-or-create identity))
-     ;; Has content but wrong/no remote — ASK whether to override.
+     ;; Has content but wrong/no remote — adopt local-only files into the
+     ;; GitHub clone while keeping the remote authoritative for conflicts.
      (t
       (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
         (cond
          ((y-or-n-p
            (format "%s exists with content (remote: %s) and is NOT %s/%s.
-Move it aside (backup) and replace with the GitHub repo? "
+Adopt it into the GitHub repo? Remote wins for conflicting paths; local-only files are imported; full local backup is kept. "
                    dir current-remote user repo))
-          (let* ((stamp  (format-time-string "%Y%m%d-%H%M%S"))
-                 (backup (format "%s.bak-%s" (directory-file-name dir) stamp)))
-            (message "Bootstrap: moving %s → %s" dir backup)
-            (rename-file dir backup)
-            (my/-repo-fetch-or-create identity)
-            (message "Bootstrap: previous content backed up at %s — copy what you need before deleting."
-                     backup)))
+          (my/-repo-adopt-existing-dir identity current-remote))
          (t
           (display-warning 'emacs-setup
                            (format "%s exists with content but is not a clone of %s/%s — leaving alone.
-To override later, M-x my/repo-sync (will re-prompt) or remove %s manually."
+To adopt later, M-x my/repo-sync (will re-prompt) or move %s manually."
                                    dir user repo dir)
                            :warning))))))))
 #+end_src
