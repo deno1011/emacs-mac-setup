@@ -3,9 +3,8 @@
 
 Loaded by: [[file:~/.emacs.d/init.el][init.el]]
 
-Configuration is split across three domain files. This file bootstraps them —
-downloading any that are missing on first install from the bundled defaults in
-[[https://github.com/deno1011/emacs-mac-setup][emacs-mac-setup]].
+Configuration is split into domain files, all in the same directory as
+this file (~/.emacs.d/config/, symlinked from the distro source).
 
 - [[file:core.org][core.org]] — Emacs base: packages, UI, font, version control, protected files, startup sync
 - [[file:org-setup.org][org-setup.org]] — Org mode: agenda, capture, tags, clocking, export, LaTeX, graphics
@@ -23,26 +22,17 @@ then =M-x load-file= on the generated =.el= file (or restart Emacs).
 (when (eq system-type 'darwin)
   (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
 
-(defvar my/config-fallback-base-url
-  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/"
-  "Base URL for fetching missing config files on first install.")
-
-(defun my/ensure-config-file (filename)
-  (let ((path (expand-file-name filename my/config-dir)))
-    (unless (file-exists-p path)
-      (message "Config: fetching missing %s from emacs-mac-setup..." filename)
-      (condition-case err
-          (progn (require 'url)
-                 (url-copy-file (concat my/config-fallback-base-url filename) path t))
-        (error (message "Config: could not fetch %s: %s" filename err))))
-    path))
-
+;; Config files are symlinked into ~/.emacs.d/config/ by install.sh. If a
+;; split file is missing, the right fix is `bash install.sh` (which
+;; re-syncs the symlink), not a silent network fetch — so this loop only
+;; loads what's actually on disk and logs a clean error otherwise.
 (dolist (f my/config-split-files)
-  (let ((path (my/ensure-config-file f)))
-    (when (file-exists-p path)
-      (condition-case err
-          (org-babel-load-file path)
-        (error (message "CONFIG LOAD ERROR (%s): %s" f err))))))
+  (let ((path (expand-file-name f my/config-dir)))
+    (if (file-exists-p path)
+        (condition-case err
+            (org-babel-load-file path)
+          (error (message "CONFIG LOAD ERROR (%s): %s" f err)))
+      (message "CONFIG MISSING: %s — try `bash ~/emacs-mac-setup-src/install.sh`" path))))
 #+end_src
 
 * GTD Overlay

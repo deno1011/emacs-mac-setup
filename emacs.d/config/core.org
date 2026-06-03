@@ -227,10 +227,17 @@ what you usually want for prose, Org, Markdown and chat buffers.
 * Protected Files
 
 #+begin_src emacs-lisp :tangle yes
+;; Distro code lives under my/config-dir (~/.emacs.d/config/, symlinked
+;; from the distro repo). gptel may freely touch the user's data under
+;; my/data-dir but must never overwrite the distro itself, init.el, or
+;; early-init.el.
 (defvar my/gptel-protected-files
-  (list (expand-file-name "config/config.org" my/data-dir)
-        (expand-file-name "~/.emacs.d/init.el")
-        (expand-file-name "~/.emacs.d/config.el"))
+  (append
+   (list (expand-file-name "init.el"        user-emacs-directory)
+         (expand-file-name "early-init.el"  user-emacs-directory)
+         (expand-file-name "secrets.el"     user-emacs-directory))
+   (when (file-directory-p my/config-dir)
+     (directory-files my/config-dir t "\\.org\\'")))
   "Files that gptel write tools may never overwrite.")
 
 (defun my/gptel-protected-p (path)
@@ -276,97 +283,44 @@ what you usually want for prose, Org, Markdown and chat buffers.
           (lambda ()
             (when (and buffer-file-name
                        my/data-dir
-                       (or (string-match-p (regexp-quote (expand-file-name "config/" my/data-dir)) buffer-file-name)
-                           (string-match-p (regexp-quote (expand-file-name "data/org/" my/data-dir)) buffer-file-name))
+                       ;; Auto-commit user data (data/org/) only. The
+                       ;; literate distro config under my/config-dir is
+                       ;; symlinked and shouldn't be auto-committed from
+                       ;; an org-mode hook.
+                       (string-match-p
+                        (regexp-quote (expand-file-name "data/org/" my/data-dir))
+                        buffer-file-name)
                        (not (string-match-p "config\\.org$" buffer-file-name)))
               (git-auto-commit-mode 1))))
 #+end_src
 
-* Startup Sync
-#+begin_src emacs-lisp
-(defun my/org-encrypted-p (org-dir)
-  "Return t if any .org file in ORG-DIR starts with a git-crypt null byte."
-  (let ((first (car (and (file-directory-p org-dir)
-                         (directory-files org-dir t "\\.org$")))))
-    (when first
-      (with-temp-buffer
-        (insert-file-contents-literally first nil 0 10)
-        (string-match-p "\x00" (buffer-string))))))
+* Startup Sync — beorg only
 
-(defun my/repo-dirty-p (repo)
-  "Return t if REPO has uncommitted changes."
-  (not (string-empty-p
-        (shell-command-to-string
-         (format "git -C %s status --porcelain" (shell-quote-argument repo))))))
+The legacy startup-sync did =git pull= on =my/data-dir=, =git-crypt
+unlock=, and an rsync to =~/.emacs.d/config-readonly/=. In the distro
+model none of that is needed: the distro code is symlinked (no
+pull-on-startup), git-crypt is gone, and config-readonly is dead. The
+beorg mirror is the only piece worth keeping — it pushes
+=data/org/= to the iCloud folder beorg reads on iPhone.
 
-(defun my/revert-org-buffers ()
-  (dolist (buf (buffer-list))
-    (with-current-buffer buf
-      (when (and (derived-mode-p 'org-mode)
-                 buffer-file-name
-                 (file-exists-p buffer-file-name))
-        (revert-buffer t t t)))))
+If you don't use beorg, this is a no-op (the iCloud directory just
+doesn't exist) — safe to leave in place.
 
-(defun my/beorg-sync (org-d beorg)
-  (when (and (file-directory-p org-d) (file-directory-p beorg))
-    (start-process "beorg-sync" " *beorg-sync*"
-                   "rsync" "-a" "--delete"
-                   org-d (file-name-as-directory beorg))))
+#+begin_src emacs-lisp :tangle yes
+(defun my/beorg-sync ()
+  "Mirror my/data-dir/data/org/ to beorg's iCloud folder."
+  (let ((org-d (file-name-as-directory
+                (expand-file-name "data/org" my/data-dir)))
+        (beorg (expand-file-name
+                "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
+                (getenv "HOME"))))
+    (when (and (file-directory-p org-d)
+               (file-directory-p beorg))
+      (start-process "beorg-sync" " *beorg-sync*"
+                     "rsync" "-a" "--delete"
+                     org-d (file-name-as-directory beorg)))))
 
-(defun my/startup-sync ()
-  "Pull emacs-data from origin on startup; unlock git-crypt if needed; sync config-readonly/ and beorg."
-  (let* ((repo     (file-truename my/data-dir))
-         (config-d (file-name-as-directory (expand-file-name "config" repo)))
-         (org-d    (file-name-as-directory (expand-file-name "data/org" repo)))
-         (readonly (expand-file-name "~/.emacs.d/config-readonly/"))
-         (beorg    (expand-file-name
-                    "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
-                    (getenv "HOME"))))
-    (when (and (file-directory-p repo)
-               (file-directory-p (expand-file-name ".git" repo)))
-      (let ((proc (let ((default-directory repo))
-                    (start-process "startup-sync" " *startup-sync*"
-                                   "git" "pull" "--ff-only" "origin" "main"))))
-        (set-process-sentinel
-         proc
-         (lambda (p _)
-           (when (= (process-exit-status p) 0)
-             (message "Startup sync: pull complete.")
-             (when (file-directory-p config-d)
-               (make-directory readonly t)
-               (start-process "config-readonly-sync" " *config-readonly-sync*"
-                              "rsync" "-a" "--delete"
-                              config-d readonly))
-             (if (not (my/org-encrypted-p org-d))
-                 (progn (my/revert-org-buffers)
-                        (my/beorg-sync org-d beorg))
-               (when (my/repo-dirty-p repo)
-                 (call-process "git" nil nil nil "-C" repo
-                               "checkout" "--" "data/org/" "emacs.d/secrets.el" "config.el")
-                 (if (my/repo-dirty-p repo)
-                     (display-warning 'emacs-setup
-                      (concat "Uncommitted changes block git-crypt unlock.\n"
-                              "Commit or stash them, then restart Emacs.\n"
-                              "Or run manually: bash ~/unlock-git-crypt.sh")
-                      :warning)
-                   (message "Startup sync: reset encrypted blobs before unlock.")))
-               (unless (my/repo-dirty-p repo)
-               (message "Startup sync: org files encrypted — running unlock-git-crypt.sh...")
-               (let ((unlock (start-process "git-crypt-unlock" " *git-crypt-unlock*"
-                                            (expand-file-name "~/unlock-git-crypt.sh"))))
-                 (set-process-sentinel
-                  unlock
-                  (lambda (u _)
-                    (if (= (process-exit-status u) 0)
-                        (progn
-                          (message "Startup sync: git-crypt unlocked.")
-                          (my/revert-org-buffers)
-                          (my/beorg-sync org-d beorg))
-                      (display-warning 'emacs-setup
-                       "git-crypt unlock failed — run: bash ~/unlock-git-crypt.sh"
-                       :warning))))))))))))))
-
-(add-hook 'after-init-hook #'my/startup-sync)
+(add-hook 'after-init-hook #'my/beorg-sync)
 #+end_src
 
 * Editing Utilities

@@ -38,85 +38,28 @@ directory tree and seeds the three schema files from templates if
 they are missing. It is idempotent — safe to call repeatedly — and
 auto-runs on package load.
 
-Templates are fetched from =emacs-mac-setup/stable/wiki-templates/=
-the first time they are needed, using the same URL fallback pattern
-=config.org= uses for missing split files. Subsequent loads find the
-local files and do nothing.
+The wiki directory tree (=raw/=, =entities/=, =concepts/=, =sources/=,
+=comparisons/=, =overviews/=) and schema files (=WIKI.org=,
+=index.org=, =log.org=) are seeded by =install.sh= from
+=starter-data/wiki/= on first install. If a file goes missing later,
+the right fix is to manually copy from
+=~/emacs-mac-setup-src/starter-data/wiki/= — not a silent network
+fetch. The runtime-fetch fallback was confusing to debug; this
+function just ensures the directory tree exists.
 
-#+begin_src emacs-lisp
-(defvar my/wiki--template-base-url
-  "https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/wiki-templates/"
-  "Base URL for wiki schema templates, fetched on first install if local
-copies are missing. Matches the my/config-fallback-base-url pattern.")
-
-(defvar my/-wiki-bootstrap-marker
-  (expand-file-name ".bootstrap-completed" my/wiki-base-dir)
-  "Marker file. Once present, the wiki layer's auto-fetch is locked.
-See the marker file content for the full explanation.")
-
-(defun my/wiki-bootstrap ()
-  "Create the wiki directory tree and seed WIKI.org / index.org / log.org
-from templates if missing. Idempotent — only creates what is absent.
-Auto-runs on package load; can also be invoked as M-x my/wiki-bootstrap.
-Returns t if anything was created, nil if everything was already in place.
-
-Once `my/-wiki-bootstrap-marker' exists, this function is a complete
-no-op — the user owns the wiki layer."
+#+begin_src emacs-lisp :tangle yes
+(defun my/wiki-ensure-tree ()
+  "Create the wiki directory tree if any subdirs are missing.
+Doesn't touch files. Safe to call interactively."
   (interactive)
-  (if (file-exists-p my/-wiki-bootstrap-marker)
-      nil
-    (my/-wiki-bootstrap-do)))
+  (dolist (sub '("" "raw" "entities" "concepts" "sources"
+                 "comparisons" "overviews"))
+    (let ((d (expand-file-name sub my/wiki-base-dir)))
+      (unless (file-directory-p d)
+        (make-directory d t)
+        (message "wiki: created %s" d)))))
 
-(defun my/-wiki-bootstrap-do ()
-  "Actual bootstrap work. Internal — call `my/wiki-bootstrap'."
-  (let ((created nil))
-    ;; 1. Create directory tree
-    (dolist (sub '("" "raw" "entities" "concepts" "sources"
-                   "comparisons" "overviews"))
-      (let ((d (expand-file-name sub my/wiki-base-dir)))
-        (unless (file-directory-p d)
-          (make-directory d t)
-          (setq created t))))
-    ;; 2. Seed schema files from templates if missing.
-    ;; Try a few local fallback paths first (developer/runtime checkout),
-    ;; then fetch from the public mac-setup repo.
-    (dolist (name '("WIKI.org" "index.org" "log.org"))
-      (let ((dest (expand-file-name name my/wiki-base-dir)))
-        (unless (file-exists-p dest)
-          (let ((src (cl-find-if
-                      #'file-readable-p
-                      (list
-                       ;; Local template paths checked in priority order:
-                       (expand-file-name (concat "wiki-templates/" name)
-                                         my/data-dir)
-                       (expand-file-name (concat "../emacs-mac-setup/wiki-templates/" name)
-                                         my/data-dir)
-                       "/tmp/emacs-mac-setup/wiki-templates/WIKI.org"))))
-            (cond
-             (src
-              (copy-file src dest)
-              (setq created t))
-             ((featurep 'url)
-              (condition-case err
-                  (progn
-                    (require 'url)
-                    (url-copy-file (concat my/wiki--template-base-url name)
-                                   dest t)
-                    (setq created t))
-                (error
-                 (message "wiki-bootstrap: could not fetch %s: %s"
-                          name err)))))))))
-    ;; Drop the marker so future runs skip the entire bootstrap. The
-    ;; marker is a verbose self-documenting file written by
-    ;; my/-bootstrap-write-marker (defined in init.el).
-    (when (fboundp 'my/-bootstrap-write-marker)
-      (my/-bootstrap-write-marker my/wiki-base-dir "wiki"))
-    (when (and created (called-interactively-p 'any))
-      (message "Wiki bootstrapped at %s" my/wiki-base-dir))
-    created))
-
-;; Auto-bootstrap on package load. No-op once the wiki exists.
-(my/wiki-bootstrap)
+(my/wiki-ensure-tree)
 #+end_src
 
 * Wiki Maintainer Directive
