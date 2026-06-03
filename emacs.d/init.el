@@ -64,6 +64,8 @@ from when the local distro checkout isn't present.")
           my/distro-seed-branch)
   "URL base for fetching seed-config files when no local copy exists.")
 
+(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+
 (defvar my/-bootstrap-completed-marker
   (expand-file-name ".bootstrap-completed" my/config-dir)
   "Sentinel file. While ABSENT, init.el seeds missing config files
@@ -137,7 +139,6 @@ Try: `bash ~/emacs-mac-setup-src/install.sh` then restart Emacs."
      :error))))
 
 ;; 6. custom.el (so customize doesn't pollute init.el) ---------------------
-(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (when (file-exists-p custom-file) (load custom-file))
 
 (provide 'init)
