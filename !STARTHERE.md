@@ -42,7 +42,7 @@ are never touched.
 ```bash
 bash ~/emacs-mac-setup-src/uninstall.sh
 # add --purge-data to also delete ~/emacs/ (irreversible)
-# add --purge-emacs-app to also `brew uninstall emacs-plus`
+# add --keep-emacs-app to preserve Emacs.app + the brew formula
 ```
 
 ## Cross-Mac sync (optional, your choice)

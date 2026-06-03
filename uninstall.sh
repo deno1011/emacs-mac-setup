@@ -2,7 +2,7 @@
 # Reverses install.sh.
 #
 # Default behaviour: removes the .emacs.d symlink, the distro source
-# clone, the /Applications/Emacs.app symlink, and the emacs-plus formula.
+# clone, the Emacs.app bundle/registration, and the emacs-plus formula.
 #
 # Your data in ~/emacs/ (wiki, GTD, notes) is preserved unless you pass
 # --purge-data — that's the only irreversible thing, so opting in is
@@ -18,6 +18,47 @@ EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-$HOME/emacs-mac-setup-src}"
 EMACS_D="$HOME/.emacs.d"
 DATA_DIR="${EMACS_DATA_DIR:-$HOME/emacs}"
+
+emacs_app_bundle_id() {
+  local plist="$1/Contents/Info.plist"
+  [ -f "$plist" ] || return 1
+
+  plutil -extract CFBundleIdentifier raw "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null \
+    || defaults read "$plist" CFBundleIdentifier 2>/dev/null
+}
+
+emacs_unregister_app() {
+  local app="$1"
+  [ -e "$app" ] || return 0
+
+  local lsreg="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+  [ -x "$lsreg" ] && "$lsreg" -u "$app" 2>/dev/null || true
+  mdimport "$app" 2>/dev/null || true
+}
+
+emacs_remove_app_if_ours() {
+  local app="$1" bundle_id=""
+  [ -e "$app" ] || return 0
+
+  emacs_unregister_app "$app"
+
+  if [ -L "$app" ]; then
+    echo "==> Removing symlink $app"
+    rm "$app"
+  elif [ -d "$app" ]; then
+    bundle_id="$(emacs_app_bundle_id "$app" || true)"
+    case "$bundle_id" in
+      org.gnu.Emacs|"")
+        echo "==> Removing Emacs app bundle $app"
+        rm -rf "$app"
+        ;;
+      *)
+        echo "==> Leaving third-party app $app ($bundle_id)"
+        ;;
+    esac
+  fi
+}
 
 KEEP_EMACS_APP=0
 PURGE_DATA=0
@@ -84,22 +125,23 @@ if [ "$KEEP_EMACS_APP" = "0" ]; then
   [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
   [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
 
-  # Unregister from LaunchServices first so Spotlight forgets the app
-  # immediately, then remove the symlinks and the formula.
-  LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
-  for app in /Applications/Emacs.app "$HOME/Applications/Emacs.app"; do
-    if [ -L "$app" ] || [ -d "$app" ]; then
-      [ -x "$LSREG" ] && "$LSREG" -u "$app" 2>/dev/null || true
-      if [ -L "$app" ]; then
-        echo "==> Removing symlink $app"
-        rm "$app"
-      else
-        backup="$app.uninstalled-$(date +%s)"
-        echo "==> $app is a real directory; moving to $backup"
-        mv "$app" "$backup"
-      fi
-    fi
+  # Unregister and remove app bundles so Finder / Spotlight / Launchpad
+  # no longer show stale Emacs icons.  Include historical names from the
+  # stable setup as well as the current generic bundle name.
+  for app in \
+    /Applications/Emacs.app \
+    "$HOME/Applications/Emacs.app" \
+    "/Applications/Plus Emacs.app" \
+    "$HOME/Applications/Plus Emacs.app" \
+    "/Applications/Emacs (emacs-plus).app" \
+    "$HOME/Applications/Emacs (emacs-plus).app"; do
+    emacs_remove_app_if_ours "$app"
   done
+
+  # Homebrew may also have registered the Cellar/opt bundle directly.
+  if command -v brew &>/dev/null && brew list --formula "$EMACS_FORMULA" &>/dev/null; then
+    emacs_unregister_app "$(brew --prefix "$EMACS_FORMULA")/Emacs.app"
+  fi
 
   if command -v brew &>/dev/null; then
     if brew list --formula "$EMACS_FORMULA" &>/dev/null; then
@@ -109,6 +151,9 @@ if [ "$KEEP_EMACS_APP" = "0" ]; then
       echo "==> $EMACS_FORMULA not installed via Homebrew — skipping uninstall"
     fi
   fi
+
+  # Refresh Launchpad's persistent cache after unregister/removal.
+  killall Dock 2>/dev/null || true
 fi
 
 # 4. Purge user data (opt-in, destructive) --------------------------------

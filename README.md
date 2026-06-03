@@ -102,8 +102,9 @@ bash ~/emacs-mac-setup-src/install.sh
 Install from a non-`main` branch:
 
 ```bash
-EMACS_MAC_BRANCH=sketch/distro-model curl -fsSL \
-  https://raw.githubusercontent.com/deno1011/emacs-mac-setup/sketch/distro-model/install.sh | /bin/bash
+curl -fsSL \
+  https://raw.githubusercontent.com/deno1011/emacs-mac-setup/sketch/distro-model/install.sh \
+  | EMACS_MAC_BRANCH=sketch/distro-model /bin/bash
 ```
 
 ## Uninstall
@@ -112,6 +113,7 @@ EMACS_MAC_BRANCH=sketch/distro-model curl -fsSL \
 bash ~/emacs-mac-setup-src/uninstall.sh
 ```
 
-Removes the symlink + the cloned distro source. Leaves `~/emacs/` and
-`Emacs.app` untouched. Add `--purge-data` to also delete `~/emacs/`,
-or `--purge-emacs-app` to also `brew uninstall emacs-plus`.
+Removes the symlink, cloned distro source, Emacs app bundles/registrations,
+and the `emacs-plus` formula. Leaves `~/emacs/` untouched. Add
+`--purge-data` to also delete `~/emacs/`, or `--keep-emacs-app` to leave
+Emacs.app and the brew formula installed.
