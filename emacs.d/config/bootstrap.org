@@ -36,6 +36,10 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
   "Alist mapping env-var name to Bitwarden item name. Each BW item's
 login.password field holds the key value.")
 
+;; (Previously: a separate BW item for the git-crypt key. Now folded into
+;; my/bw-github-item as the "GitCryptKey" custom field so a single BW
+;; item describes the user's full Emacs-distro identity.)
+
 (defvar my/bw-keychain-service-master "emacs-bw-master"
   "macOS Keychain service for the cached BW master password.")
 
@@ -388,6 +392,9 @@ Prompts only for fields that are missing or invalid:
          (email    (and item (my/bw-item-field item "Email")))
          (fullname (and item (my/bw-item-field item "Fullname")))
          (repo     (and item (my/bw-item-field item "Repo")))
+         ;; Read but DON'T require — git-crypt is opt-in per repo.
+         ;; The git-crypt step will prompt if the repo turns out to need it.
+         (git-crypt-key (and item (my/bw-item-field item "GitCryptKey")))
          (need-token (or (my/-blank-p token)
                          (not (my/github-token-valid-p token))))
          (need-username (my/-blank-p username))
@@ -400,7 +407,8 @@ Prompts only for fields that are missing or invalid:
      ((and item (not any-missing))
       (message "Bootstrap: BW '%s' complete (username=%s, repo=%s)."
                my/bw-github-item username repo)
-      (list :username username :token token :email email :fullname fullname :repo repo))
+      (list :username username :token token :email email :fullname fullname
+            :repo repo :git-crypt-key git-crypt-key))
      ;; Item missing entirely — ask upfront whether to create.
      ((and (not item)
            (not (y-or-n-p (format "BW item '%s' not found. Create it now? "
@@ -445,7 +453,8 @@ Prompts only for fields that are missing or invalid:
                              :fields   fields)
           (message "Bootstrap: BW '%s' created." my/bw-github-item))
         (list :username new-username :token new-token
-              :email new-email :fullname new-fullname :repo new-repo))))))
+              :email new-email :fullname new-fullname :repo new-repo
+              :git-crypt-key git-crypt-key))))))
 #+end_src
 
 * Step 5 — gh CLI install + authenticate
@@ -684,6 +693,133 @@ Append-only timeline of wiki operations.
     (make-directory (expand-file-name d root) t)))
 #+end_src
 
+* Step 7.5 — git-crypt unlock for the private repo
+
+If the user's private data repo uses git-crypt to encrypt sensitive
+files (typical for org files that contain personal data, API keys
+they've inlined, GTD content, etc.), we need to provide the symmetric
+key on each new Mac. The key is stored as the =login.password= of the
+BW item =my/bw-git-crypt-item= (=emacs-git-crypt-key= by default),
+base64-encoded so it round-trips cleanly through BW's string fields.
+
+Three cases handled:
+
+- *Repo uses git-crypt + key in BW*  → install git-crypt if missing;
+  unlock immediately.
+- *Repo uses git-crypt + key NOT in BW* (new Mac, never set up here)
+  → prompt user to paste base64-encoded key from another Mac; save
+  to BW for next time; unlock.
+- *Repo doesn't use git-crypt* (no =.gitattributes= filter=git-crypt
+  entries) → skip entirely.
+
+To export the key on a Mac that already has it set up, run
+=git-crypt export-key /tmp/k && base64 -i /tmp/k= and copy that
+string when prompted on the new Mac.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/git-crypt-installed-p () (executable-find "git-crypt"))
+
+(defun my/git-crypt-install ()
+  "Install git-crypt on macOS via brew. Returns t on success."
+  (when (and (eq system-type 'darwin) (executable-find "brew"))
+    (call-process-shell-command "brew install git-crypt" nil "*install-git-crypt*" t)
+    (executable-find "git-crypt")))
+
+(defun my/repo-uses-git-crypt-p (dir)
+  "Return t if DIR has a .gitattributes entry that pipes through git-crypt."
+  (let ((ga (expand-file-name ".gitattributes" dir)))
+    (and (file-exists-p ga)
+         (with-temp-buffer
+           (insert-file-contents ga)
+           (re-search-forward "filter=git-crypt" nil t)))))
+
+(defun my/repo-already-unlocked-p (dir)
+  "Cheap check: a key file is materialised under .git/git-crypt/keys/."
+  (file-exists-p (expand-file-name ".git/git-crypt/keys/default" dir)))
+
+(defun my/git-crypt-key-prompt-and-save ()
+  "Prompt the user for a base64-encoded git-crypt key. If non-empty,
+save it to the github BW item (custom field GitCryptKey) so subsequent
+Macs / re-runs pick it up automatically. Returns the key or nil."
+  (let ((entered
+         (read-string
+          "Base64-encoded git-crypt key (paste from another Mac, empty to skip): ")))
+    (cond
+     ((my/-blank-p entered)
+      (display-warning
+       'emacs-setup
+       "git-crypt key not provided — encrypted files in the private repo will appear as binary on this Mac."
+       :warning)
+      nil)
+     (t
+      (when my/bw-session
+        ;; my/bw-update-item merges new fields into existing — preserves
+        ;; Email / Fullname / Repo / login.* untouched.
+        (my/bw-update-item my/bw-github-item
+                           :fields `(("GitCryptKey" . ,entered)))
+        (message "Bootstrap: git-crypt key added to BW '%s' (GitCryptKey field)."
+                 my/bw-github-item))
+      entered))))
+
+(defun my/git-crypt-unlock (dir base64-key)
+  "Unlock the git-crypt repo at DIR using BASE64-KEY (a string).
+Writes the decoded key to a temp file, runs `git-crypt unlock`, then
+deletes the temp file regardless of outcome."
+  (let ((keyfile (make-temp-file "git-crypt-key-")))
+    (unwind-protect
+        (progn
+          (with-temp-file keyfile
+            (set-buffer-multibyte nil)
+            (insert (base64-decode-string base64-key)))
+          (let ((default-directory dir))
+            (call-process-shell-command
+             (format "git-crypt unlock %s 2>&1" (shell-quote-argument keyfile))
+             nil "*git-crypt-unlock*" nil))
+          (with-current-buffer (get-buffer-create "*git-crypt-unlock*")
+            (cond
+             ((string-match-p "Error\\|fatal\\|invalid" (buffer-string))
+              (display-warning
+               'emacs-setup
+               "git-crypt unlock failed — see *git-crypt-unlock* buffer. The key in BW may be wrong."
+               :warning))
+             (t
+              (message "Bootstrap: git-crypt unlocked %s." dir)))))
+      (delete-file keyfile))))
+
+(defun my/git-crypt-step (identity)
+  "Top-level dispatcher invoked from my/bootstrap after repo sync.
+IDENTITY is the plist returned by my/github-load-identity (may contain
+a :git-crypt-key already, in which case no prompt is needed).
+No-op if the repo doesn't use git-crypt or is already unlocked."
+  (cond
+   ((not (and (file-directory-p my/data-dir)
+              (my/repo-uses-git-crypt-p my/data-dir)))
+    (message "Bootstrap: repo doesn't use git-crypt; skipping unlock."))
+   ((my/repo-already-unlocked-p my/data-dir)
+    (message "Bootstrap: git-crypt already unlocked on this Mac."))
+   (t
+    (unless (my/git-crypt-installed-p)
+      (message "Bootstrap: installing git-crypt via brew…")
+      (my/git-crypt-install))
+    (cond
+     ((not (my/git-crypt-installed-p))
+      (display-warning
+       'emacs-setup
+       "git-crypt could not be installed — install manually with: brew install git-crypt"
+       :warning))
+     (t
+      ;; Use the key from BW if already populated; otherwise prompt and
+      ;; save into the github BW item's GitCryptKey field.
+      (let ((key (or (and (not (my/-blank-p (plist-get identity :git-crypt-key)))
+                          (progn
+                            (message "Bootstrap: git-crypt key found in BW '%s' (GitCryptKey)."
+                                     my/bw-github-item)
+                            (plist-get identity :git-crypt-key)))
+                     (my/git-crypt-key-prompt-and-save))))
+        (when key
+          (my/git-crypt-unlock my/data-dir key))))))))
+#+end_src
+
 * Step 8 — API keys: load from BW (preferred) or Keychain (fallback)
 
 #+begin_src emacs-lisp :tangle yes
@@ -782,7 +918,11 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
           (my/repo-sync id))
          (t
           (message "Bootstrap: repo sync skipped (missing username or repo name)."))))
-      ;; 7. Starter data — only fills gaps; never overwrites pulled content
+      ;; 7. git-crypt unlock (no-op if repo doesn't use it / already unlocked).
+      ;; The key is in the same BW item as the rest of the GH identity,
+      ;; under custom field "GitCryptKey".
+      (my/git-crypt-step id)
+      ;; 8. Starter data — only fills gaps; never overwrites pulled content
       (when (file-directory-p my/data-dir)
         (my/generate-starter-data my/data-dir id)
         (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
