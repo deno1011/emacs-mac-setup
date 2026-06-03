@@ -492,6 +492,52 @@ Prompts only for fields that are missing or invalid:
                       (call-process "git" nil t nil "remote" "get-url" "origin")))))))
       (when (not (string-empty-p out)) out))))
 
+(defun my/-repo-fetch-or-create (identity)
+  "Clone the user's private repo into my/data-dir, or create+push if it
+doesn't exist on GitHub. Assumes my/data-dir is absent or empty.
+Used by both the empty-dir branch and the override-existing branch."
+  (let* ((user (plist-get identity :username))
+         (repo (plist-get identity :repo))
+         (dir my/data-dir)
+         (exists-on-gh (zerop (call-process-shell-command
+                               (format "gh api repos/%s/%s >/dev/null 2>&1"
+                                       (shell-quote-argument user)
+                                       (shell-quote-argument repo))
+                               nil nil))))
+    (cond
+     (exists-on-gh
+      (message "Bootstrap: cloning %s/%s into %s…" user repo dir)
+      (when (file-exists-p dir) (delete-directory dir t))
+      (call-process-shell-command
+       (format "gh repo clone %s/%s %s"
+               (shell-quote-argument user) (shell-quote-argument repo)
+               (shell-quote-argument dir))
+       nil nil))
+     (t
+      (message "Bootstrap: repo %s/%s does not exist on GitHub. Generating starter, creating, pushing…"
+               user repo)
+      (make-directory dir t)
+      (my/generate-starter-data dir identity)
+      (let ((default-directory dir)
+            ;; Git refuses to commit with empty user.name / user.email,
+            ;; so we always pass a non-empty value.
+            (git-name  (or (plist-get identity :fullname) (user-login-name) "anonymous"))
+            (git-email (or (plist-get identity :email)
+                           (format "%s@users.noreply.github.com" user))))
+        (call-process-shell-command "git init -b main" nil nil)
+        (call-process-shell-command
+         (format "git config user.name %s && git config user.email %s"
+                 (shell-quote-argument git-name)
+                 (shell-quote-argument git-email))
+         nil nil)
+        (call-process-shell-command
+         "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1"
+         nil nil)
+        (call-process-shell-command
+         (format "gh repo create %s/%s --private --source=. --push >/dev/null 2>&1"
+                 (shell-quote-argument user) (shell-quote-argument repo))
+         nil nil))))))
+
 (defun my/repo-sync (identity)
   "Sync the user's private data repo into my/data-dir.
 IDENTITY is the plist returned by my/github-load-identity."
@@ -505,12 +551,11 @@ IDENTITY is the plist returned by my/github-load-identity."
            (let ((url (my/git-remote-url dir)))
              (and url (or (string= url expected-url)
                           (string= url (replace-regexp-in-string "\\.git\\'" "" expected-url))))))
-      (message "my/data-dir is a clone of %s/%s — pulling…" user repo)
+      (message "Bootstrap: my/data-dir is a clone of %s/%s — pulling…" user repo)
       (let ((default-directory dir))
         ;; --rebase + --autostash: replay local commits on top of fetched
         ;; remote; stash any unstaged changes for the duration. Conflicts
         ;; cause the rebase to pause; we detect that and abort below.
-        ;; (--ff-only is incompatible with --rebase and was a bug.)
         (call-process-shell-command
          "git pull --rebase --autostash origin main 2>&1"
          nil "*repo-pull*" nil)
@@ -524,50 +569,28 @@ IDENTITY is the plist returned by my/github-load-identity."
      ((or (not (file-exists-p dir))
           (and (file-directory-p dir)
                (null (directory-files dir nil "\\`[^.]"))))
-      (let ((exists-on-gh (zerop (call-process-shell-command
-                                  (format "gh api repos/%s/%s >/dev/null 2>&1"
-                                          (shell-quote-argument user)
-                                          (shell-quote-argument repo))
-                                  nil nil))))
-        (cond
-         (exists-on-gh
-          (message "Cloning %s/%s into %s…" user repo dir)
-          (when (file-exists-p dir) (delete-directory dir t))
-          (call-process-shell-command
-           (format "gh repo clone %s/%s %s"
-                   (shell-quote-argument user) (shell-quote-argument repo)
-                   (shell-quote-argument dir))
-           nil nil))
-         (t
-          (message "Repo %s/%s does not exist on GitHub. Generating starter, creating private repo, pushing…" user repo)
-          (make-directory dir t)
-          (my/generate-starter-data dir identity)
-          (let ((default-directory dir)
-                ;; Git refuses to commit with empty user.name / user.email,
-                ;; so we always pass a non-empty value. The user can fix
-                ;; later via `git config --global` if needed.
-                (git-name  (or (plist-get identity :fullname) (user-login-name) "anonymous"))
-                (git-email (or (plist-get identity :email)
-                               (format "%s@users.noreply.github.com" user))))
-            (call-process-shell-command "git init -b main" nil nil)
-            (call-process-shell-command
-             (format "git config user.name %s && git config user.email %s"
-                     (shell-quote-argument git-name)
-                     (shell-quote-argument git-email))
-             nil nil)
-            (call-process-shell-command
-             "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1"
-             nil nil)
-            (call-process-shell-command
-             (format "gh repo create %s/%s --private --source=. --push >/dev/null 2>&1"
-                     (shell-quote-argument user) (shell-quote-argument repo))
-             nil nil))))))
-     ;; Has content but wrong/no remote
+      (my/-repo-fetch-or-create identity))
+     ;; Has content but wrong/no remote — ASK whether to override.
      (t
-      (display-warning 'emacs-setup
-                       (format "%s exists with content but is not a clone of %s/%s — leaving alone."
-                               dir user repo)
-                       :warning)))))
+      (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
+        (cond
+         ((y-or-n-p
+           (format "%s exists with content (remote: %s) and is NOT %s/%s.
+Move it aside (backup) and replace with the GitHub repo? "
+                   dir current-remote user repo))
+          (let* ((stamp  (format-time-string "%Y%m%d-%H%M%S"))
+                 (backup (format "%s.bak-%s" (directory-file-name dir) stamp)))
+            (message "Bootstrap: moving %s → %s" dir backup)
+            (rename-file dir backup)
+            (my/-repo-fetch-or-create identity)
+            (message "Bootstrap: previous content backed up at %s — copy what you need before deleting."
+                     backup)))
+         (t
+          (display-warning 'emacs-setup
+                           (format "%s exists with content but is not a clone of %s/%s — leaving alone.
+To override later, M-x my/repo-sync (will re-prompt) or remove %s manually."
+                                   dir user repo dir)
+                           :warning))))))))
 #+end_src
 
 * Step 7 — Generate starter data (elisp templates)
