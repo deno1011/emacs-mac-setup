@@ -741,6 +741,12 @@ To export the key on a Mac that already has it set up, run
 string when prompted on the new Mac.
 
 #+begin_src emacs-lisp :tangle yes
+(defvar my/git-crypt-keychain-service "emacs-git-crypt-key"
+  "macOS Keychain service for the cached git-crypt key (base64-encoded).
+Used as a fallback when Bitwarden isn't available — same pattern as
+the API-key Keychain fallback. The key is stored under (account=$USER,
+service=this) and contains the base64 string verbatim.")
+
 (defun my/git-crypt-installed-p () (executable-find "git-crypt"))
 
 (defun my/git-crypt-install ()
@@ -781,9 +787,12 @@ emit `_' / `-' instead of `/' / `+'."
 
 (defun my/git-crypt-key-prompt-and-save ()
   "Prompt for a base64-encoded git-crypt key. Validate before saving.
-On success, save the NORMALIZED form to the github BW item (custom
-field GitCryptKey) so subsequent Macs / re-runs pick it up. Returns
-the normalized key or nil.
+On success, save the NORMALIZED form to whichever secret store is
+available:
+  - Bitwarden (preferred) — custom field GitCryptKey on my/bw-github-item
+  - macOS Keychain (fallback when BW isn't unlocked) —
+    service=my/git-crypt-keychain-service
+Returns the normalized key or nil.
 
 Tip: on a Mac that already has the repo unlocked, generate the input
 with:  `git-crypt export-key /tmp/k && base64 -i /tmp/k | pbcopy`"
@@ -802,31 +811,64 @@ with:  `git-crypt export-key /tmp/k && base64 -i /tmp/k | pbcopy`"
        'emacs-setup
        "What you pasted isn't valid base64. Re-export with:
   git-crypt export-key /tmp/k && base64 -i /tmp/k | pbcopy
-then paste again (M-x my/git-crypt-step). NOT saved to BW."
+then paste again (M-x my/git-crypt-step). NOT saved."
        :warning)
       nil)
      (t
-      (when my/bw-session
-        ;; my/bw-update-item merges new fields into existing — preserves
-        ;; Email / Fullname / Repo / login.* untouched.
+      (cond
+       (my/bw-session
         (my/bw-update-item my/bw-github-item
                            :fields `(("GitCryptKey" . ,normalized)))
-        (message "Bootstrap: git-crypt key added to BW '%s' (GitCryptKey field)."
+        (message "Bootstrap: git-crypt key saved to BW '%s' (GitCryptKey field)."
                  my/bw-github-item))
+       (t
+        (my/keychain-set my/git-crypt-keychain-service normalized)
+        (message "Bootstrap: git-crypt key saved to macOS Keychain (service %s)."
+                 my/git-crypt-keychain-service)))
       normalized))))
 
+(defun my/git-crypt-key-resolve (identity)
+  "Return the base64-encoded git-crypt key from the best available source.
+Order:
+  1. IDENTITY plist's :git-crypt-key  (= BW's GitCryptKey field, loaded
+     earlier by my/github-load-identity when BW was unlocked)
+  2. macOS Keychain (service my/git-crypt-keychain-service)
+  3. Prompt the user and persist (to BW if unlocked, else Keychain)
+
+Returns nil if the user declined to provide a key."
+  (or
+   ;; 1. From BW (already in identity)
+   (let ((v (plist-get identity :git-crypt-key)))
+     (and (not (my/-blank-p v))
+          (progn (message "Bootstrap: git-crypt key from BW '%s' (GitCryptKey)."
+                          my/bw-github-item)
+                 v)))
+   ;; 2. macOS Keychain fallback
+   (let ((v (my/keychain-get my/git-crypt-keychain-service)))
+     (and (not (my/-blank-p v))
+          (progn (message "Bootstrap: git-crypt key from macOS Keychain (service %s)."
+                          my/git-crypt-keychain-service)
+                 v)))
+   ;; 3. Prompt + persist
+   (my/git-crypt-key-prompt-and-save)))
+
 (defun my/git-crypt-clear-key ()
-  "Clear the GitCryptKey custom field on my/bw-github-item.
+  "Clear the cached git-crypt key from BOTH stores (BW + macOS Keychain).
 Use when you've saved an invalid key and want bootstrap to re-prompt."
   (interactive)
-  (unless my/bw-session (my/bw-unlock t))
-  (cond
-   (my/bw-session
-    (my/bw-update-item my/bw-github-item :fields '(("GitCryptKey" . "")))
-    (message "Cleared GitCryptKey in BW '%s'. Re-run bootstrap (or M-x my/git-crypt-step) to enter a new key."
-             my/bw-github-item))
-   (t
-    (display-warning 'emacs-setup "Bitwarden not unlocked — can't clear GitCryptKey." :warning))))
+  (let ((cleared-anywhere nil))
+    ;; BW (if unlocked or unlockable)
+    (unless my/bw-session (my/bw-unlock t))
+    (when my/bw-session
+      (my/bw-update-item my/bw-github-item :fields '(("GitCryptKey" . "")))
+      (message "Cleared GitCryptKey in BW '%s'." my/bw-github-item)
+      (setq cleared-anywhere t))
+    ;; macOS Keychain (always; harmless if absent)
+    (my/keychain-delete my/git-crypt-keychain-service)
+    (message "Cleared Keychain entry %s." my/git-crypt-keychain-service)
+    (setq cleared-anywhere t)
+    (when cleared-anywhere
+      (message "git-crypt key cleared. Re-run M-x my/git-crypt-step to enter a new one."))))
 
 (defun my/git-crypt-unlock (dir base64-key)
   "Unlock the git-crypt repo at DIR using BASE64-KEY (a string).
@@ -853,11 +895,12 @@ Bootstrap continues — it does NOT halt."
                  ((string-match-p "Error\\|fatal\\|invalid" (buffer-string))
                   (display-warning
                    'emacs-setup
-                   "git-crypt unlock failed — see *git-crypt-unlock* buffer. Clearing GitCryptKey in BW so next bootstrap re-prompts; run M-x my/git-crypt-step after providing the correct key."
+                   "git-crypt unlock failed — see *git-crypt-unlock* buffer. Clearing cached git-crypt key from BW + Keychain so next bootstrap re-prompts."
                    :warning)
                   (when my/bw-session
                     (my/bw-update-item my/bw-github-item
-                                       :fields '(("GitCryptKey" . "")))))
+                                       :fields '(("GitCryptKey" . ""))))
+                  (my/keychain-delete my/git-crypt-keychain-service))
                  (t
                   (setq ok t)
                   (message "Bootstrap: git-crypt unlocked %s." dir)))))
@@ -866,12 +909,13 @@ Bootstrap continues — it does NOT halt."
            (display-warning
             'emacs-setup
             (format "git-crypt unlock errored at decode step: %s.
-Clearing GitCryptKey in BW so the next bootstrap re-prompts."
+Clearing cached git-crypt key from BW + Keychain so next bootstrap re-prompts."
                     (error-message-string err))
             :warning)
            (when my/bw-session
              (my/bw-update-item my/bw-github-item
-                                :fields '(("GitCryptKey" . ""))))))
+                                :fields '(("GitCryptKey" . ""))))
+           (my/keychain-delete my/git-crypt-keychain-service)))
       (delete-file keyfile))
     ok))
 
@@ -897,14 +941,8 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
        "git-crypt could not be installed — install manually with: brew install git-crypt"
        :warning))
      (t
-      ;; Use the key from BW if already populated; otherwise prompt and
-      ;; save into the github BW item's GitCryptKey field.
-      (let ((key (or (and (not (my/-blank-p (plist-get identity :git-crypt-key)))
-                          (progn
-                            (message "Bootstrap: git-crypt key found in BW '%s' (GitCryptKey)."
-                                     my/bw-github-item)
-                            (plist-get identity :git-crypt-key)))
-                     (my/git-crypt-key-prompt-and-save))))
+      ;; Resolver: BW → Keychain → prompt + persist (to whichever is available).
+      (let ((key (my/git-crypt-key-resolve identity)))
         (when key
           (my/git-crypt-unlock my/data-dir key))))))))
 #+end_src
