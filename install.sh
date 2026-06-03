@@ -25,6 +25,15 @@ EMACS_D="$HOME/.emacs.d"
 #   launchctl setenv EMACS_DATA_DIR "<path>"
 DATA_DIR="${EMACS_DATA_DIR:-$HOME/emacs}"
 
+emacs_app_bundle_id() {
+  local plist="$1/Contents/Info.plist"
+  [ -f "$plist" ] || return 1
+
+  plutil -extract CFBundleIdentifier raw "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null \
+    || defaults read "$plist" CFBundleIdentifier 2>/dev/null
+}
+
 echo "==> Emacs-for-Mac installer"
 echo "    repo:    $REPO_URL  (branch: $BRANCH)"
 echo "    distro:  $SRC_DIR"
@@ -79,10 +88,11 @@ if [ -L "$EMACS_APP_DST" ]; then
 elif [ -d "$EMACS_APP_DST" ]; then
   # Heuristic for "ours": Info.plist's CFBundleIdentifier is org.gnu.Emacs.
   # If yes, replace. If no, leave alone and use ~/Applications/.
-  if [ "$(defaults read "$EMACS_APP_DST/Contents/Info.plist" CFBundleIdentifier 2>/dev/null)" = "org.gnu.Emacs" ]; then
+  existing_bundle_id="$(emacs_app_bundle_id "$EMACS_APP_DST" || true)"
+  if [ "$existing_bundle_id" = "org.gnu.Emacs" ]; then
     rm -rf "$EMACS_APP_DST"
   else
-    echo "==> $EMACS_APP_DST is a third-party app — falling back to ~/Applications/"
+    echo "==> $EMACS_APP_DST is a third-party app (${existing_bundle_id:-unknown}) — falling back to ~/Applications/"
     EMACS_APP_DST="$HOME/Applications/Emacs.app"
     mkdir -p "$HOME/Applications"
     [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
