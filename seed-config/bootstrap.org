@@ -455,6 +455,33 @@ Prompts only for fields that are missing or invalid:
         (list :username new-username :token new-token
               :email new-email :fullname new-fullname :repo new-repo
               :git-crypt-key git-crypt-key))))))
+
+(defun my/-git-global-config-get (key)
+  "Return the global git config value for KEY, or nil if unset/empty."
+  (let ((v (string-trim
+            (with-output-to-string
+              (with-current-buffer standard-output
+                (call-process "git" nil t nil "config" "--global" "--get" key))))))
+    (and (not (string-empty-p v)) v)))
+
+(defun my/git-identity-ensure-global (identity)
+  "Fill git's global user.name + user.email from IDENTITY when they're
+unset. Never overwrites a value the user already chose.
+
+Why: without a global identity, commits on this Mac (including
+my/data-dir's post-commit auto-push hook) fall back to
+`unix-user@hostname', and git emits the auto-config warning."
+  (when identity
+    (let ((fullname  (plist-get identity :fullname))
+          (email     (plist-get identity :email))
+          (cur-name  (my/-git-global-config-get "user.name"))
+          (cur-email (my/-git-global-config-get "user.email")))
+      (unless (or cur-name (my/-blank-p fullname))
+        (call-process "git" nil nil nil "config" "--global" "user.name" fullname)
+        (message "Bootstrap: set global git user.name = %s (from BW)." fullname))
+      (unless (or cur-email (my/-blank-p email))
+        (call-process "git" nil nil nil "config" "--global" "user.email" email)
+        (message "Bootstrap: set global git user.email = %s (from BW)." email)))))
 #+end_src
 
 * Step 5 — gh CLI install + authenticate
@@ -1023,6 +1050,9 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
 
   ;; 3-4. GitHub identity
   (let ((id (my/github-load-identity)))
+    ;; 4b. Global git identity — fills `git config --global user.{name,email}'
+    ;; from the BW bundle on Macs that don't have it set yet. Idempotent.
+    (my/git-identity-ensure-global id)
     (cond
      ((and id (plist-get id :token))
       ;; 5. gh install + auth
