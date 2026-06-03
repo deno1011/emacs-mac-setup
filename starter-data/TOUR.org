@@ -1,0 +1,108 @@
+#+TITLE: Welcome to your Emacs-for-Mac install
+#+STARTUP: overview content
+#+OPTIONS: toc:nil num:nil
+
+* You are reading TOUR.org
+
+This file opened automatically because this is your first launch. After
+reading, just close it (~C-x k~). Next launch it won't appear again.
+
+* What just happened
+
+The installer:
+
+1. installed *emacs-plus* (Apple-native build with native compilation),
+2. cloned the distro source to ~~/emacs-mac-setup-src/~,
+3. symlinked ~~/.emacs.d~ to that distro,
+4. seeded ~~/emacs/~ with example data: a populated wiki, a GTD agenda,
+   and this tour.
+
+Your config is the symlinked distro — never edit it directly. Your data
+is ~~/emacs/~ — yours to fill or delete.
+
+* Try these five things
+
+** 1. Open the agenda — ~C-c a a~
+
+The example GTD lives in ~~/emacs/data/org/gtd/~ (next, projects,
+someday, waiting, tickler) plus ~inbox.org~ and ~refile.org~. ~C-c a a~
+shows the next-week view. Replace the example entries with your own
+captures.
+
+** 2. Browse the example wiki — ~C-c n f~ (org-roam find)
+
+Open ~~/emacs/wiki/index.org~ to see the catalog. Try following an
+~[[id:...]]~ link — that's the org-roam backbone. Each page has
+~:PROPERTIES: :ID:~ on top and ~#+FILETAGS:~ for type
+(:entity:/:concept:/:source:/:comparison:/:overview:).
+
+To ingest a new source: ~C-c n I~ on a region or URL. Helpers live
+under the ~C-c n~ prefix; see ~~/.emacs.d/config/wiki-setup.org~.
+
+** 3. Chat with the AI — ~C-c <RET>~
+
+Opens *gptel*. Default backend is Gemini 2.0 Flash (free, generous
+quota). Set ~GEMINI_API_KEY~ in ~~/.emacs.d/secrets.el~ first — open
+that file and uncomment one of the four methods explained inside. Get
+a free key at https://aistudio.google.com/apikey.
+
+Other backends configured: Anthropic Claude, OpenAI, Groq, GitHub
+Models, local Ollama. Switch with ~C-c <RET>~ in a gptel buffer →
+"Backend".
+
+** 4. See what bindings exist — ~C-h b~ (or ~M-x which-key~ is live)
+
+Type any prefix (e.g. ~C-c~) and pause — which-key pops up showing
+every chord that follows. Same for ~C-x~, ~C-h~, ~M-g~, etc.
+
+** 5. Capture a note — ~C-c c~
+
+Opens the capture menu (templates defined in ~org-setup.org~). Try
+~C-c c i~ to put a quick TODO in ~inbox.org~.
+
+* Where things live
+
+| Location | What |
+|----------+------|
+| ~~/.emacs.d/~ → distro | Editor config (read-only, updated via ~git pull~) |
+| ~~/.emacs.d/secrets.el~ | YOUR per-Mac API keys (untracked) |
+| ~~/emacs/wiki/~ | YOUR knowledge wiki (org-roam, iCloud-syncable) |
+| ~~/emacs/data/org/~ | YOUR agenda + GTD |
+| ~~/emacs-mac-setup-src/~ | Distro git checkout (=cd= here to ~git pull~) |
+
+* How to update
+
+Re-run the installer; it pulls latest and re-symlinks if anything
+changed:
+
+#+begin_src bash
+bash ~/emacs-mac-setup-src/install.sh
+#+end_src
+
+Your data and ~secrets.el~ are never touched by updates.
+
+* How to sync across multiple Macs
+
+The distro doesn't do this for you on purpose — pick whichever you
+prefer:
+
+- *iCloud Drive* — ~mv ~/emacs ~/Library/Mobile\ Documents/...~ then symlink
+  ~~/emacs~ to it. Apple handles the sync.
+- *Private GitHub repo* — ~cd ~/emacs && git init && git remote add origin ...~,
+  push manually or via a post-commit hook.
+- *Syncthing / Dropbox* — point them at ~~/emacs/~.
+
+Your call. The distro stays out of it.
+
+* If something breaks
+
+- Check the *Messages* buffer (~C-h e~) for the first error
+- Try a clean restart: ~M-x restart-emacs~
+- Worst case: ~bash ~/emacs-mac-setup-src/uninstall.sh~ removes the
+  symlinks; your ~~/emacs/~ data is preserved.
+
+* Done — delete or keep this file as you like
+
+Have fun. Real questions: the wiki page
+~~/emacs/wiki/overviews/wiki-tour.org~ goes deeper on the LLM-wiki
+pattern.

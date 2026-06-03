@@ -1,0 +1,12 @@
+#+TITLE: Log — Emacs Knowledge Wiki
+#+STARTUP: overview
+
+Append-only timeline of wiki operations. Greppable: every entry begins
+with =** [YYYY-MM-DD] <op> | <subject>=.
+
+Operation types: =scaffold=, =refactor=, =ingest=, =query=, =lint=,
+=plan=.
+
+** [INSTALL] scaffold | Initial five-page starter set shipped with distro
+   - Pages touched: [[id:2b1e1720-89d9-46a3-921d-14b51fd224f5][Welcome (source)]] (new) + [[id:62025262-2711-413a-8fba-97eceda41ad4][Emacs (entity)]] (new) + [[id:2714125c-2dc8-447e-869c-0a3f35916903][LLM Wiki Pattern (concept)]] (new) + [[id:fd4af44a-5fba-44e7-b539-a26f7b5f0ebd][LLM Wiki vs RAG (comparison)]] (new) + [[id:dd457ec2-6891-4c3d-9c44-f04198fde4a4][How to use this wiki (overview)]] (new)
+   - Notes: One page per type to demonstrate the schema. Replace or extend freely — your first =C-c n I= ingest will start adding pages alongside these.

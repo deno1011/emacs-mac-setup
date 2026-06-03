@@ -1,0 +1,21 @@
+#+TITLE: Index — Emacs Knowledge Wiki
+#+STARTUP: overview
+
+Catalog of all wiki pages. The agent reads this first when answering
+queries. Regenerate from disk whenever pages are added/removed (or let
+the ingest workflow update it on each new ingest).
+
+* Sources
+- [[id:2b1e1720-89d9-46a3-921d-14b51fd224f5][Welcome — Karpathy's LLM-Wiki gist (source)]] — Stub for the foundational gist by Andrej Karpathy that motivates this wiki's design. Fetch via =C-c n I= and the URL to re-ingest with your own context.
+
+* Entities
+- [[id:62025262-2711-413a-8fba-97eceda41ad4][Emacs]] — The extensible, self-documenting Lisp-based editor this distro is built on. emacs-plus 30+ with native compilation, configured by the literate org-mode files under =~/.emacs.d/config/=.
+
+* Concepts
+- [[id:2714125c-2dc8-447e-869c-0a3f35916903][LLM Wiki Pattern]] — Karpathy's pattern of an LLM-maintained personal knowledge base: persistent, structured, interlinked. Distinguished from RAG by holding *synthesised* pages rather than raw chunks.
+
+* Comparisons
+- [[id:fd4af44a-5fba-44e7-b539-a26f7b5f0ebd][LLM Wiki vs RAG]] — Side-by-side of the two patterns for "LLM that remembers". RAG = retrieval over chunks, LLM Wiki = curated synthesis. Picks for each use case.
+
+* Overviews
+- [[id:dd457ec2-6891-4c3d-9c44-f04198fde4a4][How to use this wiki]] — Five-minute walkthrough: the five folders, the page schema, the =C-c n= helpers, the role of =index.org= and =log.org=. Start here if you've never used this layout before.

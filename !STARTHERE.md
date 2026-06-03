@@ -1,42 +1,57 @@
 # Start Here
 
-> A one-command setup that turns a fresh Mac into a fully configured Emacs environment — org-mode, LSP, LaTeX, graphs, and local gptel agent support built in, synced to iCloud and ready to use.
+A preconfigured Emacs for macOS. One command, fully wired on first launch:
+emacs-plus, the literate config, an example agenda, a populated LLM-wiki,
+and a guided TOUR.org that explains the rest. No setup wizard, no
+Bitwarden, no Keychain dance — just an editor that works.
 
-## Open Terminal and Run
-
-Open **Terminal** and run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/bootstrap.sh | /bin/bash -s -- stable
-```
-
-For development testing, use the same pattern with another branch:
+## Open Terminal and run
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/bootstrap.sh | /bin/bash -s -- main
+curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh | /bin/bash
 ```
 
-Bootstrap starts with one intake phase for config, Bitwarden/Keychain, and API
-keys, then continues with installation. If something fails, run:
+After ~10 minutes (most of it `brew install emacs-plus`), Emacs launches
+with `TOUR.org` open. Five short sections show you the agenda, the
+wiki, gptel chat, the key bindings to know, and where to put your API
+keys.
 
-```bash
-bash ~/emacs-mac-setup/setup-doctor.sh
-```
+## What's installed
 
-See [README.md](README.md) for full documentation.
-
----
-
-## What bootstrap installs automatically
-
-| Software | When | Notes |
+| Component | Where it goes | Source of truth |
 |---|---|---|
-| Homebrew | always | installed if not present; requires sudo once |
-| All setup scripts | always | downloaded to the current folder |
-| `gh` (GitHub CLI) | GitHub mode | needed to access your private config repo |
-| `bitwarden-cli` + Bitwarden app | GitHub mode | used to store/fetch your GitHub token, git-crypt key, and API keys |
-| Gemini API key | default gptel mode | read from Bitwarden into `~/.emacs.d/secrets.el`; Ollama remains optional |
+| `emacs-plus` | `/Applications/Emacs.app` | Homebrew |
+| Literate config | `~/.emacs.d/` (symlink) → `~/emacs-mac-setup-src/emacs.d/` | this repo |
+| Starter wiki + agenda + TOUR.org | `~/emacs/` | seeded once from `starter-data/`, then yours |
+| Per-Mac secrets | `~/emacs-mac-setup-src/emacs.d/secrets.el` | edit locally, never tracked |
 
-> **GitHub mode** is active when bootstrap finds or you enter a GitHub user and your config file has `GH_USER` set.
+The split is deliberate: distro code is symlinked and read-only from your
+side (updates via `git pull`); user data is yours from first install on.
 
-After bootstrap completes, it starts the emacs-plus setup automatically.
+## Update later
+
+```bash
+bash ~/emacs-mac-setup-src/install.sh
+```
+
+Pulls latest distro code. Your data in `~/emacs/` and your `secrets.el`
+are never touched.
+
+## Uninstall
+
+```bash
+bash ~/emacs-mac-setup-src/uninstall.sh
+# add --purge-data to also delete ~/emacs/ (irreversible)
+# add --purge-emacs-app to also `brew uninstall emacs-plus`
+```
+
+## Cross-Mac sync (optional, your choice)
+
+The distro intentionally doesn't sync your data across Macs. Pick one
+that works for you:
+
+- **iCloud Drive** — `mv ~/emacs ~/Library/Mobile\ Documents/com~apple~CloudDocs/emacs` and symlink back. Apple handles the rest.
+- **Private git repo** — `cd ~/emacs && git init && git remote add origin git@github.com:USER/emacs.git`. Commit + push.
+- **Syncthing / Dropbox** — point them at `~/emacs/`.
+
+All three work; the distro stays out of it.

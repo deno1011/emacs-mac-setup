@@ -1,6 +1,5 @@
 #+TITLE: WIKI Schema — Emacs Knowledge
 #+STARTUP: overview
-#+AUTHOR: Denis Butic
 
 * Purpose
 A persistent, LLM-maintained wiki of Emacs knowledge. The agent (gptel)

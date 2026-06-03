@@ -1,0 +1,11 @@
+secrets.el
+custom.el
+.first-install
+elpa/
+auto-save-list/
+eln-cache/
+transient/
+recentf
+bookmarks
+projectile-bookmarks.eld
+.org-id-locations
