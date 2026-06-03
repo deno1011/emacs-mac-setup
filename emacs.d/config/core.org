@@ -281,16 +281,18 @@ what you usually want for prose, Org, Markdown and chat buffers.
 
 (add-hook 'org-mode-hook
           (lambda ()
+            ;; Auto-commit any org buffer that lives anywhere under
+            ;; my/data-dir (data/org/, wiki/, notes/, TOUR.org, ...).
+            ;; Excludes the distro itself: config files live under
+            ;; user-emacs-directory (~/.emacs.d/config/), NOT under
+            ;; my/data-dir, so they can never match this regex.
+            ;; `file-truename' on both sides handles the case where
+            ;; my/data-dir is a symlink (e.g. to iCloud Drive).
             (when (and buffer-file-name
                        my/data-dir
-                       ;; Auto-commit user data (data/org/) only. The
-                       ;; literate distro config under my/config-dir is
-                       ;; symlinked and shouldn't be auto-committed from
-                       ;; an org-mode hook.
-                       (string-match-p
-                        (regexp-quote (expand-file-name "data/org/" my/data-dir))
-                        buffer-file-name)
-                       (not (string-match-p "config\\.org$" buffer-file-name)))
+                       (string-prefix-p
+                        (file-name-as-directory (file-truename my/data-dir))
+                        (file-truename buffer-file-name)))
               (git-auto-commit-mode 1))))
 #+end_src
 
