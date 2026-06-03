@@ -370,46 +370,82 @@ the user's private data repo:
                   ("Fullname" . ,(read-string "Git commit name: "))
                   ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
 
+(defun my/-blank-p (s) (or (null s) (and (stringp s) (string-empty-p s))))
+
 (cl-defun my/github-load-identity ()
-  "Read GitHub bundle from BW item; create item if absent.
-Returns plist with :username :token :email :fullname :repo, or nil if BW unavailable."
+  "Read GitHub bundle from BW item; fill in any missing fields (and
+update BW). Returns plist with :username :token :email :fullname :repo,
+or nil if BW unavailable / user declined.
+
+Prompts only for fields that are missing or invalid:
+  - token missing or `gh api user' returns 401 → re-prompt token
+  - any of username / email / fullname / repo missing → prompt that one"
   (unless my/bw-session
     (cl-return-from my/github-load-identity nil))
-  (let ((item (my/bw-get-item my/bw-github-item)))
+  (let* ((item     (my/bw-get-item my/bw-github-item))
+         (username (and item (my/bw-item-username item)))
+         (token    (and item (my/bw-item-password item)))
+         (email    (and item (my/bw-item-field item "Email")))
+         (fullname (and item (my/bw-item-field item "Fullname")))
+         (repo     (and item (my/bw-item-field item "Repo")))
+         (need-token (or (my/-blank-p token)
+                         (not (my/github-token-valid-p token))))
+         (need-username (my/-blank-p username))
+         (need-email    (my/-blank-p email))
+         (need-fullname (my/-blank-p fullname))
+         (need-repo     (my/-blank-p repo))
+         (any-missing (or need-token need-username need-email need-fullname need-repo)))
     (cond
-     ;; Item exists — read and validate
-     (item
-      (let ((token (my/bw-item-password item)))
-        (unless (my/github-token-valid-p token)
-          (display-warning 'emacs-setup
-                           "GitHub token in BW failed validation. Re-prompting…"
-                           :warning)
-          (let* ((new (my/github-prompt-identity))
-                 (new-token (plist-get new :password)))
-            (my/bw-update-item my/bw-github-item
-                               :username (plist-get new :username)
-                               :password new-token
-                               :fields   (plist-get new :fields))
-            (setq token new-token
-                  item (my/bw-get-item my/bw-github-item))))
-        (list :username (my/bw-item-username item)
-              :token    token
-              :email    (my/bw-item-field item "Email")
-              :fullname (my/bw-item-field item "Fullname")
-              :repo     (my/bw-item-field item "Repo"))))
-     ;; Item missing — prompt and create
+     ;; Item present and complete — nothing to ask.
+     ((and item (not any-missing))
+      (message "Bootstrap: BW '%s' complete (username=%s, repo=%s)."
+               my/bw-github-item username repo)
+      (list :username username :token token :email email :fullname fullname :repo repo))
+     ;; Item missing entirely — ask upfront whether to create.
+     ((and (not item)
+           (not (y-or-n-p (format "BW item '%s' not found. Create it now? "
+                                  my/bw-github-item))))
+      (message "Bootstrap: skipped creating BW '%s'; gh / repo-sync disabled this session."
+               my/bw-github-item)
+      nil)
+     ;; Either item missing (and user said yes), or item present with gaps.
      (t
-      (when (y-or-n-p (format "BW item '%s' not found. Create it now? " my/bw-github-item))
-        (let* ((new (my/github-prompt-identity)))
+      (when need-token
+        (display-warning 'emacs-setup
+                         (if item
+                             "GitHub token in BW missing or invalid — re-prompting."
+                           (format "Creating BW item '%s'." my/bw-github-item))
+                         :warning))
+      (let* ((new-username (if need-username (read-string "GitHub login (handle): ")    username))
+             (new-token    (if need-token    (read-passwd "GitHub personal access token (repo scope): ") token))
+             (new-email    (if need-email    (read-string "Git commit email: ")         email))
+             (new-fullname (if need-fullname (read-string "Git commit name: ")          fullname))
+             (new-repo     (if need-repo     (read-string "Private data repo name (e.g. emacs-data): ") repo))
+             (fields       `(("Email"    . ,new-email)
+                             ("Fullname" . ,new-fullname)
+                             ("Repo"     . ,new-repo))))
+        (if item
+            (progn
+              (my/bw-update-item my/bw-github-item
+                                 :username new-username
+                                 :password new-token
+                                 :fields   fields)
+              (message "Bootstrap: BW '%s' updated (filled %s)."
+                       my/bw-github-item
+                       (mapconcat #'symbol-name
+                                  (delq nil (list (and need-token    :token)
+                                                  (and need-username :username)
+                                                  (and need-email    :email)
+                                                  (and need-fullname :fullname)
+                                                  (and need-repo     :repo)))
+                                  ", ")))
           (my/bw-create-item my/bw-github-item
-                             :username (plist-get new :username)
-                             :password (plist-get new :password)
-                             :fields   (plist-get new :fields))
-          (list :username (plist-get new :username)
-                :token    (plist-get new :password)
-                :email    (cdr (assoc "Email"    (plist-get new :fields)))
-                :fullname (cdr (assoc "Fullname" (plist-get new :fields)))
-                :repo     (cdr (assoc "Repo"     (plist-get new :fields))))))))))
+                             :username new-username
+                             :password new-token
+                             :fields   fields)
+          (message "Bootstrap: BW '%s' created." my/bw-github-item))
+        (list :username new-username :token new-token
+              :email new-email :fullname new-fullname :repo new-repo))))))
 #+end_src
 
 * Step 5 — gh CLI install + authenticate
@@ -653,33 +689,57 @@ Append-only timeline of wiki operations.
 #+begin_src emacs-lisp :tangle yes
 (defun my/api-keys-load ()
   "For each (env-var . bw-item) in my/bw-api-items, populate the env var.
-Order of resolution: BW (if unlocked) → Keychain → prompt + persist."
-  (dolist (pair my/bw-api-items)
-    (let* ((env-var   (car pair))
-           (bw-item   (cdr pair))
-           (kc-svc    (concat my/api-keychain-service-prefix env-var))
-           (value     nil))
-      ;; 1. BW
-      (when (and my/bw-session (null value))
-        (let ((item (my/bw-get-item bw-item)))
-          (when item
-            (setq value (my/bw-item-password item)))))
-      ;; 2. Keychain fallback
-      (when (null value)
-        (setq value (my/keychain-get kc-svc)))
-      ;; 3. Prompt
-      (when (null value)
-        (let ((entered (read-passwd (format "%s (empty to skip): " env-var))))
-          (when (and entered (not (string-empty-p entered)))
-            (setq value entered)
-            ;; Persist: BW if unlocked, else Keychain
+Order of resolution: BW (preferred) → Keychain (fallback) → prompt + persist.
+A BW item with empty login.password is treated as missing."
+  (let (loaded prompted skipped)
+    (dolist (pair my/bw-api-items)
+      (let* ((env-var   (car pair))
+             (bw-item   (cdr pair))
+             (kc-svc    (concat my/api-keychain-service-prefix env-var))
+             (value     nil)
+             (source    nil))
+        ;; 1. BW item
+        (when (and my/bw-session (my/-blank-p value))
+          (let ((item (my/bw-get-item bw-item)))
+            (when item
+              (let ((v (my/bw-item-password item)))
+                (unless (my/-blank-p v)
+                  (setq value v source 'bw))))))
+        ;; 2. Keychain fallback
+        (when (my/-blank-p value)
+          (let ((v (my/keychain-get kc-svc)))
+            (unless (my/-blank-p v)
+              (setq value v source 'keychain))))
+        ;; 3. Prompt + persist
+        (when (my/-blank-p value)
+          (let ((entered (read-passwd (format "%s (empty to skip): " env-var))))
             (cond
-             (my/bw-session
-              (my/bw-create-item bw-item :password entered))
+             ((my/-blank-p entered)
+              (push env-var skipped))
              (t
-              (my/keychain-set kc-svc entered))))))
-      (when (and value (not (string-empty-p value)))
-        (setenv env-var value)))))
+              (setq value entered source 'prompt)
+              (push env-var prompted)
+              ;; Persist: BW if unlocked, else Keychain
+              (cond
+               (my/bw-session
+                (let ((existing (my/bw-get-item bw-item)))
+                  (if existing
+                      (my/bw-update-item bw-item :password entered)
+                    (my/bw-create-item bw-item :password entered))))
+               (t (my/keychain-set kc-svc entered)))))))
+        (when (and value (not (my/-blank-p value)))
+          (setenv env-var value)
+          (push (format "%s(%s)" env-var (symbol-name source)) loaded))))
+    ;; Visible progress summary
+    (when loaded
+      (message "Bootstrap: API keys loaded: %s" (mapconcat #'identity (nreverse loaded) ", ")))
+    (when prompted
+      (message "Bootstrap: API keys created via prompt + stored to %s: %s"
+               (if my/bw-session "Bitwarden" "macOS Keychain")
+               (mapconcat #'identity (nreverse prompted) ", ")))
+    (when skipped
+      (message "Bootstrap: skipped (empty input): %s"
+               (mapconcat #'identity (nreverse skipped) ", ")))))
 #+end_src
 
 * Step 9 — Orchestration (runs synchronously, in order)
@@ -694,32 +754,51 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
 
   ;; 1-2. BW
   (my/bw-unlock)
+  (if my/bw-session
+      (message "Bootstrap: Bitwarden vault unlocked.")
+    (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets."))
 
   ;; 3-4. GitHub identity
   (let ((id (my/github-load-identity)))
-    (when (and id (plist-get id :token))
+    (cond
+     ((and id (plist-get id :token))
       ;; 5. gh install + auth
-      (unless (my/gh-installed-p) (my/gh-install))
+      (cond
+       ((my/gh-installed-p)
+        (message "Bootstrap: gh CLI present."))
+       (t
+        (message "Bootstrap: gh CLI missing — installing via brew (background)…")
+        (my/gh-install)))
       (when (my/gh-installed-p)
-        (unless (my/gh-authenticated-p)
-          (my/gh-login-with-token (plist-get id :token)))
-        ;; 6. Repo sync (clone / pull / create+push)
-        (when (and (plist-get id :username) (plist-get id :repo))
-          (my/repo-sync id)))
-      ;; 7. Starter data (only fills gaps; never overwrites)
+        (cond
+         ((my/gh-authenticated-p)
+          (message "Bootstrap: gh already authenticated."))
+         (t
+          (message "Bootstrap: authenticating gh with BW-stored token…")
+          (my/gh-login-with-token (plist-get id :token))))
+        ;; 6. Repo sync
+        (cond
+         ((and (plist-get id :username) (plist-get id :repo))
+          (my/repo-sync id))
+         (t
+          (message "Bootstrap: repo sync skipped (missing username or repo name)."))))
+      ;; 7. Starter data — only fills gaps; never overwrites pulled content
       (when (file-directory-p my/data-dir)
-        (my/generate-starter-data my/data-dir id))))
+        (my/generate-starter-data my/data-dir id)
+        (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
+     (t
+      ;; No GitHub identity — generate starter into a fresh my/data-dir
+      (unless (file-directory-p my/data-dir)
+        (make-directory my/data-dir t))
+      (my/generate-starter-data my/data-dir '())
+      (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
+               my/data-dir))))
 
-  ;; 7 (no-GitHub path). Generate starter into my/data-dir anyway.
-  (unless (file-directory-p my/data-dir)
-    (make-directory my/data-dir t))
-  (my/generate-starter-data my/data-dir '())
-
-  ;; 8. API keys
+  ;; 8. API keys (visible progress emitted by my/api-keys-load itself)
   (my/api-keys-load)
 
   ;; 9. Lock BW
-  (my/bw-lock)
+  (when my/bw-session (my/bw-lock))
   (message "Bootstrap: done."))
 
 ;; Run it.
