@@ -3,6 +3,47 @@
 
 Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+* Garbage collection (linked to [[file:~/.emacs.d/early-init.el][~/.emacs.d/early-init.el]])
+
+The GC threshold is bumped early so package loading and use-package
+expansion don't stall on the default 800 KB threshold. That's the
+single biggest cause of the "Emacs gets slower after staying up for a
+long time" behaviour — every interactive command was triggering a GC
+on a heap that grew progressively more fragmented.
+
+The init-phase tuning has to run *before* =package.el= initializes,
+which means it can't live in this file (=core.org= is loaded by
+=config.org=, which is loaded by =init.el=, which already finished by
+the time tangled lisp here runs). Emacs 27+ supports
+[[https://www.gnu.org/software/emacs/manual/html_node/elisp/Early-Init-File.html][=early-init.el=]] specifically for this purpose, and that's where the
+init-phase block lives. The bootstrap script copies =early-init.el=
+into =~/.emacs.d/= alongside =init.el=.
+
+For reference, here's what =early-init.el= contains (NOT tangled —
+this block is documentation only; the actual file lives at
+=~/.emacs.d/early-init.el=):
+
+#+begin_src emacs-lisp :tangle no
+(setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
+      gc-cons-percentage 0.6)
+(setq package-enable-at-startup nil)
+#+end_src
+
+** Runtime + idle GC (tangled here)
+
+After init has settled, drop the threshold to a sane runtime value and
+let an idle-timer reclaim memory at moments the user isn't waiting on
+Emacs. Tunable here without re-bootstrapping each Mac because this
+file is iCloud-synced.
+
+#+begin_src emacs-lisp
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (setq gc-cons-threshold  (* 32 1024 1024)  ; 32 MB at runtime
+                  gc-cons-percentage 0.1)
+            (run-with-idle-timer 60 t #'garbage-collect)))
+#+end_src
+
 * System Packages
 #+begin_src emacs-lisp
 ;;; -*- lexical-binding: t -*-

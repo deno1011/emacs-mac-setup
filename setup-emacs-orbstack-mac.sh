@@ -376,6 +376,13 @@ fi
 sed "s|GH_REPO|${GH_REPO}|g" "$SCRIPT_DIR/init.el" | root tee /home/$EUSER/.emacs.d/init.el > /dev/null
 root chown $EUSER:$EUSER /home/$EUSER/.emacs.d/init.el
 
+# ── 15b. early-init.el (GC tuning, has to run before package.el) ──────────────
+if [ -f "$SCRIPT_DIR/early-init.el" ]; then
+  step "Installing early-init.el..."
+  cat "$SCRIPT_DIR/early-init.el" | root tee /home/$EUSER/.emacs.d/early-init.el > /dev/null
+  root chown $EUSER:$EUSER /home/$EUSER/.emacs.d/early-init.el
+fi
+
 # ── 16. unlock-git-crypt helper ───────────────────────────────────────────────
 step "Writing git-crypt unlock helper..."
 root tee /home/$EUSER/unlock-git-crypt.sh > /dev/null << 'GCEOF'

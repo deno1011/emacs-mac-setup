@@ -340,6 +340,13 @@ else
   exit 1
 fi
 
+# --- early-init.el — GC tuning that has to run before package.el ---
+if [ -f "$SCRIPT_DIR/early-init.el" ]; then
+  mkdir -p "$HOME/.emacs.d"
+  cp "$SCRIPT_DIR/early-init.el" "$HOME/.emacs.d/early-init.el"
+  echo "==> early-init.el updated."
+fi
+
 # --- secrets.el ---
 # API keys are read from the up-front setup runtime only. Missing keys are
 # repaired through intake, keeping the installer non-interactive after intake.

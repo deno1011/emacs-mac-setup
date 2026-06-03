@@ -369,6 +369,13 @@ else
   exit 1
 fi
 
+# --- early-init.el — GC tuning, has to run before package.el ---
+if [ -f "$SCRIPT_DIR/early-init.el" ]; then
+  echo "==> Installing early-init.el..."
+  docker cp "$SCRIPT_DIR/early-init.el" "$DOCKER_CONTAINER:/home/emacs/.emacs.d/early-init.el"
+  docker exec --user root "$DOCKER_CONTAINER" chown emacs:emacs /home/emacs/.emacs.d/early-init.el
+fi
+
 # --- Git identity ---
 if docker exec "$DOCKER_CONTAINER" git config --global user.email 2>/dev/null | grep -q "@"; then
   skip "Git identity (already set)"
