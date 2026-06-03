@@ -1028,6 +1028,28 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
 
   ;; 9. Lock BW
   (when my/bw-session (my/bw-lock))
+
+  ;; 10. Drop the .bootstrap-completed marker so init.el skips the
+  ;; URL-seed step on next launch. Delete this file manually to
+  ;; force a re-seed of any missing files from the distro.
+  (let ((marker (expand-file-name ".bootstrap-completed" my/config-dir)))
+    (unless (file-exists-p marker)
+      (with-temp-file marker
+        (insert (format "Bootstrap completed at %s.
+
+This file is a SENTINEL. Its existence tells init.el that
+my/config-dir = %s is owned by you (the user) and to NOT re-seed
+.org files from the public distro on subsequent launches.
+
+Delete this file to force init.el to re-fetch any missing seed
+files from %s on the next launch. Existing files in this directory
+are NEVER overwritten — only missing ones are pulled.
+"
+                        (format-time-string "%Y-%m-%d %H:%M:%S %Z")
+                        my/config-dir
+                        my/distro-seed-url-base)))
+      (message "Bootstrap: marker dropped at %s — next launch will skip seeding." marker)))
+
   (message "Bootstrap: done."))
 
 ;; Run it.

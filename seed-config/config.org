@@ -29,7 +29,10 @@ then =M-x load-file= on the generated =.el= file (or restart Emacs).
 (when (eq system-type 'darwin)
   (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
 
-;; Config files are symlinked into ~/.emacs.d/config/ by install.sh. If a
+;; Config files live in my/config-dir (= my/data-dir/config/, i.e.,
+;; ~/emacs/config/ by default — the user's PRIVATE repo). init.el seeds
+;; them on first install if ~/emacs/config/.bootstrap-completed is absent.
+;; If a
 ;; split file is missing, the right fix is `bash install.sh` (which
 ;; re-syncs the symlink), not a silent network fetch — so this loop only
 ;; loads what's actually on disk and logs a clean error otherwise.
