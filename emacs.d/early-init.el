@@ -13,6 +13,12 @@
 (setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
       gc-cons-percentage 0.6)
 
+;; Stable used to hide byte/native compiler warnings at startup via
+;; `warning-minimum-level'. Keep real runtime warnings visible, but stop async
+;; native compilation from opening a scary warning buffer for harmless package
+;; byte-compiler notes during first-start package builds.
+(setq native-comp-async-report-warnings-errors nil)
+
 ;; Don't let package.el initialize itself before init.el runs — init.el
 ;; does it explicitly. Skipping the implicit early init saves a few
 ;; hundred ms on startup.

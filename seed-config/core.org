@@ -622,15 +622,12 @@ Uses:
 ** Embark
 
 #+begin_src emacs-lisp
-(use-package embark-consult
-  :ensure t
-  :after (embark consult)
+;; Embark warns when Consult is later loaded and `embark-consult' cannot be
+;; required. Install the integration package before Embark gets a chance to
+;; register that check, then load it as soon as both packages are available.
+(unless (package-installed-p 'embark-consult)
+  (package-install 'embark-consult))
 
-  :hook
-  (embark-collect-mode . consult-preview-at-point-mode))
-#+end_src
-
-#+begin_src emacs-lisp
 (use-package embark
 
   :bind
@@ -644,6 +641,17 @@ Uses:
 
 #+results:
 : embark-bindings
+
+** Embark + Consult integration
+
+#+begin_src emacs-lisp
+(use-package embark-consult
+  :ensure t
+  :after (embark consult)
+
+  :hook
+  (embark-collect-mode . consult-preview-at-point-mode))
+#+end_src
 
 ** General completion settings
 
