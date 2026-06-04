@@ -2,7 +2,13 @@
 # Emacs-for-Mac — opinionated preconfigured Emacs distro.
 # One curl, one command, done:
 #
-#   curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh | /bin/bash
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh)"
+#
+# NOTE: do NOT pipe via `curl ... | bash`. During the 10-25 min `brew install
+# emacs-plus@30 --with-xwidgets` build, cmake/configure can read stdin and
+# consume bytes from the same pipe bash is reading the script from — bash
+# then hits EOF mid-script and exits cleanly. `bash -c "$(...)"` passes the
+# script as a string argument, keeping bash's stdin free.
 #
 # After this runs you have:
 #   - emacs-plus installed
