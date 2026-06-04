@@ -36,6 +36,14 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
   "API key environment variable names.
 The same names are used as custom field names in `my/bw-api-item'.")
 
+(defvar my/bw-legacy-api-items
+  '(("GEMINI_API_KEY"    . "gemini-api-key")
+    ("ANTHROPIC_API_KEY" . "anthropic-api-key")
+    ("OPENAI_API_KEY"    . "openai-api-key")
+    ("GROQ_API_KEY"      . "groq-api-key"))
+  "Legacy per-provider Bitwarden item names used before `my/bw-api-item'.
+When present, their values are migrated into consolidated custom fields.")
+
 ;; (Previously: a separate BW item for the git-crypt key. Now folded into
 ;; my/bw-github-item as the "GitCryptKey" custom field so a single BW
 ;; item describes the user's full Emacs-distro identity.)
@@ -251,17 +259,48 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 (defun my/bw-get-item (item-name)
   "Return parsed alist for ITEM-NAME, or nil if missing / no session."
   (when my/bw-session
-    (let ((out (with-output-to-string
-                 (with-current-buffer standard-output
-                   (call-process-shell-command
-                    (format "bw get item %s --session %s 2>/dev/null"
-                            (shell-quote-argument item-name)
-                            (shell-quote-argument my/bw-session))
-                    nil t)))))
-      (when (and out (string-prefix-p "{" (string-trim out)))
-        (condition-case nil
-            (json-parse-string out :object-type 'alist :null-object nil :false-object nil)
-          (error nil))))))
+    (let* ((out (with-output-to-string
+                  (with-current-buffer standard-output
+                    (call-process-shell-command
+                     (format "bw get item %s --session %s 2>/dev/null"
+                             (shell-quote-argument item-name)
+                             (shell-quote-argument my/bw-session))
+                     nil t))))
+           (direct (when (and out (string-prefix-p "{" (string-trim out)))
+                     (condition-case nil
+                         (json-parse-string out
+                                            :object-type 'alist
+                                            :null-object nil
+                                            :false-object nil)
+                       (error nil)))))
+      (or direct
+          ;; Duplicate item names make `bw get item NAME' ambiguous. Fall back
+          ;; to exact-name search and choose the candidate with most fields.
+          (let* ((list-out (with-output-to-string
+                             (with-current-buffer standard-output
+                               (call-process-shell-command
+                                (format "bw list items --search %s --session %s 2>/dev/null"
+                                        (shell-quote-argument item-name)
+                                        (shell-quote-argument my/bw-session))
+                                nil t))))
+                 (items (when (and list-out
+                                   (string-prefix-p "[" (string-trim list-out)))
+                          (condition-case nil
+                              (json-parse-string list-out
+                                                 :object-type 'alist
+                                                 :array-type 'list
+                                                 :null-object nil
+                                                 :false-object nil)
+                            (error nil))))
+                 (exact (cl-remove-if-not
+                         (lambda (item)
+                           (string= (cdr (assoc 'name item)) item-name))
+                         (or items '()))))
+            (car
+             (sort exact
+                   (lambda (a b)
+                     (> (length (or (cdr (assoc 'fields a)) []))
+                        (length (or (cdr (assoc 'fields b)) [])))))))))))
 
 (defun my/bw-item-password (item)
   "Extract login.password from a parsed BW item."
@@ -275,13 +314,42 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
     (let ((login (cdr (assoc 'login item))))
       (and login (cdr (assoc 'username login))))))
 
+(defun my/bw-item-fields-list (item)
+  "Return ITEM custom fields as a list, tolerating vector or list JSON shapes."
+  (let ((fields (and item (cdr (assoc 'fields item)))))
+    (cond
+     ((vectorp fields) (append fields nil))
+     ((listp fields) fields)
+     (t nil))))
+
 (defun my/bw-item-field (item field-name)
   "Extract custom field FIELD-NAME from a parsed BW item."
   (when item
-    (let ((fields (cdr (assoc 'fields item))))
-      (cl-loop for f across (or fields [])
+    (let ((fields (my/bw-item-fields-list item)))
+      (cl-loop for f in fields
                when (string= (cdr (assoc 'name f)) field-name)
                return (cdr (assoc 'value f))))))
+
+(defun my/bw--encode-json (json)
+  "Return Bitwarden CLI's encoded representation of JSON, or error."
+  (with-temp-buffer
+    (insert json)
+    (let ((status (call-process-region (point-min) (point-max)
+                                       "bw" t t nil "encode")))
+      (unless (zerop status)
+        (error "BW encode failed: %s" (string-trim (buffer-string)))))
+    (string-trim (buffer-string))))
+
+(defun my/bw--call (&rest args)
+  "Run `bw' with ARGS, returning trimmed stdout or raising an error."
+  (with-temp-buffer
+    (let ((status (apply #'call-process "bw" nil t nil args))
+          (cmd (mapconcat #'identity (cl-subseq args 0 (min 2 (length args))) " ")))
+      (unless (zerop status)
+        (error "BW command failed: bw %s (details redacted)\n%s"
+               cmd
+               (string-trim (buffer-string)))))
+    (string-trim (buffer-string))))
 
 (defun my/bw-create-item (name &rest plist)
   "Create a BW login item NAME.
@@ -296,17 +364,8 @@ PLIST: :username, :password, :fields (alist of (name . value))."
                               (password . ,(or (plist-get plist :password) ""))))
                     (fields . ,(vconcat fields))))
          (json (json-serialize payload))
-         (encoded (string-trim
-                   (with-output-to-string
-                     (with-current-buffer standard-output
-                       (call-process-shell-command
-                        (format "echo %s | bw encode" (shell-quote-argument json))
-                        nil t))))))
-    (call-process-shell-command
-     (format "echo %s | bw create item --session %s >/dev/null 2>&1"
-             (shell-quote-argument encoded)
-             (shell-quote-argument my/bw-session))
-     nil nil)))
+         (encoded (my/bw--encode-json json)))
+    (my/bw--call "create" "item" encoded "--session" my/bw-session)))
 
 (defun my/bw-update-item (item-name &rest plist)
   "Update existing BW item ITEM-NAME with new field values.
@@ -315,9 +374,13 @@ PLIST: same keys as my/bw-create-item. Only the keys present are touched."
     (unless item (error "BW item %s not found" item-name))
     (let* ((id      (cdr (assoc 'id item)))
            (login   (or (cdr (assoc 'login item)) '()))
-           (fields  (append (cdr (assoc 'fields item)) nil))
-           (new-user (or (plist-get plist :username) (cdr (assoc 'username login))))
-           (new-pw   (or (plist-get plist :password) (cdr (assoc 'password login))))
+           (fields  (my/bw-item-fields-list item))
+           (new-user (or (plist-get plist :username)
+                         (cdr (assoc 'username login))
+                         ""))
+           (new-pw   (or (plist-get plist :password)
+                         (cdr (assoc 'password login))
+                         ""))
            (new-flds (cl-reduce
                       (lambda (acc nv)
                         (let* ((n (car nv)) (v (cdr nv))
@@ -332,19 +395,8 @@ PLIST: same keys as my/bw-create-item. Only the keys present are touched."
                       (name . ,item-name)
                       (login . ((username . ,new-user) (password . ,new-pw)))
                       (fields . ,(vconcat new-flds))))
-           (encoded (string-trim
-                     (with-output-to-string
-                       (with-current-buffer standard-output
-                         (call-process-shell-command
-                          (format "echo %s | bw encode"
-                                  (shell-quote-argument (json-serialize payload)))
-                          nil t))))))
-      (call-process-shell-command
-       (format "echo %s | bw edit item %s --session %s >/dev/null 2>&1"
-               (shell-quote-argument encoded)
-               (shell-quote-argument id)
-               (shell-quote-argument my/bw-session))
-       nil nil))))
+           (encoded (my/bw--encode-json (json-serialize payload))))
+      (my/bw--call "edit" "item" id encoded "--session" my/bw-session))))
 #+end_src
 
 * Step 4 — GitHub identity bundle (token + email + fullname + repo)
@@ -1150,7 +1202,12 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
       (my/bw-create-item my/bw-api-item
                          :username "emacs"
                          :password ""
-                         :fields fields))))
+                         :fields fields)))
+  (let* ((item (my/bw-get-item my/bw-api-item))
+         (saved (and item (my/bw-item-field item env-var))))
+    (unless (and saved (string= saved value))
+      (error "BW verification failed: %s was not saved to item %s"
+             env-var my/bw-api-item))))
 
 (defun my/api-keys-load ()
   "Populate provider API key env vars.
@@ -1169,12 +1226,25 @@ var names in `my/api-key-fields'."
           (let ((v (my/bw-item-field api-item env-var)))
             (unless (my/-blank-p v)
               (setq value v source 'bw))))
-        ;; 2. Keychain fallback only when Bitwarden is unavailable.
+        ;; 2. Legacy per-provider BW items -> consolidated item migration.
+        (when (and my/bw-session (my/-blank-p value))
+          (let* ((legacy-name (cdr (assoc env-var my/bw-legacy-api-items)))
+                 (legacy-item (and legacy-name (my/bw-get-item legacy-name)))
+                 (v (and legacy-item
+                         (or (my/bw-item-password legacy-item)
+                             (my/bw-item-field legacy-item env-var)
+                             (my/bw-item-field legacy-item "Key")
+                             (my/bw-item-field legacy-item "API_KEY")))))
+            (unless (my/-blank-p v)
+              (my/bw-api-key-set env-var v)
+              (setq api-item (my/bw-get-item my/bw-api-item))
+              (setq value v source 'bw-legacy))))
+        ;; 3. Keychain fallback only when Bitwarden is unavailable.
         (when (and (not my/bw-session) (my/-blank-p value))
           (let ((v (my/keychain-get kc-svc)))
             (unless (my/-blank-p v)
               (setq value v source 'keychain))))
-        ;; 3. Prompt + persist
+        ;; 4. Prompt + persist
         (when (my/-blank-p value)
           (if noninteractive
               (push env-var skipped)
