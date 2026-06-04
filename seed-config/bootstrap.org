@@ -559,85 +559,145 @@ cached token."
                   ("Fullname" . ,(read-string "Git commit name: "))
                   ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
 
-(cl-defun my/github-load-identity ()
-  "Read GitHub bundle from BW item; fill in any missing fields (and
-update BW). Returns plist with :username :token :email :fullname :repo,
-or nil if BW unavailable / user declined.
+(defun my/github--opted-out-p (item)
+  "Return t when ITEM carries the GitHub-skip sentinel.
+The sentinel lives in the `GitHubSkipped' custom field, written when
+the user declines GitHub sync at the upfront prompt. Detected here so
+future launches skip all GitHub prompts and the gh / repo-sync chain."
+  (and item
+       (let ((v (my/bw-item-field item "GitHubSkipped")))
+         (and (stringp v) (string= v my/api-skipped-sentinel)))))
 
-Prompts only for fields that are missing or invalid:
-  - token missing or `gh api user' returns 401 → re-prompt token
-  - any of username / email / fullname / repo missing → prompt that one"
+(defun my/github--write-opt-out ()
+  "Persist the GitHub-skip sentinel so future launches stop prompting.
+Creates the consolidated BW item if missing, or marks the existing
+item. Run `M-x my/github-identity-reset' to revive."
+  (cond
+   ((my/bw-get-item my/bw-credentials-item)
+    (my/bw-update-item my/bw-credentials-item
+                       :fields `(("GitHubSkipped" . ,my/api-skipped-sentinel))))
+   (t
+    (my/bw-create-item my/bw-credentials-item
+                       :username ""
+                       :password ""
+                       :fields `(("GitHubSkipped" . ,my/api-skipped-sentinel))))))
+
+(defun my/github-identity-reset ()
+  "Clear GitHub identity + skip sentinel in `my/bw-credentials-item' so
+the next bootstrap prompts again. Doesn't touch API key fields.
+Run as `M-x my/github-identity-reset'; then restart Emacs or
+`M-x my/bootstrap' to re-run."
+  (interactive)
+  (cond
+   ((not my/bw-session)
+    (message "BW locked — run M-x my/bw-unlock first."))
+   ((not (my/bw-get-item my/bw-credentials-item))
+    (message "No BW item '%s' to reset." my/bw-credentials-item))
+   (t
+    (my/bw-update-item my/bw-credentials-item
+                       :username ""
+                       :password ""
+                       :fields '(("Email" . "")
+                                 ("Fullname" . "")
+                                 ("Repo" . "")
+                                 ("GitHubSkipped" . "")))
+    (message "Reset GitHub identity in BW '%s'. Run M-x my/bootstrap (or restart Emacs) to re-prompt."
+             my/bw-credentials-item))))
+
+(cl-defun my/github-load-identity ()
+  "Read GitHub bundle from `my/bw-credentials-item'.
+Returns plist (:username :token :email :fullname :repo :git-crypt-key)
+when a usable identity is available, nil otherwise. Three skip paths:
+  - BW locked → nil.
+  - Item carries GitHubSkipped sentinel → nil (no prompts).
+  - Item missing AND user declines the upfront opt-in → writes sentinel,
+    returns nil (no re-prompt on subsequent launches).
+Otherwise prompts only for fields that are missing or invalid."
   (unless my/bw-session
     (cl-return-from my/github-load-identity nil))
-  (let* ((item     (my/bw-get-item my/bw-credentials-item))
-         (username (and item (my/bw-item-username item)))
-         (token    (and item (my/bw-item-password item)))
-         (email    (and item (my/bw-item-field item "Email")))
-         (fullname (and item (my/bw-item-field item "Fullname")))
-         (repo     (and item (my/bw-item-field item "Repo")))
-         ;; Read but DON'T require — git-crypt is opt-in per repo.
-         ;; The git-crypt step will prompt if the repo turns out to need it.
-         (git-crypt-key (and item (my/bw-item-field item "GitCryptKey")))
-         (need-token (or (my/-blank-p token)
-                         (not (my/github-token-valid-p token))))
-         (need-username (my/-blank-p username))
-         (need-email    (my/-blank-p email))
-         (need-fullname (my/-blank-p fullname))
-         (need-repo     (my/-blank-p repo))
-         (any-missing (or need-token need-username need-email need-fullname need-repo)))
-    (cond
-     ;; Item present and complete — nothing to ask.
-     ((and item (not any-missing))
-      (message "Bootstrap: BW '%s' complete (username=%s, repo=%s)."
-               my/bw-credentials-item username repo)
-      (list :username username :token token :email email :fullname fullname
-            :repo repo :git-crypt-key git-crypt-key))
-     ;; Item missing entirely — ask upfront whether to create.
-     ((and (not item)
-           (not (y-or-n-p (format "BW item '%s' not found. Create it now? "
-                                  my/bw-credentials-item))))
-      (message "Bootstrap: skipped creating BW '%s'; gh / repo-sync disabled this session."
-               my/bw-credentials-item)
-      nil)
-     ;; Either item missing (and user said yes), or item present with gaps.
-     (t
-      (when need-token
-        (display-warning 'emacs-setup
-                         (if item
-                             "GitHub token in BW missing or invalid — re-prompting."
-                           (format "Creating BW item '%s'." my/bw-credentials-item))
-                         :warning))
-      (let* ((new-username (if need-username (read-string "GitHub login (handle): ")    username))
-             (new-token    (if need-token    (read-passwd "GitHub personal access token (repo scope): ") token))
-             (new-email    (if need-email    (read-string "Git commit email: ")         email))
-             (new-fullname (if need-fullname (read-string "Git commit name: ")          fullname))
-             (new-repo     (if need-repo     (read-string "Private data repo name (e.g. emacs-data): ") repo))
-             (fields       `(("Email"    . ,new-email)
-                             ("Fullname" . ,new-fullname)
-                             ("Repo"     . ,new-repo))))
-        (if item
-            (progn
-              (my/bw-update-item my/bw-credentials-item
+  (let ((item (my/bw-get-item my/bw-credentials-item)))
+    (when (my/github--opted-out-p item)
+      (message "Bootstrap: GitHub sync opted out (M-x my/github-identity-reset to revive).")
+      (cl-return-from my/github-load-identity nil))
+    (let* ((username (and item (my/bw-item-username item)))
+           (token    (and item (my/bw-item-password item)))
+           (email    (and item (my/bw-item-field item "Email")))
+           (fullname (and item (my/bw-item-field item "Fullname")))
+           (repo     (and item (my/bw-item-field item "Repo")))
+           ;; Read but DON'T require — git-crypt is opt-in per repo.
+           ;; The git-crypt step will prompt if the repo turns out to need it.
+           (git-crypt-key (and item (my/bw-item-field item "GitCryptKey")))
+           (need-token (or (my/-blank-p token)
+                           (not (my/github-token-valid-p token))))
+           (need-username (my/-blank-p username))
+           (need-email    (my/-blank-p email))
+           (need-fullname (my/-blank-p fullname))
+           (need-repo     (my/-blank-p repo))
+           (any-missing (or need-token need-username need-email need-fullname need-repo)))
+      (cond
+       ;; Item present and complete — nothing to ask.
+       ((and item (not any-missing))
+        (message "Bootstrap: BW '%s' complete (username=%s, repo=%s)."
+                 my/bw-credentials-item username repo)
+        (list :username username :token token :email email :fullname fullname
+              :repo repo :git-crypt-key git-crypt-key))
+       ;; First-launch or fully-blank state → single upfront opt-in.
+       ;; Empty input on any required field = decline = persist sentinel.
+       ((and (or (not item)
+                 (and need-token need-username need-repo))
+             (not (y-or-n-p
+                   "Set up GitHub sync? (creates a private repo to sync your Emacs data across Macs) ")))
+        (my/github--write-opt-out)
+        (message "Bootstrap: GitHub sync skipped — won't ask again. M-x my/github-identity-reset to revive.")
+        nil)
+       ;; Either item missing (and user said yes), or item present with gaps.
+       (t
+        (when need-token
+          (display-warning 'emacs-setup
+                           (if item
+                               "GitHub token in BW missing or invalid — re-prompting."
+                             (format "Creating BW item '%s'." my/bw-credentials-item))
+                           :warning))
+        (let* ((new-username (if need-username (read-string "GitHub login (handle): ")    username))
+               (new-token    (if need-token    (read-passwd "GitHub personal access token (repo scope): ") token))
+               (new-email    (if need-email    (read-string "Git commit email: ")         email))
+               (new-fullname (if need-fullname (read-string "Git commit name: ")          fullname))
+               (new-repo     (if need-repo     (read-string "Private data repo name (e.g. emacs-data): ") repo))
+               (fields       `(("Email"    . ,new-email)
+                               ("Fullname" . ,new-fullname)
+                               ("Repo"     . ,new-repo))))
+          ;; Empty input on a required field after the upfront yes = opt out.
+          (cond
+           ((or (my/-blank-p new-token)
+                (my/-blank-p new-username)
+                (my/-blank-p new-repo))
+            (my/github--write-opt-out)
+            (message "Bootstrap: GitHub sync skipped (empty required field) — won't ask again. M-x my/github-identity-reset to revive.")
+            nil)
+           (t
+            (if item
+                (progn
+                  (my/bw-update-item my/bw-credentials-item
+                                     :username new-username
+                                     :password new-token
+                                     :fields   fields)
+                  (message "Bootstrap: BW '%s' updated (filled %s)."
+                           my/bw-credentials-item
+                           (mapconcat #'symbol-name
+                                      (delq nil (list (and need-token    :token)
+                                                      (and need-username :username)
+                                                      (and need-email    :email)
+                                                      (and need-fullname :fullname)
+                                                      (and need-repo     :repo)))
+                                      ", ")))
+              (my/bw-create-item my/bw-credentials-item
                                  :username new-username
                                  :password new-token
                                  :fields   fields)
-              (message "Bootstrap: BW '%s' updated (filled %s)."
-                       my/bw-credentials-item
-                       (mapconcat #'symbol-name
-                                  (delq nil (list (and need-token    :token)
-                                                  (and need-username :username)
-                                                  (and need-email    :email)
-                                                  (and need-fullname :fullname)
-                                                  (and need-repo     :repo)))
-                                  ", ")))
-          (my/bw-create-item my/bw-credentials-item
-                             :username new-username
-                             :password new-token
-                             :fields   fields)
-          (message "Bootstrap: BW '%s' created." my/bw-credentials-item))
-        (list :username new-username :token new-token
-              :email new-email :fullname new-fullname :repo new-repo
-              :git-crypt-key git-crypt-key))))))
+              (message "Bootstrap: BW '%s' created." my/bw-credentials-item))
+            (list :username new-username :token new-token
+                  :email new-email :fullname new-fullname :repo new-repo
+                  :git-crypt-key git-crypt-key)))))))))
 
 (defun my/-git-global-config-get (key)
   "Return the global git config value for KEY, or nil if unset/empty."
@@ -681,12 +741,28 @@ my/data-dir's post-commit auto-push hook) fall back to
   (zerop (call-process-shell-command "gh auth status 2>/dev/null" nil nil)))
 
 (defun my/gh-login-with-token (token)
-  "Authenticate gh with TOKEN. Stores credentials in gh's own config."
-  (call-process-shell-command
-   (format "echo %s | gh auth login --with-token >/dev/null 2>&1"
-           (shell-quote-argument token))
-   nil nil)
-  (my/gh-authenticated-p))
+  "Authenticate gh with TOKEN. Stores credentials in gh's own config.
+Returns nil + warning when TOKEN is blank or `gh auth login' fails;
+captures stderr so the failure reason is visible."
+  (cond
+   ((my/-blank-p token)
+    (display-warning 'emacs-setup
+                     "gh auth login skipped: token is empty (no GitHub identity set)."
+                     :warning)
+    nil)
+   (t
+    (with-current-buffer (get-buffer-create "*bootstrap-gh*")
+      (erase-buffer)
+      (let ((status (call-process-shell-command
+                     (format "echo %s | gh auth login --with-token 2>&1"
+                             (shell-quote-argument token))
+                     nil t)))
+        (unless (zerop status)
+          (display-warning 'emacs-setup
+                           (format "gh auth login failed (exit %d). See *bootstrap-gh* for details:\n%s"
+                                   status (string-trim (buffer-string)))
+                           :warning))))
+    (my/gh-authenticated-p))))
 #+end_src
 
 * Step 5.5 — Starter data helpers
@@ -877,29 +953,50 @@ Used by both the empty-dir branch and the override-existing branch."
                (shell-quote-argument dir))
        nil nil))
      (t
-      (message "Bootstrap: repo %s/%s does not exist on GitHub. Generating starter, creating, pushing…"
-               user repo)
-      (make-directory dir t)
-      (my/generate-starter-data dir identity)
-      (let ((default-directory dir)
-            ;; Git refuses to commit with empty user.name / user.email,
-            ;; so we always pass a non-empty value.
-            (git-name  (or (plist-get identity :fullname) (user-login-name) "anonymous"))
-            (git-email (or (plist-get identity :email)
-                           (format "%s@users.noreply.github.com" user))))
-        (call-process-shell-command "git init -b main" nil nil)
-        (call-process-shell-command
-         (format "git config user.name %s && git config user.email %s"
-                 (shell-quote-argument git-name)
-                 (shell-quote-argument git-email))
-         nil nil)
-        (call-process-shell-command
-         "git add . && git commit -m 'initial: distro-generated starter content' >/dev/null 2>&1"
-         nil nil)
-        (call-process-shell-command
-         (format "gh repo create %s/%s --private --source=. --push >/dev/null 2>&1"
-                 (shell-quote-argument user) (shell-quote-argument repo))
-         nil nil))))))
+      (cond
+       ((or (my/-blank-p user) (my/-blank-p repo))
+        (display-warning 'emacs-setup
+                         (format "Refusing to create GitHub repo: user='%s' repo='%s' (empty). Set both in BW item '%s' or run M-x my/github-identity-reset."
+                                 (or user "") (or repo "") my/bw-credentials-item)
+                         :error))
+       (t
+        (message "Bootstrap: repo %s/%s does not exist on GitHub. Generating starter, creating, pushing…"
+                 user repo)
+        (make-directory dir t)
+        (my/generate-starter-data dir identity)
+        (let ((default-directory dir)
+              ;; Git refuses to commit with empty user.name / user.email,
+              ;; so we always pass a non-empty value.
+              (git-name  (or (plist-get identity :fullname) (user-login-name) "anonymous"))
+              (git-email (or (plist-get identity :email)
+                             (format "%s@users.noreply.github.com" user)))
+              (log-buf   (get-buffer-create "*bootstrap-repo*")))
+          (with-current-buffer log-buf (erase-buffer))
+          (call-process-shell-command "git init -b main 2>&1" nil log-buf nil)
+          (call-process-shell-command
+           (format "git config user.name %s && git config user.email %s"
+                   (shell-quote-argument git-name)
+                   (shell-quote-argument git-email))
+           nil log-buf nil)
+          (call-process-shell-command
+           "git add . && git commit -m 'initial: distro-generated starter content' 2>&1"
+           nil log-buf nil)
+          (let ((status (call-process-shell-command
+                         (format "gh repo create %s/%s --private --source=. --push 2>&1"
+                                 (shell-quote-argument user) (shell-quote-argument repo))
+                         nil log-buf nil)))
+            (cond
+             ((zerop status)
+              (message "Bootstrap: created and pushed https://github.com/%s/%s (private)." user repo))
+             (t
+              (display-warning 'emacs-setup
+                               (format "gh repo create %s/%s FAILED (exit %d). Local clone at %s has commits but no remote.
+See *bootstrap-repo* for details:
+%s
+Common causes: PAT lacks `repo' scope, repo name already taken, network."
+                                       user repo status dir
+                                       (with-current-buffer log-buf (string-trim (buffer-string))))
+                               :error)))))))))))
 
 (defun my/-repo-exists-on-gh-p (user repo)
   "Return non-nil when USER/REPO exists on GitHub."
@@ -1482,7 +1579,7 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
     ;; from the BW bundle on Macs that don't have it set yet. Idempotent.
     (my/git-identity-ensure-global id)
     (cond
-     ((and id (plist-get id :token))
+     ((and id (not (my/-blank-p (plist-get id :token))))
       ;; 5. gh install + auth
       (cond
        ((my/gh-installed-p)
@@ -1497,13 +1594,15 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
          (t
           (message "Bootstrap: authenticating gh with BW-stored token…")
           (my/gh-login-with-token (plist-get id :token))))
-        ;; 6. Repo sync
+        ;; 6. Repo sync — only when username AND repo are non-blank.
         (cond
-         ((and (plist-get id :username) (plist-get id :repo))
+         ((and (not (my/-blank-p (plist-get id :username)))
+               (not (my/-blank-p (plist-get id :repo))))
           (my/repo-sync id)
           (my/bootstrap-ensure-seed-config-files))
          (t
-          (message "Bootstrap: repo sync skipped (missing username or repo name)."))))
+          (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
+                   my/bw-credentials-item))))
       ;; 7. git-crypt unlock (no-op if repo doesn't use it / already unlocked).
       ;; The key is in the same BW item as the rest of the GH identity,
       ;; under custom field "GitCryptKey".
