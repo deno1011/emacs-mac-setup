@@ -13,13 +13,13 @@ Flow (idempotent on every Emacs start; silent after first launch):
 3. Install & authenticate =gh= CLI.
 4. Sync the user's private repo into =my/data-dir= (clone / pull / create).
 5. Generate starter content for any files missing under =my/data-dir=.
-6. Load API keys from BW (preferred) or macOS Keychain (fallback).
+6. Load API keys only from the consolidated =emacs-credentials= BW item.
 7. Lock the Bitwarden vault — values stay in Emacs memory; the session
    token is discarded.
 
 Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before this file):
 - =my/bw-credentials-item=   :: BW item name holding ALL Emacs secrets (default "emacs-credentials")
-- =my/keychain-service=      :: macOS Keychain service for cached BW unlock + API key fallback (default "emacs-credentials")
+- =my/keychain-service=      :: macOS Keychain service for cached BW unlock credentials (default "emacs-credentials")
 
 * Tunables (override in secrets.el)
 
@@ -41,9 +41,9 @@ provide. The loader treats this as 'opted out' — no setenv, no
 prompt. Run `M-x my/api-key-reset' to clear and re-prompt a key.")
 
 (defvar my/keychain-service "emacs-credentials"
-  "Single macOS Keychain service for everything Emacs persists locally:
-BW unlock credentials AND API key fallback values. Accounts under this
-service: `bw-master', `bw-email', and each `*_API_KEY' env-var name.")
+"Single macOS Keychain service for cached Bitwarden unlock credentials.
+Accounts under this service: `bw-master' and `bw-email'. API keys are not
+stored here; they live only in `my/bw-credentials-item'.")
 
 (defvar my/keychain-account-bw-master "bw-master"
   "Keychain account under `my/keychain-service' for the cached BW master.")
@@ -59,6 +59,7 @@ my/bw-lock; never persisted to disk.")
 * Step 1 — macOS Keychain primitives
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Read a single generic password from macOS Keychain for non-API bootstrap secrets.
 (defun my/keychain-get (service &optional account)
   "Return password stored at SERVICE for ACCOUNT (default user-login-name).
 nil if missing or `security' fails."
@@ -73,6 +74,7 @@ nil if missing or `security' fails."
     (let ((trimmed (string-trim out)))
       (if (string-empty-p trimmed) nil trimmed))))
 
+;; Explanation: Replace a generic password in macOS Keychain so cached bootstrap credentials stay current.
 (defun my/keychain-set (service value &optional account)
   "Store VALUE in Keychain at SERVICE for ACCOUNT (default user-login-name)."
   (let ((acc (or account (user-login-name))))
@@ -85,6 +87,7 @@ nil if missing or `security' fails."
                   "add-generic-password"
                   "-a" acc "-s" service "-w" value "-A")))
 
+;; Explanation: Remove one cached generic password from macOS Keychain when a secret must be re-entered.
 (defun my/keychain-delete (service &optional account)
   "Remove SERVICE entry from Keychain for ACCOUNT."
   (call-process-shell-command
@@ -93,22 +96,26 @@ nil if missing or `security' fails."
            (shell-quote-argument service))
    nil nil))
 
+;; Explanation: Treat nil and empty strings as missing bootstrap input.
 (defun my/-blank-p (s) (or (null s) (and (stringp s) (string-empty-p s))))
 #+end_src
 
 * Step 2 — Bitwarden unlock
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Check whether the Bitwarden CLI is already available on this Mac.
 (defun my/bw-installed-p ()
   "Return t if the bw CLI is on PATH."
   (executable-find "bw"))
 
+;; Explanation: Install the Bitwarden CLI through Homebrew when the bootstrap needs vault access.
 (defun my/bw-install ()
   "Best-effort macOS install of bw via Homebrew. No-op on other OSes."
   (when (and (eq system-type 'darwin) (executable-find "brew"))
     (start-process "install-bw" "*install-bw*" "brew" "install" "bitwarden-cli")
     (message "Installing bitwarden-cli via brew in background — restart Emacs when finished.")))
 
+;; Explanation: Ask Bitwarden CLI whether the vault is locked, unlocked, or unauthenticated.
 (defun my/bw-status ()
   "Return BW status keyword: 'unauthenticated', 'locked', 'unlocked', or 'unknown'."
   (let ((out (with-output-to-string
@@ -120,6 +127,7 @@ nil if missing or `security' fails."
      ((string-match-p "\"unlocked\""        out) 'unlocked)
      (t 'unknown))))
 
+;; Explanation: Unlock Bitwarden with an email/master-password pair and capture the temporary session token.
 (defun my/bw--unlock-internal (email master)
   "Login if needed, then unlock. Returns session token or nil.
 Master is wiped from memory in the caller."
@@ -150,6 +158,7 @@ Master is wiped from memory in the caller."
                        nil t))))))
         (if (and tok (> (length tok) 30)) tok nil))))))
 
+;; Explanation: Unlock Bitwarden using cached credentials when possible, prompting only when needed.
 (cl-defun my/bw-unlock (&optional interactive-prompt)
   "Ensure my/bw-session is set. Use cached creds from Keychain if present,
 otherwise prompt for email + master and cache to Keychain on success.
@@ -216,6 +225,7 @@ Returns the session token or nil if the user declined / unlock failed."
             (my/keychain-delete my/keychain-service my/keychain-account-bw-master))
           nil)))))))
 
+;; Explanation: Lock Bitwarden and clear the in-memory session token after bootstrap has loaded secrets.
 (defun my/bw-lock ()
   "Lock the BW vault and clear the session token from memory."
   (interactive)
@@ -253,6 +263,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 (require 'cl-lib)
 (require 'json)
 
+;; Explanation: Fetch one Bitwarden item by name, recovering from duplicate names with an exact search.
 (defun my/bw-get-item (item-name)
   "Return parsed alist for ITEM-NAME, or nil if missing / no session."
   (when my/bw-session
@@ -299,18 +310,21 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                      (> (length (or (cdr (assoc 'fields a)) []))
                         (length (or (cdr (assoc 'fields b)) [])))))))))))
 
+;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
   "Extract login.password from a parsed BW item."
   (when item
     (let ((login (cdr (assoc 'login item))))
       (and login (cdr (assoc 'password login))))))
 
+;; Explanation: Return a Bitwarden login username from a parsed item.
 (defun my/bw-item-username (item)
   "Extract login.username from a parsed BW item."
   (when item
     (let ((login (cdr (assoc 'login item))))
       (and login (cdr (assoc 'username login))))))
 
+;; Explanation: Normalize Bitwarden custom fields to a list regardless of CLI JSON shape.
 (defun my/bw-item-fields-list (item)
   "Return ITEM custom fields as a list, tolerating vector or list JSON shapes."
   (let ((fields (and item (cdr (assoc 'fields item)))))
@@ -319,6 +333,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
      ((listp fields) fields)
      (t nil))))
 
+;; Explanation: Return a named custom field value from a parsed Bitwarden item.
 (defun my/bw-item-field (item field-name)
   "Extract custom field FIELD-NAME from a parsed BW item."
   (when item
@@ -327,6 +342,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                when (string= (cdr (assoc 'name f)) field-name)
                return (cdr (assoc 'value f))))))
 
+;; Explanation: Encode JSON with Bitwarden CLI before create/edit commands.
 (defun my/bw--encode-json (json)
   "Return Bitwarden CLI's encoded representation of JSON, or error."
   (with-temp-buffer
@@ -337,6 +353,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
         (error "BW encode failed: %s" (string-trim (buffer-string)))))
     (string-trim (buffer-string))))
 
+;; Explanation: Run Bitwarden CLI safely, checking exit status and redacting command details on failure.
 (defun my/bw--call (&rest args)
   "Run `bw' with ARGS, returning trimmed stdout or raising an error."
   (with-temp-buffer
@@ -348,6 +365,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                (string-trim (buffer-string)))))
     (string-trim (buffer-string))))
 
+;; Explanation: Create a Bitwarden login item with optional username, password, and custom fields.
 (defun my/bw-create-item (name &rest plist)
   "Create a BW login item NAME.
 PLIST: :username, :password, :fields (alist of (name . value))."
@@ -364,6 +382,7 @@ PLIST: :username, :password, :fields (alist of (name . value))."
          (encoded (my/bw--encode-json json)))
     (my/bw--call "create" "item" encoded "--session" my/bw-session)))
 
+;; Explanation: Update selected login/custom-field values on an existing Bitwarden item.
 (defun my/bw-update-item (item-name &rest plist)
   "Update existing BW item ITEM-NAME with new field values.
 PLIST: same keys as my/bw-create-item. Only the keys present are touched."
@@ -407,6 +426,7 @@ the user's private data repo:
 - custom =Repo=     → private repo name (e.g. "emacs-data", not "alice/emacs-data")
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Validate a GitHub token by calling the GitHub user API.
 (defun my/github-token-valid-p (token)
   "Non-nil unless GitHub authoritatively rejects TOKEN with HTTP 401.
 Network failures, 5xx, 403 (rate-limit), and any other status preserve
@@ -424,6 +444,7 @@ cached token."
                       nil t))))))
       (not (string= code "401")))))
 
+;; Explanation: Collect the GitHub identity bundle needed for private repo setup.
 (defun my/github-prompt-identity ()
   "Prompt for GitHub handle / token / email / fullname / repo. Returns plist."
   (list :username (read-string "GitHub login (handle): ")
@@ -432,6 +453,7 @@ cached token."
                   ("Fullname" . ,(read-string "Git commit name: "))
                   ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
 
+;; Explanation: Check whether the GitHub identity flow has been explicitly skipped.
 (defun my/github--opted-out-p (item)
   "Return t when ITEM carries the GitHub-skip sentinel.
 The sentinel lives in the `GitHubSkipped' custom field, written when
@@ -441,6 +463,7 @@ future launches skip all GitHub prompts and the gh / repo-sync chain."
        (let ((v (my/bw-item-field item "GitHubSkipped")))
          (and (stringp v) (string= v my/api-skipped-sentinel)))))
 
+;; Explanation: Persist a GitHub opt-out sentinel in the consolidated credentials item.
 (defun my/github--write-opt-out ()
   "Persist the GitHub-skip sentinel so future launches stop prompting.
 Creates the consolidated BW item if missing, or marks the existing
@@ -455,6 +478,7 @@ item. Run `M-x my/github-identity-reset' to revive."
                        :password ""
                        :fields `(("GitHubSkipped" . ,my/api-skipped-sentinel))))))
 
+;; Explanation: Clear GitHub identity fields so bootstrap can prompt for them again.
 (defun my/github-identity-reset ()
   "Clear GitHub identity + skip sentinel in `my/bw-credentials-item' so
 the next bootstrap prompts again. Doesn't touch API key fields.
@@ -476,7 +500,7 @@ Run as `M-x my/github-identity-reset'; then restart Emacs or
                                  ("GitHubSkipped" . "")))
     (message "Reset GitHub identity in BW '%s'. Run M-x my/bootstrap (or restart Emacs) to re-prompt."
              my/bw-credentials-item))))
-
+;; Explanation: Load or complete the GitHub identity bundle stored in Bitwarden.
 (cl-defun my/github-load-identity ()
   "Read GitHub bundle from `my/bw-credentials-item'.
 Returns plist (:username :token :email :fullname :repo :git-crypt-key)
@@ -572,6 +596,7 @@ Otherwise prompts only for fields that are missing or invalid."
                   :email new-email :fullname new-fullname :repo new-repo
                   :git-crypt-key git-crypt-key)))))))))
 
+;; Explanation: Read a global git config key without treating absence as an error.
 (defun my/-git-global-config-get (key)
   "Return the global git config value for KEY, or nil if unset/empty."
   (let ((v (string-trim
@@ -580,6 +605,7 @@ Otherwise prompts only for fields that are missing or invalid."
                 (call-process "git" nil t nil "config" "--global" "--get" key))))))
     (and (not (string-empty-p v)) v)))
 
+;; Explanation: Populate global git name/email from the GitHub identity when unset.
 (defun my/git-identity-ensure-global (identity)
   "Fill git's global user.name + user.email from IDENTITY when they're
 unset. Never overwrites a value the user already chose.
@@ -603,16 +629,20 @@ my/data-dir's post-commit auto-push hook) fall back to
 * Step 5 — gh CLI install + authenticate
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Check whether GitHub CLI is available.
 (defun my/gh-installed-p () (executable-find "gh"))
 
+;; Explanation: Install GitHub CLI through Homebrew when missing.
 (defun my/gh-install ()
   (when (and (eq system-type 'darwin) (executable-find "brew"))
     (call-process-shell-command "brew install gh" nil "*install-gh*" t)
     (executable-find "gh")))
 
+;; Explanation: Check whether GitHub CLI already has a usable authenticated session.
 (defun my/gh-authenticated-p ()
   (zerop (call-process-shell-command "gh auth status 2>/dev/null" nil nil)))
 
+;; Explanation: Authenticate GitHub CLI non-interactively with the token from Bitwarden.
 (defun my/gh-login-with-token (token)
   "Authenticate gh with TOKEN. Stores credentials in gh's own config.
 Returns nil + warning when TOKEN is blank or `gh auth login' fails;
@@ -646,10 +676,12 @@ from line lists so Org Babel does not confuse embedded Org headings/directives
 inside multiline string literals with the structure of this file.
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Build starter Org file content from line fragments.
 (defun my/starter--org-lines (&rest lines)
   "Return LINES as a newline-terminated Org document string."
   (concat (mapconcat #'identity lines "\n") "\n"))
 
+;; Explanation: Write starter content only when the destination file does not already exist.
 (defun my/starter--write-if-missing (path content)
   "Write CONTENT to PATH unless PATH already exists. Returns t if written."
   (unless (file-exists-p path)
@@ -657,6 +689,7 @@ inside multiline string literals with the structure of this file.
     (with-temp-file path (insert content))
     t))
 
+;; Explanation: Generate the starter TOUR.org content for a newly adopted data repo.
 (defun my/template-tour-org (identity)
   (let ((name (or (plist-get identity :fullname) "you")))
     (format
@@ -680,6 +713,7 @@ inside multiline string literals with the structure of this file.
              ""
              "See [[file:wiki/emacs/overviews/how-to-use-this-wiki.org][how-to-use-this-wiki.org]] for the wiki workflow.")))))
 
+;; Explanation: Generate the starter wiki schema page.
 (defun my/template-wiki-schema ()
   (my/starter--org-lines
    "#+TITLE: WIKI Schema - Emacs Knowledge"
@@ -701,6 +735,7 @@ inside multiline string literals with the structure of this file.
    "* Cross-Linkage"
    "* Related"))
 
+;; Explanation: Generate the starter wiki index page.
 (defun my/template-wiki-index ()
   (my/starter--org-lines
    "#+TITLE: Index - Emacs Knowledge Wiki"
@@ -714,6 +749,7 @@ inside multiline string literals with the structure of this file.
    "* Comparisons"
    "* Overviews"))
 
+;; Explanation: Generate the starter wiki log page.
 (defun my/template-wiki-log ()
   (my/starter--org-lines
    "#+TITLE: Log - Emacs Knowledge Wiki"
@@ -724,6 +760,7 @@ inside multiline string literals with the structure of this file.
    (format "** [%s] scaffold | Initial starter wiki generated by Emacs bootstrap"
            (format-time-string "%Y-%m-%d"))))
 
+;; Explanation: Generate the starter GTD inbox file.
 (defun my/template-gtd-inbox ()
   (my/starter--org-lines
    "#+TITLE: Inbox"
@@ -731,6 +768,7 @@ inside multiline string literals with the structure of this file.
    ""
    "* TODO Capture incoming ideas here"))
 
+;; Explanation: Generate the starter GTD next-actions file.
 (defun my/template-gtd-next ()
   (my/starter--org-lines
    "#+TITLE: Next Actions"
@@ -738,6 +776,7 @@ inside multiline string literals with the structure of this file.
    ""
    "* TODO Example next action - concrete, doable in <30 min"))
 
+;; Explanation: Generate the starter GTD projects file.
 (defun my/template-gtd-projects ()
   (my/starter--org-lines
    "#+TITLE: Projects"
@@ -747,15 +786,19 @@ inside multiline string literals with the structure of this file.
    "  - [ ] First next action"
    "  - [ ] Second next action"))
 
+;; Explanation: Generate the starter someday/maybe file.
 (defun my/template-gtd-someday ()
   (my/starter--org-lines "#+TITLE: Someday/Maybe"))
 
+;; Explanation: Generate the starter waiting-for file.
 (defun my/template-gtd-waiting ()
   (my/starter--org-lines "#+TITLE: Waiting For"))
 
+;; Explanation: Generate the starter tickler file.
 (defun my/template-gtd-tickler ()
   (my/starter--org-lines "#+TITLE: Tickler"))
 
+;; Explanation: Create missing starter wiki/GTD/tour files without overwriting user data.
 (defun my/generate-starter-data (root identity)
   "Write starter content under ROOT (the my/data-dir). Skips existing files."
   (my/starter--write-if-missing
@@ -776,6 +819,7 @@ inside multiline string literals with the structure of this file.
                "data/org/archive"))
     (make-directory (expand-file-name d root) t)))
 
+;; Explanation: Re-seed missing split config files after repo sync or adoption.
 (defun my/bootstrap-ensure-seed-config-files ()
   "Re-seed missing config files after repo sync/adoption.
 `init.el' seeds before `bootstrap.org' runs, but repo adoption can replace
@@ -794,6 +838,7 @@ load the remaining scripts."
 (require 'cl-lib)
 (require 'subr-x)
 
+;; Explanation: Read the origin remote URL for a local git directory.
 (defun my/git-remote-url (dir)
   "Return the origin URL of git repo at DIR, or nil."
   (when (file-directory-p (expand-file-name ".git" dir))
@@ -804,6 +849,7 @@ load the remaining scripts."
                       (call-process "git" nil t nil "remote" "get-url" "origin")))))))
       (when (not (string-empty-p out)) out))))
 
+;; Explanation: Clone the private repo or create it on GitHub when it does not exist.
 (defun my/-repo-fetch-or-create (identity)
   "Clone the user's private repo into my/data-dir, or create+push if it
 doesn't exist on GitHub. Assumes my/data-dir is absent or empty.
@@ -871,6 +917,7 @@ Common causes: PAT lacks `repo' scope, repo name already taken, network."
                                        (with-current-buffer log-buf (string-trim (buffer-string))))
                                :error)))))))))))
 
+;; Explanation: Check whether the configured private repo exists on GitHub.
 (defun my/-repo-exists-on-gh-p (user repo)
   "Return non-nil when USER/REPO exists on GitHub."
   (zerop (call-process-shell-command
@@ -879,10 +926,12 @@ Common causes: PAT lacks `repo' scope, repo name already taken, network."
                   (shell-quote-argument repo))
           nil nil)))
 
+;; Explanation: Compare two files by content, treating unreadable files as different.
 (defun my/-file-same-content-p (a b)
   "Return non-nil when files A and B have identical content."
   (zerop (call-process "cmp" nil nil nil "-s" a b)))
 
+;; Explanation: Import local-only files into a cloned repo during adoption.
 (defun my/-repo-copy-local-only-files (local-dir repo-dir)
   "Copy files that exist only in LOCAL-DIR into REPO-DIR.
 For data files present on both sides with different content, keep the repo
@@ -915,6 +964,7 @@ finish the current bootstrap load.  Return a plist with :imported,
           :config-updated (nreverse config-updated)
           :conflicts (nreverse conflicts))))
 
+;; Explanation: Write a human-readable report describing repo adoption decisions.
 (defun my/-repo-write-adoption-report (backup imported config-updated conflicts user repo)
   "Write an adoption report into BACKUP for IMPORTED and CONFLICTS."
   (let ((report (expand-file-name "BOOTSTRAP-ADOPTION-REPORT.org" backup)))
@@ -942,6 +992,7 @@ finish the current bootstrap load.  Return a plist with :imported,
             (insert "  - local backup at: " (expand-file-name rel backup) "\n"))
         (insert "- none\n")))))
 
+;; Explanation: Commit and push adoption changes only when the repo has modifications.
 (defun my/-repo-commit-and-push-if-needed (dir message)
   "Commit and push changes in DIR with MESSAGE when the worktree changed."
   (let ((default-directory dir))
@@ -954,6 +1005,7 @@ finish the current bootstrap load.  Return a plist with :imported,
       (call-process "git" nil nil nil "commit" "-m" message)
       (call-process "git" nil nil nil "push" "origin" "main"))))
 
+;; Explanation: Adopt an existing local data directory into the configured GitHub repo.
 (defun my/-repo-adopt-existing-dir (identity current-remote)
   "Adopt existing my/data-dir into the configured GitHub repo.
 The GitHub repo is authoritative for paths that exist on both sides.
@@ -1009,6 +1061,7 @@ Leaving local files untouched. Create the repo first or move %s aside manually."
                     (error-message-string err))
             :warning)))))))
 
+;; Explanation: Ensure the private data repo exists locally, is current, and is safe to use.
 (defun my/repo-sync (identity)
   "Sync the user's private data repo into my/data-dir.
 IDENTITY is the plist returned by my/github-load-identity."
@@ -1086,18 +1139,20 @@ string when prompted on the new Mac.
 #+begin_src emacs-lisp :tangle yes
 (defvar my/git-crypt-keychain-service "emacs-git-crypt-key"
   "macOS Keychain service for the cached git-crypt key (base64-encoded).
-Used as a fallback when Bitwarden isn't available — same pattern as
-the API-key Keychain fallback. The key is stored under (account=$USER,
-service=this) and contains the base64 string verbatim.")
+Used as a fallback when Bitwarden isn't available. The key is stored under
+(account=$USER, service=this) and contains the base64 string verbatim.")
 
+;; Explanation: Check whether git-crypt is available.
 (defun my/git-crypt-installed-p () (executable-find "git-crypt"))
 
+;; Explanation: Install git-crypt through Homebrew when missing.
 (defun my/git-crypt-install ()
   "Install git-crypt on macOS via brew. Returns t on success."
   (when (and (eq system-type 'darwin) (executable-find "brew"))
     (call-process-shell-command "brew install git-crypt" nil "*install-git-crypt*" t)
     (executable-find "git-crypt")))
 
+;; Explanation: Detect whether the repo declares encrypted git-crypt content.
 (defun my/repo-uses-git-crypt-p (dir)
   "Return t if DIR has a .gitattributes entry that pipes through git-crypt."
   (let ((ga (expand-file-name ".gitattributes" dir)))
@@ -1106,10 +1161,12 @@ service=this) and contains the base64 string verbatim.")
            (insert-file-contents ga)
            (re-search-forward "filter=git-crypt" nil t)))))
 
+;; Explanation: Check whether git-crypt protected files are already readable.
 (defun my/repo-already-unlocked-p (dir)
   "Cheap check: a key file is materialised under .git/git-crypt/keys/."
   (file-exists-p (expand-file-name ".git/git-crypt/keys/default" dir)))
 
+;; Explanation: Strip whitespace from a base64 encoded git-crypt key.
 (defun my/-normalize-base64 (s)
   "Strip whitespace and translate base64url chars to standard base64.
 `pbcopy' / shell pipelines often produce trailing newlines; some tools
@@ -1121,6 +1178,7 @@ emit `_' / `-' instead of `/' / `+'."
       "-" "+"
       (replace-regexp-in-string "[ \t\n\r]" "" s)))))
 
+;; Explanation: Validate that a string is decodable base64 before storing it.
 (defun my/-valid-base64-p (s)
   "Return non-nil if S (after normalization) decodes as base64."
   (and s
@@ -1128,6 +1186,7 @@ emit `_' / `-' instead of `/' / `+'."
            (progn (base64-decode-string (my/-normalize-base64 s)) t)
          (error nil))))
 
+;; Explanation: Prompt for a git-crypt key and save it to the GitHub Bitwarden item.
 (defun my/git-crypt-key-prompt-and-save ()
   "Prompt for a base64-encoded git-crypt key. Validate before saving.
 On success, save the NORMALIZED form to whichever secret store is
@@ -1170,6 +1229,7 @@ then paste again (M-x my/git-crypt-step). NOT saved."
                  my/git-crypt-keychain-service)))
       normalized))))
 
+;; Explanation: Resolve the git-crypt key from Bitwarden, Keychain, or user prompt.
 (defun my/git-crypt-key-resolve (identity)
   "Return the base64-encoded git-crypt key from the best available source.
 Order:
@@ -1195,6 +1255,7 @@ Returns nil if the user declined to provide a key."
    ;; 3. Prompt + persist
    (my/git-crypt-key-prompt-and-save)))
 
+;; Explanation: Remove cached git-crypt key material so bootstrap will ask again.
 (defun my/git-crypt-clear-key ()
   "Clear the cached git-crypt key from BOTH stores (BW + macOS Keychain).
 Use when you've saved an invalid key and want bootstrap to re-prompt."
@@ -1213,6 +1274,7 @@ Use when you've saved an invalid key and want bootstrap to re-prompt."
     (when cleared-anywhere
       (message "git-crypt key cleared. Re-run M-x my/git-crypt-step to enter a new one."))))
 
+;; Explanation: Unlock the private repo with a base64 encoded git-crypt key.
 (defun my/git-crypt-unlock (dir base64-key)
   "Unlock the git-crypt repo at DIR using BASE64-KEY (a string).
 Writes the decoded key to a temp file, runs `git-crypt unlock`, then
@@ -1262,6 +1324,7 @@ Clearing cached git-crypt key from BW + Keychain so next bootstrap re-prompts."
       (delete-file keyfile))
     ok))
 
+;; Explanation: Run the git-crypt bootstrap phase when the repo requires it.
 (defun my/git-crypt-step (identity)
   "Top-level dispatcher invoked from my/bootstrap after repo sync.
 IDENTITY is the plist returned by my/github-load-identity (may contain
@@ -1290,9 +1353,11 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
           (my/git-crypt-unlock my/data-dir key))))))))
 #+end_src
 
-* Step 8 — API keys: load from one BW item (preferred) or Keychain (fallback)
+* Step 8 — API keys: load from one BW item only
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Persist one provider API key into the consolidated Bitwarden API item.
+;; Explanation: Persist one provider API key into the consolidated Bitwarden credentials item.
 (defun my/bw-api-key-set (env-var value)
   "Persist ENV-VAR API key VALUE in the consolidated Bitwarden API item."
   (unless my/bw-session
@@ -1310,44 +1375,49 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
       (error "BW verification failed: %s was not saved to item %s"
              env-var my/bw-credentials-item))))
 
+;; Explanation: Check whether an API key field stores the explicit skip sentinel.
 (defun my/api-key--opted-out-p (value)
   "Return t when VALUE is the skip sentinel."
   (and (stringp value) (string= value my/api-skipped-sentinel)))
 
+;; Explanation: Persist the API-key skip sentinel in the consolidated Bitwarden item.
 (defun my/api-key--persist-sentinel (env-var)
   "Persist the skip sentinel for ENV-VAR so we don't re-prompt next launch."
-  (cond
-   (my/bw-session
-    (my/bw-api-key-set env-var my/api-skipped-sentinel))
-   (t
-    (my/keychain-set my/keychain-service my/api-skipped-sentinel env-var))))
+  (unless my/bw-session
+    (error "BW not unlocked; cannot persist API key skip sentinel for %s" env-var))
+  (my/bw-api-key-set env-var my/api-skipped-sentinel))
 
+;; Explanation: Clear one API key custom field so bootstrap can prompt for it again.
 (defun my/api-key-reset (env-var)
   "Clear any cached value or skip sentinel for ENV-VAR so the next
-bootstrap prompts again. Deletes the BW custom field (if BW is
-unlocked) AND the Keychain account, so the user can recover from
-either backend independently. Run as `M-x my/api-key-reset'."
+bootstrap prompts again. API keys live only in `my/bw-credentials-item';
+run as `M-x my/api-key-reset' while Bitwarden is unlocked."
   (interactive
    (list (completing-read "Reset API key (env var): "
                           my/api-key-fields nil t)))
-  (when my/bw-session
-    (when (my/bw-get-item my/bw-credentials-item)
-      (my/bw-update-item my/bw-credentials-item
-                         :fields `((,env-var . "")))))
-  (my/keychain-delete my/keychain-service env-var)
-  (setenv env-var nil)
-  (message "Reset %s — next bootstrap will prompt again." env-var))
+  (cond
+   ((not my/bw-session)
+    (message "BW locked — run M-x my/bw-unlock first."))
+   ((not (my/bw-get-item my/bw-credentials-item))
+    (message "No BW item '%s' to reset." my/bw-credentials-item))
+   (t
+    (my/bw-update-item my/bw-credentials-item :fields `((,env-var . "")))
+    (setenv env-var nil)
+    (message "Reset %s in BW '%s' — next bootstrap will prompt again."
+             env-var my/bw-credentials-item))))
 
+;; Explanation: Populate API key environment variables from the consolidated Bitwarden item only.
 (defun my/api-keys-load ()
   "Populate provider API key env vars.
 Resolution order, per `my/api-key-fields' entry:
   1. `my/bw-credentials-item' custom field (when BW is unlocked).
-  2. `my/keychain-service' / account = env-var (when BW is unavailable).
-  3. Prompt + persist (BW if unlocked, else Keychain).
+  2. Prompt + persist to `my/bw-credentials-item' when BW is unlocked.
 
 A field whose stored value equals `my/api-skipped-sentinel' is treated
 as 'user opted out': no setenv, no prompt. Use `M-x my/api-key-reset'
-to clear that sentinel for a single key."
+to clear that sentinel for a single key.
+
+No legacy Bitwarden item names and no Keychain API-key fallback are consulted."
   (let ((api-item (and my/bw-session (my/bw-get-item my/bw-credentials-item)))
         loaded prompted opted-out skipped)
     (dolist (env-var my/api-key-fields)
@@ -1362,17 +1432,9 @@ to clear that sentinel for a single key."
               (setq opt-out t source 'bw))
              ((not (my/-blank-p v))
               (setq value v source 'bw)))))
-        ;; 2. Keychain fallback only when Bitwarden is unavailable.
-        (when (and (not my/bw-session) (my/-blank-p value) (not opt-out))
-          (let ((v (my/keychain-get my/keychain-service env-var)))
-            (cond
-             ((my/api-key--opted-out-p v)
-              (setq opt-out t source 'keychain))
-             ((not (my/-blank-p v))
-              (setq value v source 'keychain)))))
-        ;; 3. Prompt + persist (only when nothing found and not opted out).
+        ;; 2. Prompt + persist only into the consolidated BW item.
         (when (and (my/-blank-p value) (not opt-out))
-          (if noninteractive
+          (if (or noninteractive (not my/bw-session))
               (push env-var skipped)
             (let ((entered (read-passwd
                             (format "%s (empty = skip permanently, won't ask again): "
@@ -1387,11 +1449,8 @@ to clear that sentinel for a single key."
                (t
                 (setq value entered source 'prompt)
                 (push env-var prompted)
-                (if my/bw-session
-                    (progn
-                      (my/bw-api-key-set env-var entered)
-                      (setq api-item (my/bw-get-item my/bw-credentials-item)))
-                  (my/keychain-set my/keychain-service entered env-var)))))))
+                (my/bw-api-key-set env-var entered)
+                (setq api-item (my/bw-get-item my/bw-credentials-item)))))))
         (when (and value (not (my/-blank-p value)))
           (setenv env-var value)
           (push (format "%s(%s)" env-var (symbol-name source)) loaded))))
@@ -1400,9 +1459,7 @@ to clear that sentinel for a single key."
       (message "Bootstrap: API keys loaded: %s" (mapconcat #'identity (nreverse loaded) ", ")))
     (when prompted
       (message "Bootstrap: API keys created via prompt + stored to %s: %s"
-               (if my/bw-session
-                   (format "Bitwarden item '%s'" my/bw-credentials-item)
-                 (format "Keychain service '%s'" my/keychain-service))
+               (format "Bitwarden item '%s'" my/bw-credentials-item)
                (mapconcat #'identity (nreverse prompted) ", ")))
     (when opted-out
       (message "Bootstrap: opted out (will NOT re-prompt; M-x my/api-key-reset to revive): %s"
@@ -1415,6 +1472,7 @@ to clear that sentinel for a single key."
 * Step 9 — Orchestration (runs synchronously, in order)
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Orchestrate the full first-start bootstrap sequence in dependency order.
 (defun my/bootstrap ()
   "Run the full first-launch bootstrap: BW unlock, GitHub identity,
 gh install/auth, repo sync, starter generation, API key loading.
