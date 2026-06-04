@@ -49,8 +49,28 @@ if ! command -v brew &>/dev/null; then
   sudo -v
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 fi
+# Activate brew for THIS script — Apple Silicon: /opt/homebrew, Intel: /usr/local
 [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
 [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
+
+# Persist brew in shell profile so future shells (and `brew upgrade emacs-plus@30`
+# later) find it without re-running install.sh. Intel wins if both prefixes exist
+# (rare), matching bootstrap.sh's behaviour on main.
+_BREW_SHELLENV_LINE='eval "$(/opt/homebrew/bin/brew shellenv)"'
+if [ -f /usr/local/bin/brew ]; then
+  _BREW_SHELLENV_LINE='eval "$(/usr/local/bin/brew shellenv)"'
+fi
+for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
+  if [ -f "$_PROFILE" ] || [ "$_PROFILE" = "$HOME/.zprofile" ]; then
+    if ! grep -qF 'brew shellenv' "$_PROFILE" 2>/dev/null; then
+      echo "" >> "$_PROFILE"
+      echo "# Homebrew" >> "$_PROFILE"
+      echo "$_BREW_SHELLENV_LINE" >> "$_PROFILE"
+      echo "==> Added brew to $(basename "$_PROFILE")"
+    fi
+  fi
+done
+unset _BREW_SHELLENV_LINE _PROFILE
 
 # 2. emacs-plus ------------------------------------------------------------
 EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
