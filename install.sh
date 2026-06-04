@@ -19,6 +19,7 @@ REPO_URL="${EMACS_MAC_REPO_URL:-https://github.com/deno1011/emacs-mac-setup.git}
 BRANCH="${EMACS_MAC_BRANCH:-main}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-$HOME/emacs-mac-setup-src}"
 EMACS_D="$HOME/.emacs.d"
+EMACS_APP_NAME="${EMACS_APP_NAME:-Emacs Plus}"
 # Override DATA_DIR per-Mac with EMACS_DATA_DIR=<path>. init.el reads the
 # same env var so the installer's seed location and Emacs's runtime data
 # root stay in sync. For GUI Emacs (launched from Finder/Dock), also run:
@@ -39,6 +40,7 @@ echo "    repo:    $REPO_URL  (branch: $BRANCH)"
 echo "    distro:  $SRC_DIR"
 echo "    config:  $EMACS_D (-> $SRC_DIR/emacs.d)"
 echo "    data:    $DATA_DIR$([ -n "${EMACS_DATA_DIR:-}" ] && echo "  (from EMACS_DATA_DIR)")"
+echo "    app:     $EMACS_APP_NAME.app"
 echo ""
 
 # 1. Homebrew --------------------------------------------------------------
@@ -68,7 +70,7 @@ fi
 # Spotlight's index; a real bundle does.
 #
 # Trade-off accepted: after `brew upgrade $EMACS_FORMULA`, the copy at
-# /Applications/Emacs.app stays at the OLD version until install.sh
+# /Applications/$EMACS_APP_NAME.app stays at the OLD version until install.sh
 # runs again. Re-running install.sh is fast (brew install is a no-op
 # if the formula is already current) so the workflow is: `brew
 # upgrade` → `bash ~/emacs-mac-setup-src/install.sh` to re-copy.
@@ -79,10 +81,10 @@ if [ ! -d "$EMACS_APP_SRC" ]; then
   exit 1
 fi
 
-EMACS_APP_DST="/Applications/Emacs.app"
+EMACS_APP_DST="/Applications/$EMACS_APP_NAME.app"
 # Clean up: remove a previous symlink (any version of this script),
 # remove a previous ditto copy (will be replaced), or leave alone if
-# someone else's Emacs.app is there (use ~/Applications/ instead).
+# someone else's same-named app is there (use ~/Applications/ instead).
 if [ -L "$EMACS_APP_DST" ]; then
   rm "$EMACS_APP_DST"
 elif [ -d "$EMACS_APP_DST" ]; then
@@ -93,7 +95,7 @@ elif [ -d "$EMACS_APP_DST" ]; then
     rm -rf "$EMACS_APP_DST"
   else
     echo "==> $EMACS_APP_DST is a third-party app (${existing_bundle_id:-unknown}) — falling back to ~/Applications/"
-    EMACS_APP_DST="$HOME/Applications/Emacs.app"
+    EMACS_APP_DST="$HOME/Applications/$EMACS_APP_NAME.app"
     mkdir -p "$HOME/Applications"
     [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
   fi
@@ -104,7 +106,7 @@ fi
 if ! ditto "$EMACS_APP_SRC" "$EMACS_APP_DST" 2>/dev/null; then
   # /Applications/ write may fail under SIP / managed-machine policies.
   # Fall back to ~/Applications/.
-  EMACS_APP_DST="$HOME/Applications/Emacs.app"
+  EMACS_APP_DST="$HOME/Applications/$EMACS_APP_NAME.app"
   mkdir -p "$HOME/Applications"
   [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
   ditto "$EMACS_APP_SRC" "$EMACS_APP_DST"

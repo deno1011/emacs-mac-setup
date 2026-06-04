@@ -8,13 +8,14 @@
 # --purge-data — that's the only irreversible thing, so opting in is
 # required.
 #
-# Pass --keep-emacs-app if you want to keep Emacs.app + the brew formula
+# Pass --keep-emacs-app if you want to keep Emacs Plus.app + the brew formula
 # (e.g., you only want to drop the distro config and switch to a
 # different Emacs config).
 
 set -e
 
 EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
+EMACS_APP_NAME="${EMACS_APP_NAME:-Emacs Plus}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-$HOME/emacs-mac-setup-src}"
 EMACS_D="$HOME/.emacs.d"
 DATA_DIR="${EMACS_DATA_DIR:-$HOME/emacs}"
@@ -73,7 +74,7 @@ Usage: bash uninstall.sh [--keep-emacs-app] [--purge-data]
 Reverses install.sh. By default removes:
   - $EMACS_D                 (symlink to the distro)
   - $SRC_DIR                 (distro source clone)
-  - /Applications/Emacs.app  (or \$HOME/Applications/Emacs.app)
+  - /Applications/$EMACS_APP_NAME.app  (or \$HOME/Applications/$EMACS_APP_NAME.app)
   - the $EMACS_FORMULA brew formula
 
 Preserved unless --purge-data is passed:
@@ -81,11 +82,12 @@ Preserved unless --purge-data is passed:
   - secrets.el (per-Mac, was inside the distro clone — gone with it)
 
 Flags:
-  --keep-emacs-app  leave Emacs.app + brew formula intact
+  --keep-emacs-app  leave $EMACS_APP_NAME.app + brew formula intact
   --purge-data      ALSO delete $DATA_DIR (irreversible; asks for confirmation)
 
 Env vars (mirror install.sh):
   EMACS_FORMULA      brew formula to remove   (default: emacs-plus@30)
+  EMACS_APP_NAME     app bundle display name   (default: Emacs Plus)
   EMACS_MAC_SRC_DIR  distro clone path        (default: \$HOME/emacs-mac-setup-src)
   EMACS_DATA_DIR     user data root           (default: \$HOME/emacs)
 
@@ -120,7 +122,7 @@ if [ -d "$SRC_DIR" ]; then
   rm -rf "$SRC_DIR"
 fi
 
-# 3. Emacs.app + brew formula (default) -----------------------------------
+# 3. Emacs app bundle + brew formula (default) -----------------------------
 if [ "$KEEP_EMACS_APP" = "0" ]; then
   [ -f /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
   [ -f /usr/local/bin/brew ]    && eval "$(/usr/local/bin/brew shellenv)"
@@ -129,6 +131,10 @@ if [ "$KEEP_EMACS_APP" = "0" ]; then
   # no longer show stale Emacs icons.  Include historical names from the
   # stable setup as well as the current generic bundle name.
   for app in \
+    "/Applications/$EMACS_APP_NAME.app" \
+    "$HOME/Applications/$EMACS_APP_NAME.app" \
+    "/Applications/Emacs Plus.app" \
+    "$HOME/Applications/Emacs Plus.app" \
     /Applications/Emacs.app \
     "$HOME/Applications/Emacs.app" \
     "/Applications/Plus Emacs.app" \
@@ -175,7 +181,7 @@ echo ""
 echo "======================================================================"
 echo "Done."
 echo "======================================================================"
-[ "$KEEP_EMACS_APP" = "1" ] && echo "  Emacs.app + $EMACS_FORMULA preserved (--keep-emacs-app)."
+[ "$KEEP_EMACS_APP" = "1" ] && echo "  $EMACS_APP_NAME.app + $EMACS_FORMULA preserved (--keep-emacs-app)."
 [ "$PURGE_DATA"     = "0" ] && [ -d "$DATA_DIR" ] && \
   echo "  Your data at $DATA_DIR is preserved. To remove later: rm -rf '$DATA_DIR'"
 echo "  Homebrew untouched. To remove: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\""

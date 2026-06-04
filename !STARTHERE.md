@@ -20,7 +20,7 @@ keys.
 
 | Component | Where it goes | Source of truth |
 |---|---|---|
-| `emacs-plus` | `/Applications/Emacs.app` | Homebrew |
+| `emacs-plus` | `/Applications/Emacs Plus.app` | Homebrew |
 | Literate config | `~/.emacs.d/` (symlink) → `~/emacs-mac-setup-src/emacs.d/` | this repo |
 | Starter wiki + agenda + TOUR.org | `~/emacs/` | seeded once from `starter-data/`, then yours |
 | Per-Mac secrets | `~/emacs-mac-setup-src/emacs.d/secrets.el` | edit locally, never tracked |
@@ -42,7 +42,7 @@ are never touched.
 ```bash
 bash ~/emacs-mac-setup-src/uninstall.sh
 # add --purge-data to also delete ~/emacs/ (irreversible)
-# add --keep-emacs-app to preserve Emacs.app + the brew formula
+# add --keep-emacs-app to preserve Emacs Plus.app + the brew formula
 ```
 
 ## Cross-Mac sync (optional, your choice)

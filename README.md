@@ -113,7 +113,7 @@ curl -fsSL \
 bash ~/emacs-mac-setup-src/uninstall.sh
 ```
 
-Removes the symlink, cloned distro source, Emacs app bundles/registrations,
+Removes the symlink, cloned distro source, Emacs Plus app bundles/registrations,
 and the `emacs-plus` formula. Leaves `~/emacs/` untouched. Add
 `--purge-data` to also delete `~/emacs/`, or `--keep-emacs-app` to leave
-Emacs.app and the brew formula installed.
+Emacs Plus.app and the brew formula installed.
