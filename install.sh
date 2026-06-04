@@ -14,6 +14,7 @@
 # overwrites ~/emacs/ or ~/.emacs.d/secrets.el once they exist.
 
 set -e
+trap 'echo "" >&2; echo "==> install.sh FAILED at line $LINENO: $BASH_COMMAND" >&2; echo "    Re-run with: bash -x ~/emacs-mac-setup-src/install.sh 2>&1 | tee /tmp/install.log" >&2' ERR
 
 REPO_URL="${EMACS_MAC_REPO_URL:-https://github.com/deno1011/emacs-mac-setup.git}"
 BRANCH="${EMACS_MAC_BRANCH:-main}"
@@ -94,12 +95,20 @@ fi
 # runs again. Re-running install.sh is fast (brew install is a no-op
 # if the formula is already current) so the workflow is: `brew
 # upgrade` → `bash ~/emacs-mac-setup-src/install.sh` to re-copy.
-EMACS_APP_SRC="$(brew --prefix "$EMACS_FORMULA")/Emacs.app"
-if [ ! -d "$EMACS_APP_SRC" ]; then
-  echo "ERROR: $EMACS_APP_SRC not found after `brew install $EMACS_FORMULA`."
-  echo "       Run `brew reinstall $EMACS_FORMULA $EMACS_BREW_ARGS` and re-run install.sh."
+_EMACS_FORMULA_PREFIX="$(brew --prefix "$EMACS_FORMULA" 2>/dev/null)"
+EMACS_APP_SRC="$_EMACS_FORMULA_PREFIX/Emacs.app"
+echo "==> brew --prefix $EMACS_FORMULA = ${_EMACS_FORMULA_PREFIX:-<empty>}"
+if [ -z "$_EMACS_FORMULA_PREFIX" ] || [ ! -d "$EMACS_APP_SRC" ]; then
+  {
+    echo ""
+    echo "ERROR: Emacs.app not found at: $EMACS_APP_SRC"
+    echo "       brew --prefix $EMACS_FORMULA returned: ${_EMACS_FORMULA_PREFIX:-<empty>}"
+    echo "       Try: brew reinstall $EMACS_FORMULA $EMACS_BREW_ARGS"
+    echo "       Then re-run install.sh."
+  } >&2
   exit 1
 fi
+unset _EMACS_FORMULA_PREFIX
 
 EMACS_APP_DST="/Applications/$EMACS_APP_NAME.app"
 # Clean up: remove a previous symlink (any version of this script),
@@ -123,13 +132,23 @@ fi
 
 # Copy the bundle. `ditto` follows symlinks inside the source bundle
 # correctly and writes a real .app on disk that Launchpad indexes.
-if ! ditto "$EMACS_APP_SRC" "$EMACS_APP_DST" 2>/dev/null; then
+echo "==> Copying $EMACS_APP_SRC -> $EMACS_APP_DST"
+if ! ditto "$EMACS_APP_SRC" "$EMACS_APP_DST"; then
   # /Applications/ write may fail under SIP / managed-machine policies.
   # Fall back to ~/Applications/.
+  echo "==> /Applications/ write failed; falling back to ~/Applications/"
   EMACS_APP_DST="$HOME/Applications/$EMACS_APP_NAME.app"
   mkdir -p "$HOME/Applications"
   [ -e "$EMACS_APP_DST" ] && rm -rf "$EMACS_APP_DST"
-  ditto "$EMACS_APP_SRC" "$EMACS_APP_DST"
+  if ! ditto "$EMACS_APP_SRC" "$EMACS_APP_DST"; then
+    {
+      echo ""
+      echo "ERROR: ditto failed to copy Emacs.app to both /Applications/ and ~/Applications/."
+      echo "       Source: $EMACS_APP_SRC"
+      echo "       Check that the source bundle exists and you have write permission."
+    } >&2
+    exit 1
+  fi
 fi
 echo "==> Copied .app to $EMACS_APP_DST ($(du -sh "$EMACS_APP_DST" 2>/dev/null | cut -f1))"
 
