@@ -3,6 +3,10 @@
 
 Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+#+begin_src emacs-lisp :tangle yes
+;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
+#+end_src
+
 * Garbage collection (linked to [[file:~/.emacs.d/early-init.el][~/.emacs.d/early-init.el]])
 
 The GC threshold is bumped early so package loading and use-package

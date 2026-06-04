@@ -5,7 +5,7 @@ Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.e
 
 * Org Mode
 #+begin_src emacs-lisp
-(setq org-modules '(org-id org-info org-habit org-inlinetask org-protocol))
+(setq org-modules '(org-id org-habit org-inlinetask org-protocol))
 
 (use-package org
   :ensure nil
