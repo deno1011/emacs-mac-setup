@@ -188,4 +188,4 @@ echo ""
 echo "  Update later:   bash $SRC_DIR/install.sh"
 echo "  Uninstall:      bash $SRC_DIR/uninstall.sh"
 echo "======================================================================"
-open -a Emacs
+open "$EMACS_APP_DST"

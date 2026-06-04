@@ -643,6 +643,17 @@ inside multiline string literals with the structure of this file.
                "wiki/emacs/sources" "wiki/emacs/comparisons" "wiki/emacs/overviews"
                "data/org/archive"))
     (make-directory (expand-file-name d root) t)))
+
+(defun my/bootstrap-ensure-seed-config-files ()
+  "Re-seed missing config files after repo sync/adoption.
+`init.el' seeds before `bootstrap.org' runs, but repo adoption can replace
+`my/data-dir' with the private GitHub clone.  If that clone is older or partial,
+copy any missing split config files from the distro before `config.org' tries to
+load the remaining scripts."
+  (when (and (boundp 'my/seed-files)
+             (fboundp 'my/-seed-fetch))
+    (dolist (file my/seed-files)
+      (my/-seed-fetch file))))
 #+end_src
 
 * Step 6 — Personal repo sync
@@ -721,10 +732,13 @@ Used by both the empty-dir branch and the override-existing branch."
 
 (defun my/-repo-copy-local-only-files (local-dir repo-dir)
   "Copy files that exist only in LOCAL-DIR into REPO-DIR.
-For files present on both sides with different content, keep the repo
-version and record the relative path as a conflict.  Return a plist
-with :imported and :conflicts lists."
+For data files present on both sides with different content, keep the repo
+version and record the relative path as a conflict.  For files under config/,
+keep the freshly seeded local version because those scripts are required to
+finish the current bootstrap load.  Return a plist with :imported,
+:config-updated and :conflicts lists."
   (let ((imported nil)
+        (config-updated nil)
         (conflicts nil))
     (dolist (src (directory-files-recursively local-dir ".*" t))
       (when (file-regular-p src)
@@ -738,12 +752,17 @@ with :imported and :conflicts lists."
               (make-directory (file-name-directory dst) t)
               (copy-file src dst t t t t)
               (push rel imported))
+             ((and (string-prefix-p "config/" rel)
+                   (not (my/-file-same-content-p src dst)))
+              (copy-file src dst t t t t)
+              (push rel config-updated))
              ((not (my/-file-same-content-p src dst))
               (push rel conflicts)))))))
     (list :imported (nreverse imported)
+          :config-updated (nreverse config-updated)
           :conflicts (nreverse conflicts))))
 
-(defun my/-repo-write-adoption-report (backup imported conflicts user repo)
+(defun my/-repo-write-adoption-report (backup imported config-updated conflicts user repo)
   "Write an adoption report into BACKUP for IMPORTED and CONFLICTS."
   (let ((report (expand-file-name "BOOTSTRAP-ADOPTION-REPORT.org" backup)))
     (with-temp-file report
@@ -751,11 +770,16 @@ with :imported and :conflicts lists."
       (insert (format "* Remote\n%s/%s\n\n" user repo))
       (insert "* Policy\n")
       (insert "- Remote files win when the same relative path differs.\n")
+      (insert "- Exception: config/ scripts keep the freshly seeded distro version so bootstrap can finish.\n")
       (insert "- Local-only files are copied into the GitHub clone and pushed.\n")
       (insert "- Differing local files remain in this backup for manual review.\n\n")
       (insert (format "* Imported local-only files (%d)\n" (length imported)))
       (if imported
           (dolist (rel imported) (insert "- " rel "\n"))
+        (insert "- none\n"))
+      (insert (format "\n* Config files updated from distro seed (%d)\n" (length config-updated)))
+      (if config-updated
+          (dolist (rel config-updated) (insert "- " rel "\n"))
         (insert "- none\n"))
       (insert (format "\n* Conflicts kept from remote (%d)\n" (length conflicts)))
       (if conflicts
@@ -786,9 +810,10 @@ be recovered manually."
   (let* ((user (plist-get identity :username))
          (repo (plist-get identity :repo))
          (dir my/data-dir)
-         (dir-parent (file-name-directory (directory-file-name dir)))
+         (dir-target (directory-file-name dir))
+         (dir-parent (file-name-directory dir-target))
          (stamp (format-time-string "%Y%m%d-%H%M%S"))
-         (backup (format "%s.bak-%s" (directory-file-name dir) stamp))
+         (backup (format "%s.bak-%s" dir-target stamp))
          (tmp (make-temp-file (expand-file-name ".emacs-data-adopt-" dir-parent) t)))
     (if (not (my/-repo-exists-on-gh-p user repo))
         (progn
@@ -806,22 +831,23 @@ Leaving local files untouched. Create the repo first or move %s aside manually."
         (error "Could not clone %s/%s for adoption" user repo))
       (let* ((result (my/-repo-copy-local-only-files dir tmp))
              (imported (plist-get result :imported))
+             (config-updated (plist-get result :config-updated))
              (conflicts (plist-get result :conflicts)))
         (message "Bootstrap: moving existing %s → %s before adopting clone" dir backup)
         (condition-case err
             (progn
-              (rename-file dir backup)
-              (my/-repo-write-adoption-report backup imported conflicts user repo)
-              (rename-file tmp dir)
-              (when imported
+              (rename-file dir-target backup)
+              (my/-repo-write-adoption-report backup imported config-updated conflicts user repo)
+              (rename-file tmp dir-target)
+              (when (or imported config-updated)
                 (my/-repo-commit-and-push-if-needed
-                 dir "sync: import local-only files from bootstrap adoption"))
+                 dir "sync: import bootstrap adoption files"))
               (message
-               "Bootstrap: adopted %s/%s into %s. Imported %d local-only file(s); kept %d remote version(s) where paths differed. Previous local tree: %s"
-               user repo dir (length imported) (length conflicts) backup))
+               "Bootstrap: adopted %s/%s into %s. Imported %d local-only file(s); updated %d config file(s); kept %d remote data conflict(s). Previous local tree: %s"
+               user repo dir (length imported) (length config-updated) (length conflicts) backup))
           (error
            (when (and (not (file-exists-p dir)) (file-exists-p backup))
-             (rename-file backup dir))
+             (rename-file backup dir-target))
            (when (file-exists-p tmp)
              (delete-directory tmp t))
            (display-warning
@@ -869,7 +895,7 @@ IDENTITY is the plist returned by my/github-load-identity."
         (cond
          ((y-or-n-p
            (format "%s exists with content (remote: %s) and is NOT %s/%s.
-Adopt it into the GitHub repo? Remote wins for conflicting paths; local-only files are imported; full local backup is kept. "
+Adopt it into the GitHub repo? Remote wins data conflicts; seeded config/ scripts win so startup can finish; local-only files are imported; full local backup is kept. "
                    dir current-remote user repo))
           (my/-repo-adopt-existing-dir identity current-remote))
          (t
@@ -1211,7 +1237,8 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
         ;; 6. Repo sync
         (cond
          ((and (plist-get id :username) (plist-get id :repo))
-          (my/repo-sync id))
+          (my/repo-sync id)
+          (my/bootstrap-ensure-seed-config-files))
          (t
           (message "Bootstrap: repo sync skipped (missing username or repo name)."))))
       ;; 7. git-crypt unlock (no-op if repo doesn't use it / already unlocked).
