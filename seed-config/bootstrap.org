@@ -20,8 +20,6 @@ Flow (idempotent on every Emacs start; silent after first launch):
 Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before this file):
 - =my/bw-credentials-item=   :: BW item name holding ALL Emacs secrets (default "emacs-credentials")
 - =my/keychain-service=      :: macOS Keychain service for cached BW unlock + API key fallback (default "emacs-credentials")
-- =my/bw-legacy-github-item= :: Pre-consolidation BW item ("github-cli-token") — migrated then kept as backup
-- =my/bw-legacy-api-item=    :: Pre-consolidation BW item ("emacs-api-keys") — migrated then kept as backup
 
 * Tunables (override in secrets.el)
 
@@ -30,10 +28,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
   "Single Bitwarden item that bundles ALL Emacs-distro secrets:
 GitHub PAT + identity (login.username / login.password / Email /
 Fullname / Repo), git-crypt key (GitCryptKey), and provider API keys
-(GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY).
-Replaces the older split between `github-cli-token' and
-`emacs-api-keys'; migration copies their fields into this item on
-first launch.")
+(GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY).")
 
 (defvar my/api-key-fields
   '("GEMINI_API_KEY" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GROQ_API_KEY")
@@ -45,23 +40,6 @@ The same names are used as custom field names in `my/bw-credentials-item'.")
 provide. The loader treats this as 'opted out' — no setenv, no
 prompt. Run `M-x my/api-key-reset' to clear and re-prompt a key.")
 
-(defvar my/bw-legacy-github-item "github-cli-token"
-  "Pre-consolidation BW item for the GitHub bundle. Migration copies its
-fields into `my/bw-credentials-item' on first launch and leaves the
-legacy item alone so you can verify and delete it manually.")
-
-(defvar my/bw-legacy-api-item "emacs-api-keys"
-  "Pre-consolidation BW item for API keys. Migration copies its custom
-fields into `my/bw-credentials-item' on first launch.")
-
-(defvar my/bw-legacy-api-items
-  '(("GEMINI_API_KEY"    . "gemini-api-key")
-    ("ANTHROPIC_API_KEY" . "anthropic-api-key")
-    ("OPENAI_API_KEY"    . "openai-api-key")
-    ("GROQ_API_KEY"      . "groq-api-key"))
-  "Even older legacy: per-provider BW items used before `my/bw-legacy-api-item'.
-When present, their values are migrated into `my/bw-credentials-item' fields.")
-
 (defvar my/keychain-service "emacs-credentials"
   "Single macOS Keychain service for everything Emacs persists locally:
 BW unlock credentials AND API key fallback values. Accounts under this
@@ -72,16 +50,6 @@ service: `bw-master', `bw-email', and each `*_API_KEY' env-var name.")
 
 (defvar my/keychain-account-bw-email "bw-email"
   "Keychain account under `my/keychain-service' for the cached BW login email.")
-
-(defvar my/legacy-bw-keychain-service-master "emacs-bw-master"
-  "Pre-consolidation Keychain service for the BW master. Migrated then left alone.")
-
-(defvar my/legacy-bw-keychain-service-email "emacs-bw-email"
-  "Pre-consolidation Keychain service for the BW email. Migrated then left alone.")
-
-(defvar my/legacy-api-keychain-service-prefix "emacs-api-"
-  "Pre-consolidation Keychain service prefix for fallback-stored API keys.
-Migrated then left alone.")
 
 (defvar my/bw-session nil
   "Transient Bitwarden session token. nil when locked. Cleared by
@@ -124,35 +92,8 @@ nil if missing or `security' fails."
            (shell-quote-argument (or account (user-login-name)))
            (shell-quote-argument service))
    nil nil))
-#+end_src
 
-* Step 1.5 — Keychain migration (legacy → unified service)
-
-#+begin_src emacs-lisp :tangle yes
-(defun my/keychain-migrate-from-legacy ()
-  "Copy legacy Keychain entries into `my/keychain-service' (idempotent).
-Reads:
-  - service `emacs-bw-master'  → service `emacs-credentials' / account `bw-master'
-  - service `emacs-bw-email'   → service `emacs-credentials' / account `bw-email'
-  - service `emacs-api-<KEY>'  → service `emacs-credentials' / account `<KEY>'
-Doesn't overwrite values already present in the unified service.
-Doesn't delete legacy entries — they remain as backup."
-  (let ((moved 0))
-    (cl-flet ((copy-once (legacy-svc new-acct)
-                (when (and (not (my/keychain-get my/keychain-service new-acct))
-                           (my/keychain-get legacy-svc))
-                  (my/keychain-set my/keychain-service
-                                   (my/keychain-get legacy-svc)
-                                   new-acct)
-                  (cl-incf moved))))
-      (copy-once my/legacy-bw-keychain-service-master my/keychain-account-bw-master)
-      (copy-once my/legacy-bw-keychain-service-email  my/keychain-account-bw-email)
-      (dolist (env-var my/api-key-fields)
-        (copy-once (concat my/legacy-api-keychain-service-prefix env-var)
-                   env-var)))
-    (when (> moved 0)
-      (message "Bootstrap: migrated %d Keychain entries into service '%s' (legacy entries kept as backup)."
-               moved my/keychain-service))))
+(defun my/-blank-p (s) (or (null s) (and (stringp s) (string-empty-p s))))
 #+end_src
 
 * Step 2 — Bitwarden unlock
@@ -224,9 +165,6 @@ Returns the session token or nil if the user declined / unlock failed."
       (my/bw-install))
     (cl-return-from my/bw-unlock nil))
 
-  ;; Migrate any legacy Keychain entries into the unified service before
-  ;; reading. Idempotent and leaves the legacy entries in place as backup.
-  (my/keychain-migrate-from-legacy)
   (let* ((cached-email   (and (not interactive-prompt)
                               (my/keychain-get my/keychain-service
                                                my/keychain-account-bw-email)))
@@ -458,75 +396,10 @@ PLIST: same keys as my/bw-create-item. Only the keys present are touched."
       (my/bw--call "edit" "item" id encoded "--session" my/bw-session))))
 #+end_src
 
-* Step 3.5 — Credentials migration (legacy BW items → unified item)
-
-#+begin_src emacs-lisp :tangle yes
-(defun my/-blank-p (s) (or (null s) (and (stringp s) (string-empty-p s))))
-
-(defun my/bw-migrate-from-legacy-items ()
-  "Consolidate legacy BW items into `my/bw-credentials-item' (idempotent).
-Copies non-blank fields from `my/bw-legacy-github-item' (GitHub bundle)
-and `my/bw-legacy-api-item' (API keys) into the unified item. Never
-overwrites a non-blank field already in the unified item. Leaves
-legacy items in place as backup. No-op when BW is locked."
-  (when my/bw-session
-    (let* ((dest (my/bw-get-item my/bw-credentials-item))
-           (gh   (my/bw-get-item my/bw-legacy-github-item))
-           (api  (my/bw-get-item my/bw-legacy-api-item)))
-      (when (or gh api)
-        (let* ((dest-user (and dest (my/bw-item-username dest)))
-               (dest-pw   (and dest (my/bw-item-password dest)))
-               (gh-user   (and gh   (my/bw-item-username gh)))
-               (gh-pw     (and gh   (my/bw-item-password gh)))
-               (new-user  (if (my/-blank-p dest-user) (or gh-user "") dest-user))
-               (new-pw    (if (my/-blank-p dest-pw)   (or gh-pw "")   dest-pw))
-               (gh-flds   '("Email" "Fullname" "Repo" "GitCryptKey"))
-               (to-add    nil)
-               (added     nil))
-          (dolist (f gh-flds)
-            (let ((cur (and dest (my/bw-item-field dest f)))
-                  (src (and gh   (my/bw-item-field gh f))))
-              (when (and (my/-blank-p cur) (not (my/-blank-p src)))
-                (push (cons f src) to-add)
-                (push f added))))
-          (dolist (env-var my/api-key-fields)
-            (let ((cur (and dest (my/bw-item-field dest env-var)))
-                  (src (and api  (my/bw-item-field api env-var))))
-              (when (and (my/-blank-p cur) (not (my/-blank-p src)))
-                (push (cons env-var src) to-add)
-                (push env-var added))))
-          (let ((promoted-user (and (my/-blank-p dest-user) (not (my/-blank-p gh-user))))
-                (promoted-pw   (and (my/-blank-p dest-pw)   (not (my/-blank-p gh-pw)))))
-            (cond
-             ((null dest)
-              (my/bw-create-item my/bw-credentials-item
-                                 :username new-user
-                                 :password new-pw
-                                 :fields   (nreverse to-add))
-              (message "Bootstrap: created BW item '%s' (migrated %d field(s)%s%s from %s)."
-                       my/bw-credentials-item
-                       (length to-add)
-                       (if promoted-user " + username" "")
-                       (if promoted-pw   " + token" "")
-                       (cond ((and gh api) (format "'%s' + '%s'" my/bw-legacy-github-item my/bw-legacy-api-item))
-                             (gh           (format "'%s'" my/bw-legacy-github-item))
-                             (api          (format "'%s'" my/bw-legacy-api-item))
-                             (t            "<none>"))))
-             ((or to-add promoted-user promoted-pw)
-              (my/bw-update-item my/bw-credentials-item
-                                 :username new-user
-                                 :password new-pw
-                                 :fields   (nreverse to-add))
-              (message "Bootstrap: enriched BW item '%s' from legacy items (added: %s)."
-                       my/bw-credentials-item
-                       (mapconcat #'identity (nreverse added) ", "))))))))))
-#+end_src
-
 * Step 4 — GitHub identity bundle (token + email + fullname + repo)
 
 The =emacs-credentials= BW item carries everything we need to clone
-the user's private data repo (migration from the older =github-cli-token=
-item runs once on first launch — see Step 3.5):
+the user's private data repo:
 - =login.username=  → GitHub handle (e.g. "alice")
 - =login.password=  → PAT (=ghp_...= classic or =github_pat_...= fine-grained)
 - custom =Email=    → git commit email
@@ -1469,9 +1342,8 @@ either backend independently. Run as `M-x my/api-key-reset'."
   "Populate provider API key env vars.
 Resolution order, per `my/api-key-fields' entry:
   1. `my/bw-credentials-item' custom field (when BW is unlocked).
-  2. Legacy per-provider BW items (migrated into the consolidated item).
-  3. `my/keychain-service' / account = env-var (when BW is unavailable).
-  4. Prompt + persist (BW if unlocked, else Keychain).
+  2. `my/keychain-service' / account = env-var (when BW is unavailable).
+  3. Prompt + persist (BW if unlocked, else Keychain).
 
 A field whose stored value equals `my/api-skipped-sentinel' is treated
 as 'user opted out': no setenv, no prompt. Use `M-x my/api-key-reset'
@@ -1490,20 +1362,7 @@ to clear that sentinel for a single key."
               (setq opt-out t source 'bw))
              ((not (my/-blank-p v))
               (setq value v source 'bw)))))
-        ;; 2. Legacy per-provider BW items -> consolidated item migration.
-        (when (and my/bw-session (my/-blank-p value) (not opt-out))
-          (let* ((legacy-name (cdr (assoc env-var my/bw-legacy-api-items)))
-                 (legacy-item (and legacy-name (my/bw-get-item legacy-name)))
-                 (v (and legacy-item
-                         (or (my/bw-item-password legacy-item)
-                             (my/bw-item-field legacy-item env-var)
-                             (my/bw-item-field legacy-item "Key")
-                             (my/bw-item-field legacy-item "API_KEY")))))
-            (unless (my/-blank-p v)
-              (my/bw-api-key-set env-var v)
-              (setq api-item (my/bw-get-item my/bw-credentials-item))
-              (setq value v source 'bw-legacy))))
-        ;; 3. Keychain fallback only when Bitwarden is unavailable.
+        ;; 2. Keychain fallback only when Bitwarden is unavailable.
         (when (and (not my/bw-session) (my/-blank-p value) (not opt-out))
           (let ((v (my/keychain-get my/keychain-service env-var)))
             (cond
@@ -1511,7 +1370,7 @@ to clear that sentinel for a single key."
               (setq opt-out t source 'keychain))
              ((not (my/-blank-p v))
               (setq value v source 'keychain)))))
-        ;; 4. Prompt + persist (only when nothing found and not opted out).
+        ;; 3. Prompt + persist (only when nothing found and not opted out).
         (when (and (my/-blank-p value) (not opt-out))
           (if noninteractive
               (push env-var skipped)
@@ -1568,10 +1427,6 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
   (if my/bw-session
       (message "Bootstrap: Bitwarden vault unlocked.")
     (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets."))
-
-  ;; 2b. Consolidate legacy BW items (github-cli-token, emacs-api-keys) into
-  ;; my/bw-credentials-item. No-op when BW is locked or nothing to migrate.
-  (my/bw-migrate-from-legacy-items)
 
   ;; 3-4. GitHub identity
   (let ((id (my/github-load-identity)))
