@@ -20,7 +20,7 @@ Flow (idempotent on every Emacs start; silent after first launch):
 Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before this file):
 - =my/bw-github-item=        :: BW item name holding GitHub token + identity (default "github-cli-token")
 - =my/bw-field-name=         :: Custom-field name convention (default "Key" \mdash legacy compat; new fields use Email/Fullname/Repo)
-- =my/bw-api-items=          :: Alist mapping env-var → BW item name for API keys
+- =my/bw-api-item=           :: BW item name holding API keys as custom fields
 
 * Tunables (override in secrets.el)
 
@@ -28,13 +28,13 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 (defvar my/bw-github-item "github-cli-token"
   "Bitwarden item that bundles the GitHub PAT + identity custom fields.")
 
-(defvar my/bw-api-items
-  '(("GEMINI_API_KEY"    . "gemini-api-key")
-    ("ANTHROPIC_API_KEY" . "anthropic-api-key")
-    ("OPENAI_API_KEY"    . "openai-api-key")
-    ("GROQ_API_KEY"      . "groq-api-key"))
-  "Alist mapping env-var name to Bitwarden item name. Each BW item's
-login.password field holds the key value.")
+(defvar my/bw-api-item "emacs-api-keys"
+  "Bitwarden item that stores provider API keys as custom fields.")
+
+(defvar my/api-key-fields
+  '("GEMINI_API_KEY" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GROQ_API_KEY")
+  "API key environment variable names.
+The same names are used as custom field names in `my/bw-api-item'.")
 
 ;; (Previously: a separate BW item for the git-crypt key. Now folded into
 ;; my/bw-github-item as the "GitCryptKey" custom field so a single BW
@@ -1137,29 +1137,40 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
           (my/git-crypt-unlock my/data-dir key))))))))
 #+end_src
 
-* Step 8 — API keys: load from BW (preferred) or Keychain (fallback)
+* Step 8 — API keys: load from one BW item (preferred) or Keychain (fallback)
 
 #+begin_src emacs-lisp :tangle yes
+(defun my/bw-api-key-set (env-var value)
+  "Persist ENV-VAR API key VALUE in the consolidated Bitwarden API item."
+  (unless my/bw-session
+    (error "BW not unlocked; cannot save %s" env-var))
+  (let ((fields `((,env-var . ,value))))
+    (if (my/bw-get-item my/bw-api-item)
+        (my/bw-update-item my/bw-api-item :fields fields)
+      (my/bw-create-item my/bw-api-item
+                         :username "emacs"
+                         :password ""
+                         :fields fields))))
+
 (defun my/api-keys-load ()
-  "For each (env-var . bw-item) in my/bw-api-items, populate the env var.
-Order of resolution: BW (preferred) → Keychain (fallback) → prompt + persist.
-A BW item with empty login.password is treated as missing."
-  (let (loaded prompted skipped)
-    (dolist (pair my/bw-api-items)
-      (let* ((env-var   (car pair))
-             (bw-item   (cdr pair))
-             (kc-svc    (concat my/api-keychain-service-prefix env-var))
-             (value     nil)
-             (source    nil))
-        ;; 1. BW item
-        (when (and my/bw-session (my/-blank-p value))
-          (let ((item (my/bw-get-item bw-item)))
-            (when item
-              (let ((v (my/bw-item-password item)))
-                (unless (my/-blank-p v)
-                  (setq value v source 'bw))))))
-        ;; 2. Keychain fallback
-        (when (my/-blank-p value)
+  "Populate provider API key env vars.
+Order of resolution: one BW item custom field (preferred) → prompt +
+persist there when BW is unlocked → Keychain fallback only when BW is
+unavailable.  The BW item is `my/bw-api-item'; custom field names are the env
+var names in `my/api-key-fields'."
+  (let ((api-item (and my/bw-session (my/bw-get-item my/bw-api-item)))
+        loaded prompted skipped)
+    (dolist (env-var my/api-key-fields)
+      (let* ((kc-svc (concat my/api-keychain-service-prefix env-var))
+             (value nil)
+             (source nil))
+        ;; 1. Consolidated BW item custom field
+        (when (and api-item (my/-blank-p value))
+          (let ((v (my/bw-item-field api-item env-var)))
+            (unless (my/-blank-p v)
+              (setq value v source 'bw))))
+        ;; 2. Keychain fallback only when Bitwarden is unavailable.
+        (when (and (not my/bw-session) (my/-blank-p value))
           (let ((v (my/keychain-get kc-svc)))
             (unless (my/-blank-p v)
               (setq value v source 'keychain))))
@@ -1175,13 +1186,11 @@ A BW item with empty login.password is treated as missing."
                 (setq value entered source 'prompt)
                 (push env-var prompted)
                 ;; Persist: BW if unlocked, else Keychain
-                (cond
-                 (my/bw-session
-                  (let ((existing (my/bw-get-item bw-item)))
-                    (if existing
-                        (my/bw-update-item bw-item :password entered)
-                      (my/bw-create-item bw-item :password entered))))
-                 (t (my/keychain-set kc-svc entered))))))))
+                (if my/bw-session
+                    (progn
+                      (my/bw-api-key-set env-var entered)
+                      (setq api-item (my/bw-get-item my/bw-api-item)))
+                  (my/keychain-set kc-svc entered)))))))
         (when (and value (not (my/-blank-p value)))
           (setenv env-var value)
           (push (format "%s(%s)" env-var (symbol-name source)) loaded))))
@@ -1190,7 +1199,9 @@ A BW item with empty login.password is treated as missing."
       (message "Bootstrap: API keys loaded: %s" (mapconcat #'identity (nreverse loaded) ", ")))
     (when prompted
       (message "Bootstrap: API keys created via prompt + stored to %s: %s"
-               (if my/bw-session "Bitwarden" "macOS Keychain")
+               (if my/bw-session
+                   (format "Bitwarden item '%s'" my/bw-api-item)
+                 "macOS Keychain")
                (mapconcat #'identity (nreverse prompted) ", ")))
     (when skipped
       (message "Bootstrap: skipped (empty input): %s"
