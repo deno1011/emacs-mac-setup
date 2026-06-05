@@ -1,0 +1,594 @@
+#+TITLE: Task Framework — Async Subprocesses + Orphan Cleanup
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+Numeric prefix =05-= loads ahead of =10-bootstrap.org=. Bootstrap and
+any other module submits work here.
+
+* Overview
+
+A small generic task primitive with three properties:
+
+- *Deferred execution*: =my/task-shell= launches an OS subprocess via
+  =make-process=; =my/task-elisp= defers a thunk to a main-thread idle
+  timer.
+- *Explicit dependency chains*: =:depends-on= waits until all named
+  tasks succeed; cascade-fails on any dep failure.
+- *Visible state*: modeline indicator, =M-x my/task-status= tabulated
+  list, per-task =*task: NAME*= output buffer.
+
+** What this is
+
+A reusable substrate for any background work. Bootstrap is one
+consumer; future =M-x my/repo-sync-now=, =M-x my/api-keys-sync-from-bw=,
+brew installs, org-roam DB rebuilds use the same primitives.
+
+** What this is NOT
+
+- Not a thread system. Elisp tasks run on the main thread, serially.
+  True parallelism only via shell tasks (=make-process= subprocesses).
+- Not job persistence. Killing Emacs cancels running shell tasks;
+  orphan detection on next launch cleans up subprocesses that escaped.
+- Not a Promise/A+ implementation. =:on-success= is a one-shot
+  callback. If we need chained promises later, add =aio.el=.
+
+** Concurrency model
+
+Multiple Emacs sessions are supported. Each session generates a unique
+GUID at startup, registers itself in =~/.emacs.d/sessions/=, and tags
+every =my/task-shell= subprocess with =EMACS_TASK_GUID= via =env=
+wrap. On next startup, the cleanup pass kills only subprocesses whose
+GUID does NOT match any currently-alive Emacs session — so two
+concurrent Emacses do not nuke each other's subprocesses.
+
+Liveness check is robust against PID reuse: each session marker
+records both the Emacs PID and its process start time (=ps -o
+lstart==), and the check verifies both match.
+
+* TODO Future: =my/task-elisp-async= (forked emacs --batch)
+
+For pure-Elisp work that takes >1 second and doesn't touch live Emacs
+state (org-roam DB sync, large file scans, agent trajectory queries),
+add a third task kind that forks a clean Emacs subprocess via:
+
+  =emacs -Q --batch --eval "(progn (setq load-path ...) (mapc #'require ...) (print (funcall (read \"...\"))))"=
+
+The forked Emacs gets a clean state — does NOT inherit defvars,
+loaded packages, or buffers from the parent. Inputs pass via the
+closure (=print=-serialized); outputs come back via stdout
+(=read=-deserialized).
+
+Fork startup cost is ~200-500 ms — only worth it for work that itself
+takes longer. Bootstrap operations (each <500 ms) do NOT qualify;
+they belong in =shell= tasks.
+
+Could either:
+- A. depend on =async.el= (MELPA, ~500 lines, battle-tested), or
+- B. roll our own ~100 lines using =make-process= + =print=/=read=.
+
+Defer this until a real consumer needs it.
+
+* Tunables
+
+#+begin_src emacs-lisp
+(require 'cl-lib)
+(require 'tabulated-list)
+
+(defvar my/session-guid
+  (format "%s-pid%d-%s"
+          (format-time-string "%Y%m%d-%H%M%S")
+          (emacs-pid)
+          (substring (md5 (format "%s-%s" (random t) (float-time))) 0 8))
+  "Unique identifier for THIS Emacs session. Embedded as
+EMACS_TASK_GUID=... in every `my/task-shell' subprocess argv so
+orphan-detection on the next launch can verify task ownership.")
+
+(defvar my/sessions-dir
+  (expand-file-name "sessions" user-emacs-directory)
+  "Directory of live Emacs session markers. One file per session,
+named by `my/session-guid'. Contents: PID and `ps -o lstart=' start
+time for tamper-evident liveness checks.")
+
+(defvar my/tasks (make-hash-table :test 'eq)
+  "Registry of all tasks, keyed by name symbol.")
+
+(defvar my/task-completed-hook nil
+  "Hook run with one arg (the task struct) when any task transitions
+to a terminal state (success, failure, cancelled).")
+
+(defvar my/task-all-done-hook nil
+  "Hook run with no args once no tasks remain pending or running.")
+
+(defvar my/task-modeline-indicator ""
+  "String shown in modeline reflecting task activity.")
+
+(cl-defstruct my/task
+  name kind command env cwd detach
+  depends-on
+  on-success on-failure on-progress
+  state result error
+  process buffer
+  started-at finished-at)
+#+end_src
+
+* Session marker + orphan cleanup
+
+#+begin_src emacs-lisp
+(defun my/-process-start-time (pid)
+  "Return `ps -p PID -o lstart=' value, or nil when PID is dead."
+  (when (and pid (> pid 0))
+    (with-temp-buffer
+      (when (zerop (call-process "ps" nil t nil
+                                 "-p" (number-to-string pid)
+                                 "-o" "lstart="))
+        (let ((s (string-trim (buffer-string))))
+          (unless (string-empty-p s) s))))))
+
+(defun my/-pid-alive-p (pid)
+  "Non-nil if PID is alive. Uses `kill -0' (no signal sent)."
+  (and (numberp pid) (> pid 0)
+       (zerop (call-process "kill" nil nil nil "-0"
+                            (number-to-string pid)))))
+
+(defun my/-session-register ()
+  "Write this session's marker so other Emacses see us as live.
+File format: line 1 = PID, line 2 = ps lstart= snapshot (used by
+`my/-session-marker-live-p' to detect PID reuse)."
+  (make-directory my/sessions-dir t)
+  (let* ((marker (expand-file-name my/session-guid my/sessions-dir))
+         (pid (emacs-pid))
+         (lstart (or (my/-process-start-time pid) "")))
+    (with-temp-file marker
+      (insert (format "%d\n%s\n" pid lstart)))))
+
+(defun my/-session-unregister ()
+  "Remove this session's marker on clean exit (kill-emacs-hook)."
+  (let ((marker (expand-file-name my/session-guid my/sessions-dir)))
+    (when (file-exists-p marker)
+      (ignore-errors (delete-file marker)))))
+
+(defun my/-session-marker-live-p (file)
+  "Return t when FILE corresponds to a still-running Emacs.
+Stored PID must be alive AND its current lstart must match the one
+recorded when the marker was written — that combination defeats PID
+reuse."
+  (when (file-readable-p file)
+    (let* ((lines (split-string
+                   (with-temp-buffer
+                     (insert-file-contents file)
+                     (buffer-string))
+                   "\n" t))
+           (pid (string-to-number (or (nth 0 lines) "0")))
+           (recorded-lstart (or (nth 1 lines) ""))
+           (current-lstart (my/-process-start-time pid)))
+      (and current-lstart
+           (string= recorded-lstart current-lstart)))))
+
+(defun my/-live-session-guids ()
+  "Return GUIDs of currently-alive Emacs sessions; prune stale markers."
+  (let (live)
+    (when (file-directory-p my/sessions-dir)
+      (dolist (f (directory-files my/sessions-dir t "\\`[^.]"))
+        (cond
+         ((my/-session-marker-live-p f)
+          (push (file-name-nondirectory f) live))
+         (t
+          (ignore-errors (delete-file f))))))
+    live))
+
+(defun my/tasks-cleanup-orphans ()
+  "Kill subprocesses tagged with EMACS_TASK_GUID whose GUID matches
+no currently-alive Emacs session. Run once at module load, before
+any task is submitted by this session. Reports counts to *Messages*."
+  (let* ((live (my/-live-session-guids))
+         (ps-out (with-output-to-string
+                   (with-current-buffer standard-output
+                     (call-process "ps" nil t nil
+                                   "-ax" "-o" "pid=,command="))))
+         orphans)
+    (dolist (line (split-string ps-out "\n" t))
+      (when (string-match
+             "^\\s-*\\([0-9]+\\)\\s-+env\\s-+EMACS_TASK_GUID=\\([^ \t]+\\)"
+             line)
+        (let ((pid (string-to-number (match-string 1 line)))
+              (guid (match-string 2 line)))
+          (unless (member guid live)
+            (push (cons pid guid) orphans)))))
+    ;; SIGTERM, then 0.3s grace, then SIGKILL.
+    (dolist (o orphans)
+      (ignore-errors (signal-process (car o) 'SIGTERM)))
+    (when orphans (sit-for 0.3))
+    (dolist (o orphans)
+      (when (my/-pid-alive-p (car o))
+        (ignore-errors (signal-process (car o) 'SIGKILL))))
+    (cond
+     ((zerop (length orphans))
+      (message "Tasks: no orphans to clean (live sessions: %d, including this one)."
+               (length live)))
+     (t
+      (let ((dead-guids (delete-dups (mapcar #'cdr orphans))))
+        (message
+         "Tasks: killed %d orphan subprocess(es) from %d dead session(s); %d session(s) still live."
+         (length orphans) (length dead-guids) (length live)))))))
+#+end_src
+
+* Public API: =my/task-shell= and =my/task-elisp=
+
+#+begin_src emacs-lisp
+(cl-defun my/task-shell (name command
+                              &key env cwd depends-on
+                              on-success on-failure on-progress
+                              detach)
+  "Submit a shell task NAME running COMMAND.
+
+COMMAND is either a list of strings (executed directly) or a zero-arg
+function returning such a list. The function form lets you build the
+command at task-start time from earlier tasks' results.
+
+ENV is an alist of (NAME . VALUE) appended to the subprocess
+environment.
+
+CWD overrides `default-directory' for the subprocess.
+
+DEPENDS-ON is a list of task name symbols this waits for; cascade-fails
+if any dep fails.
+
+ON-SUCCESS / ON-FAILURE are one-shot callbacks receiving the trimmed
+stdout (success) or an error string (failure).
+
+ON-PROGRESS receives each stdout chunk as it arrives.
+
+DETACH non-nil skips the EMACS_TASK_GUID wrap. Use only when the
+subprocess is meant to survive Emacs (e.g. `ollama serve').
+
+Returns the task struct immediately."
+  (let ((task (make-my/task
+               :name name :kind 'shell :command command
+               :env env :cwd cwd :detach detach
+               :depends-on depends-on
+               :on-success on-success :on-failure on-failure
+               :on-progress on-progress
+               :state 'pending)))
+    (puthash name task my/tasks)
+    (my/-task-try-start name)
+    task))
+
+(cl-defun my/task-elisp (name fn
+                              &key depends-on on-success on-failure)
+  "Submit Elisp task NAME running thunk FN on the main thread.
+
+Runs deferred via `run-with-idle-timer' once dependencies complete.
+FN's return value is the task's result.
+
+ON-SUCCESS receives the result; ON-FAILURE receives an error string.
+
+Returns the task struct immediately."
+  (let ((task (make-my/task
+               :name name :kind 'elisp :command fn
+               :depends-on depends-on
+               :on-success on-success :on-failure on-failure
+               :state 'pending)))
+    (puthash name task my/tasks)
+    (my/-task-try-start name)
+    task))
+
+(defun my/task-cancel (name)
+  "Cancel task NAME — SIGTERM its subprocess (shell) or mark
+cancelled (elisp). Cascade-fails its dependents."
+  (interactive
+   (list (intern
+          (completing-read
+           "Cancel task: "
+           (mapcar (lambda (task) (symbol-name (my/task-name task)))
+                   (my/task-list))))))
+  (let ((task (gethash name my/tasks)))
+    (when task
+      (pcase (my/task-state task)
+        ('running
+         (when (and (eq (my/task-kind task) 'shell) (my/task-process task))
+           (ignore-errors (signal-process (my/task-process task) 'SIGTERM)))
+         (setf (my/task-state task) 'cancelled)
+         (setf (my/task-finished-at task) (current-time))
+         (my/-task-fire-completion task))
+        ('pending
+         (setf (my/task-state task) 'cancelled)
+         (setf (my/task-finished-at task) (current-time))
+         (my/-task-fire-completion task))))))
+#+end_src
+
+* Queries
+
+#+begin_src emacs-lisp
+(defun my/task-get (name) (gethash name my/tasks))
+
+(defun my/task-result-of (name)
+  "Return result of task NAME, or nil."
+  (let ((task (gethash name my/tasks)))
+    (and task (my/task-result task))))
+
+(defun my/task-state-of (name)
+  "Return state of task NAME, or nil."
+  (let ((task (gethash name my/tasks)))
+    (and task (my/task-state task))))
+
+(defun my/task-list ()
+  "Return all tasks sorted by start time (or submission order for
+not-yet-started tasks)."
+  (sort (hash-table-values my/tasks)
+        (lambda (a b)
+          (time-less-p
+           (or (my/task-started-at a) '(0 0 0 0))
+           (or (my/task-started-at b) '(0 0 0 0))))))
+#+end_src
+
+* Internal: scheduler + sentinels
+
+#+begin_src emacs-lisp
+(defun my/-task-deps-ready-p (task)
+  "Non-nil when all of TASK's dependencies have completed successfully."
+  (cl-every
+   (lambda (dep-name)
+     (let ((dep (gethash dep-name my/tasks)))
+       (and dep (eq (my/task-state dep) 'success))))
+   (my/task-depends-on task)))
+
+(defun my/-task-deps-failed-p (task)
+  "Non-nil when any of TASK's dependencies has failed or cancelled."
+  (cl-some
+   (lambda (dep-name)
+     (let ((dep (gethash dep-name my/tasks)))
+       (and dep (memq (my/task-state dep) '(failure cancelled)))))
+   (my/task-depends-on task)))
+
+(defun my/-task-try-start (name)
+  "Start task NAME if pending and deps ready; cascade-fail if deps failed."
+  (let ((task (gethash name my/tasks)))
+    (when (and task (eq (my/task-state task) 'pending))
+      (cond
+       ((my/-task-deps-failed-p task)
+        (setf (my/task-state task) 'cancelled)
+        (setf (my/task-error task) "cascaded from failed dependency")
+        (setf (my/task-finished-at task) (current-time))
+        (my/-task-fire-completion task))
+       ((my/-task-deps-ready-p task)
+        (my/-task-start task))))))
+
+(defun my/-task-start (task)
+  "Actually start TASK; kind dispatch."
+  (setf (my/task-state task) 'running)
+  (setf (my/task-started-at task) (current-time))
+  (my/-task-update-modeline)
+  (pcase (my/task-kind task)
+    ('shell (my/-task-start-shell task))
+    ('elisp (my/-task-start-elisp task))))
+
+(defun my/-task-start-shell (task)
+  "Spawn a subprocess for shell TASK."
+  (let* ((raw-cmd (my/task-command task))
+         (cmd (if (functionp raw-cmd) (funcall raw-cmd) raw-cmd))
+         (wrapped (if (my/task-detach task)
+                      cmd
+                    (append (list "env"
+                                  (format "EMACS_TASK_GUID=%s" my/session-guid))
+                            cmd)))
+         (env-alist (my/task-env task))
+         (extra-env (and env-alist
+                         (mapcar (lambda (kv) (format "%s=%s" (car kv) (cdr kv)))
+                                 env-alist)))
+         (process-environment (append extra-env process-environment))
+         (default-directory (or (my/task-cwd task) default-directory))
+         (buf (get-buffer-create
+               (format "*task: %s*" (symbol-name (my/task-name task))))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)) (erase-buffer)))
+    (setf (my/task-buffer task) buf)
+    (condition-case err
+        (setf (my/task-process task)
+              (make-process
+               :name (format "task-%s" (symbol-name (my/task-name task)))
+               :command wrapped
+               :buffer buf
+               :noquery t
+               :filter (lambda (proc chunk)
+                         (when (buffer-live-p (process-buffer proc))
+                           (with-current-buffer (process-buffer proc)
+                             (goto-char (point-max))
+                             (let ((inhibit-read-only t))
+                               (insert chunk))))
+                         (when (my/task-on-progress task)
+                           (ignore-errors
+                             (funcall (my/task-on-progress task) chunk))))
+               :sentinel (lambda (proc _event)
+                           (when (memq (process-status proc) '(exit signal))
+                             (my/-task-shell-finished task)))))
+      (error
+       ;; Failed to spawn subprocess — treat as immediate failure.
+       (setf (my/task-state task) 'failure)
+       (setf (my/task-error task) (error-message-string err))
+       (setf (my/task-finished-at task) (current-time))
+       (my/-task-fire-completion task)))))
+
+(defun my/-task-shell-finished (task)
+  "Subprocess sentinel: collect output, set state, fire callbacks."
+  (let* ((proc (my/task-process task))
+         (status (process-exit-status proc))
+         (output (with-current-buffer (my/task-buffer task)
+                   (string-trim (buffer-string)))))
+    (setf (my/task-finished-at task) (current-time))
+    (cond
+     ((zerop status)
+      (setf (my/task-state task) 'success)
+      (setf (my/task-result task) output)
+      (when (my/task-on-success task)
+        (ignore-errors (funcall (my/task-on-success task) output))))
+     (t
+      (setf (my/task-state task) 'failure)
+      (setf (my/task-error task) (format "exit %d: %s" status output))
+      (when (my/task-on-failure task)
+        (ignore-errors (funcall (my/task-on-failure task) (my/task-error task))))))
+    (my/-task-fire-completion task)))
+
+(defun my/-task-start-elisp (task)
+  "Run elisp TASK's thunk on the main thread via idle timer."
+  (run-with-idle-timer
+   0 nil
+   (lambda ()
+     (let (result error-msg)
+       (condition-case err
+           (setq result (funcall (my/task-command task)))
+         (error (setq error-msg (error-message-string err))))
+       (setf (my/task-finished-at task) (current-time))
+       (cond
+        ((null error-msg)
+         (setf (my/task-state task) 'success)
+         (setf (my/task-result task) result)
+         (when (my/task-on-success task)
+           (ignore-errors (funcall (my/task-on-success task) result))))
+        (t
+         (setf (my/task-state task) 'failure)
+         (setf (my/task-error task) error-msg)
+         (when (my/task-on-failure task)
+           (ignore-errors (funcall (my/task-on-failure task) error-msg)))))
+       (my/-task-fire-completion task)))))
+
+(defun my/-task-fire-completion (task)
+  "Post-completion: update modeline, kick dependents, fire hooks."
+  (my/-task-update-modeline)
+  (run-hook-with-args 'my/task-completed-hook task)
+  ;; Try starting any task that depended on this one.
+  (maphash
+   (lambda (n _t)
+     (let ((other (gethash n my/tasks)))
+       (when (and other
+                  (memq (my/task-name task) (my/task-depends-on other)))
+         (my/-task-try-start n))))
+   my/tasks)
+  ;; All tasks settled?
+  (let ((any-active (cl-some
+                     (lambda (task)
+                       (memq (my/task-state task) '(pending running)))
+                     (hash-table-values my/tasks))))
+    (unless any-active
+      (run-hooks 'my/task-all-done-hook))))
+#+end_src
+
+* Modeline indicator
+
+#+begin_src emacs-lisp
+(defun my/-task-update-modeline ()
+  "Refresh `my/task-modeline-indicator' based on registry state."
+  (let* ((tasks (hash-table-values my/tasks))
+         (running (cl-count-if
+                   (lambda (task) (eq (my/task-state task) 'running)) tasks))
+         (failed (cl-count-if
+                  (lambda (task) (eq (my/task-state task) 'failure)) tasks)))
+    (setq my/task-modeline-indicator
+          (cond
+           ((and (zerop running) (zerop failed)) "")
+           ((> failed 0)
+            (propertize (format " ✗%d" failed) 'face 'warning))
+           (t (format " ⌛%d" running))))
+    (force-mode-line-update t)))
+
+;; Self-register in global-mode-string so any mode-line format picks it up.
+(unless (member '(:eval my/task-modeline-indicator) global-mode-string)
+  (setq global-mode-string
+        (append (or global-mode-string '(""))
+                '((:eval my/task-modeline-indicator)))))
+#+end_src
+
+* Tasks status buffer (=M-x my/task-status=)
+
+#+begin_src emacs-lisp
+(defun my/-task-format-duration (task)
+  "Format TASK's elapsed time for the status buffer."
+  (let ((s (my/task-started-at task))
+        (f (my/task-finished-at task)))
+    (cond
+     ((not s) "—")
+     ((not f) (format "%.1fs…" (float-time (time-subtract (current-time) s))))
+     (t (format "%.0fms" (* 1000 (float-time (time-subtract f s))))))))
+
+(defun my/-task-format-preview (task)
+  "Format TASK's result or error for the status buffer, one line."
+  (let ((r (or (my/task-result task) (my/task-error task) "")))
+    (if (stringp r)
+        (let ((flat (replace-regexp-in-string "[\n\r]+" " ⏎ " r)))
+          (if (> (length flat) 60) (concat (substring flat 0 57) "…") flat))
+      (format "%S" r))))
+
+(define-derived-mode my/tasks-mode tabulated-list-mode "Tasks"
+  "Major mode for the *Tasks* status buffer.
+\\{my/tasks-mode-map}"
+  (setq tabulated-list-format
+        [("Name"     22 t)
+         ("State"    10 t)
+         ("Duration" 10 nil)
+         ("Deps"     22 nil)
+         ("Result/Error" 0 nil)])
+  (setq tabulated-list-padding 1)
+  (tabulated-list-init-header))
+
+(defun my/-task-status-entry (task)
+  "Return tabulated-list entry for TASK."
+  (list (my/task-name task)
+        (vector
+         (symbol-name (my/task-name task))
+         (propertize (symbol-name (my/task-state task))
+                     'face (pcase (my/task-state task)
+                             ('success      'success)
+                             ('failure      'warning)
+                             ('cancelled    'shadow)
+                             ('running      'font-lock-keyword-face)
+                             (_             'default)))
+         (my/-task-format-duration task)
+         (or (mapconcat #'symbol-name (my/task-depends-on task) ",") "—")
+         (my/-task-format-preview task))))
+
+(defun my/task-status-refresh ()
+  "Refresh the *Tasks* buffer contents."
+  (interactive)
+  (let ((buf (get-buffer-create "*Tasks*")))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'my/tasks-mode) (my/tasks-mode))
+      (setq tabulated-list-entries
+            (mapcar #'my/-task-status-entry (my/task-list)))
+      (tabulated-list-print t))))
+
+(defun my/task-status ()
+  "Open or refresh the *Tasks* status buffer."
+  (interactive)
+  (my/task-status-refresh)
+  (display-buffer "*Tasks*"))
+
+(defun my/task-show-output (name)
+  "Pop to the *task: NAME* buffer holding NAME's stdout/stderr."
+  (interactive
+   (list (intern
+          (completing-read
+           "Task: "
+           (mapcar (lambda (task) (symbol-name (my/task-name task)))
+                   (my/task-list))))))
+  (let ((task (gethash name my/tasks)))
+    (when (and task (buffer-live-p (my/task-buffer task)))
+      (pop-to-buffer (my/task-buffer task)))))
+
+;; Auto-refresh the *Tasks* buffer on every state change.
+(add-hook 'my/task-completed-hook
+          (lambda (_task)
+            (when (get-buffer "*Tasks*")
+              (my/task-status-refresh))))
+#+end_src
+
+* Module init (runs at load, BEFORE bootstrap)
+
+The order matters: we MUST register our own session marker first, then
+run the orphan cleanup. Otherwise our own (about-to-start) tasks could
+be misclassified as orphans.
+
+#+begin_src emacs-lisp
+(my/-session-register)
+(add-hook 'kill-emacs-hook #'my/-session-unregister)
+(my/tasks-cleanup-orphans)
+#+end_src

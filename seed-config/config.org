@@ -76,4 +76,12 @@ overall config load."
 ;; Per-Mac override — loads LAST, can shadow anything above. Optional.
 (let ((local (expand-file-name "local.org" my/config-dir)))
   (when (file-exists-p local) (my/-load-module local)))
+
+;; Bootstrap runs AFTER modules load AND after the first frame is
+;; painted — so Emacs is interactive while bootstrap does its work
+;; (BW unlock, gh, possibly git clone). `my/bootstrap' itself is a
+;; no-op on steady-state launches (everything cached in Keychain +
+;; repo already cloned + gh authed). The full sync flow only fires
+;; when `my/bootstrap--needs-anything-p' detects missing state.
+(add-hook 'emacs-startup-hook #'my/bootstrap)
 #+end_src

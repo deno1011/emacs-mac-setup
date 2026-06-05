@@ -1596,15 +1596,46 @@ cache via `my/api-key-fetch'."
                stored opted-out my/keychain-service))))
 #+end_src
 
-* Step 9 — Orchestration (runs synchronously, in order)
+* Step 9 — Orchestration
+
+** Predicate: does this launch actually need work?
+
+On a steady-state launch (Keychain has BW unlock cache + all API key
+entries; private repo cloned; gh already authenticated), bootstrap has
+literally nothing to do. The predicate below checks each precondition
+in ~10 ms total — Keychain reads are fast.
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: Orchestrate the full first-start bootstrap sequence in dependency order.
-(defun my/bootstrap ()
-  "Run the full first-launch bootstrap: BW unlock, GitHub identity,
-gh install/auth, repo sync, starter generation, API key loading.
-Idempotent; safe to invoke as M-x my/bootstrap to re-run."
-  (interactive)
+(defun my/bootstrap--needs-anything-p ()
+  "Return non-nil when bootstrap has at least one piece of work to do.
+Fast: pure cache/filesystem checks, no BW or network."
+  (or
+   ;; BW unlock cache absent → need to prompt for master + email
+   (not (my/keychain-get my/keychain-service my/keychain-account-bw-email))
+   (not (my/keychain-get my/keychain-service my/keychain-account-bw-master))
+   ;; Any API key field has no Keychain entry (no value AND no sentinel)
+   (cl-some (lambda (env-var)
+              (not (my/keychain-get my/keychain-service env-var)))
+            my/api-key-fields)
+   ;; Private data repo not cloned yet
+   (not (file-directory-p (expand-file-name ".git" my/data-dir)))
+   ;; gh CLI not authenticated yet
+   (and (my/gh-installed-p) (not (my/gh-authenticated-p)))))
+#+end_src
+
+** Synchronous full flow (first launch / when work IS needed)
+
+Unchanged from the original sequence: BW unlock, GitHub identity,
+gh CLI install/auth, repo sync, starter generation, API key loading.
+Runs with prompts inline. Only fires when
+=my/bootstrap--needs-anything-p= says so.
+
+#+begin_src emacs-lisp :tangle yes
+;; Explanation: full sync bootstrap — runs only on launches that actually need work.
+(defun my/bootstrap--run-full-sync ()
+  "Execute the full first-launch bootstrap synchronously.
+Internal — called by `my/bootstrap' when the predicate says work is
+required. Safe to invoke directly via M-x for retries."
   (message "Bootstrap: starting…")
 
   ;; 1-2. BW
@@ -1615,15 +1646,12 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
 
   ;; 3-4. GitHub identity
   (let ((id (my/github-load-identity)))
-    ;; 4b. Global git identity — fills `git config --global user.{name,email}'
-    ;; from the BW bundle on Macs that don't have it set yet. Idempotent.
     (my/git-identity-ensure-global id)
     (cond
      ((and id (not (my/-blank-p (plist-get id :token))))
       ;; 5. gh install + auth
       (cond
-       ((my/gh-installed-p)
-        (message "Bootstrap: gh CLI present."))
+       ((my/gh-installed-p) (message "Bootstrap: gh CLI present."))
        (t
         (message "Bootstrap: gh CLI missing — installing via brew (background)…")
         (my/gh-install)))
@@ -1634,7 +1662,8 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
          (t
           (message "Bootstrap: authenticating gh with BW-stored token…")
           (my/gh-login-with-token (plist-get id :token))))
-        ;; 6. Repo sync — only when username AND repo are non-blank.
+        ;; 6. Repo sync (first-time clone or adopt; pull is opt-in via
+        ;; M-x my/repo-sync-now below).
         (cond
          ((and (not (my/-blank-p (plist-get id :username)))
                (not (my/-blank-p (plist-get id :repo))))
@@ -1643,30 +1672,80 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
          (t
           (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
                    my/bw-credentials-item))))
-      ;; 7. git-crypt unlock (no-op if repo doesn't use it / already unlocked).
-      ;; The key is in the same BW item as the rest of the GH identity,
-      ;; under custom field "GitCryptKey".
+      ;; 7. git-crypt unlock (no-op if repo doesn't use it).
       (my/git-crypt-step id)
-      ;; 8. Starter data — only fills gaps; never overwrites pulled content
+      ;; 8. Starter data — only fills gaps.
       (when (file-directory-p my/data-dir)
         (my/generate-starter-data my/data-dir id)
         (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
      (t
-      ;; No GitHub identity — generate starter into a fresh my/data-dir
       (unless (file-directory-p my/data-dir)
         (make-directory my/data-dir t))
       (my/generate-starter-data my/data-dir '())
       (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
                my/data-dir))))
 
-  ;; 8. API keys (visible progress emitted by my/api-keys-load itself)
+  ;; 9. API keys
   (my/api-keys-load)
 
-  ;; 9. Lock BW
+  ;; 10. Lock BW
   (when my/bw-session (my/bw-lock))
 
   (message "Bootstrap: done."))
+#+end_src
 
-;; Run it.
-(my/bootstrap)
+** Entry point
+
+Called from =config.org='s =emacs-startup-hook= AFTER all modules
+have loaded and after the first frame is painted. On steady-state
+launches, returns in ~10 ms. On launches with actual work, runs the
+synchronous flow (interactive prompts on first launch).
+
+#+begin_src emacs-lisp :tangle yes
+;; Explanation: bootstrap entry point. Decides sync (work pending) vs no-op (cached).
+(defun my/bootstrap ()
+  "Run bootstrap if any precondition is missing; no-op otherwise.
+Safe to call interactively (`M-x my/bootstrap') to re-trigger after
+changing state (e.g. after `M-x my/github-identity-reset')."
+  (interactive)
+  (cond
+   ((my/bootstrap--needs-anything-p)
+    (my/bootstrap--run-full-sync))
+   (t
+    (message "Bootstrap: nothing to do (Keychain cache complete, repo cloned, gh authed)."))))
+#+end_src
+
+** Manual repo pull
+
+Per the architectural decision: bootstrap no longer auto-pulls the
+private repo. The =my/repo-sync= helper still clones on first launch
+when the directory is empty, but does NOT =git pull= on subsequent
+launches.
+
+Use =M-x my/repo-sync-now= when you actually want fresh data from
+GitHub. Runs as a =my/task-shell= background task — non-blocking; see
+=M-x my/task-status= for progress.
+
+#+begin_src emacs-lisp :tangle yes
+;; Explanation: User command — pull the private repo in the background.
+(defun my/repo-sync-now ()
+  "Pull the private data repo into `my/data-dir' in the background.
+Non-blocking — runs as a `my/task-shell' task. See M-x my/task-status
+for progress; see *task: repo-pull* for full output."
+  (interactive)
+  (let ((dir my/data-dir))
+    (cond
+     ((not (file-directory-p (expand-file-name ".git" dir)))
+      (message "repo-sync-now: %s is not a git clone yet — run M-x my/bootstrap to clone first." dir))
+     (t
+      (my/task-shell
+       'repo-pull
+       (list "git" "-C" dir "pull" "--rebase" "--autostash")
+       :on-success
+       (lambda (out)
+         (message "repo-pull: %s"
+                  (or (car (last (split-string out "\n" t))) "ok")))
+       :on-failure
+       (lambda (err)
+         (display-warning 'repo-sync (format "git pull failed — %s" err))))))))
 #+end_src
