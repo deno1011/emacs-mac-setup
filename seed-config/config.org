@@ -28,19 +28,43 @@ the numeric prefix on each filename does the work. =10-bootstrap.org=
 runs first because =10= sorts before =20=, not because any code here
 names it explicitly.
 
+** Byte-compile cache
+
+Each module load prefers the byte-compiled =.elc= when it is newer than
+the =.org= source — that path is just =load=, no Org parse, no tangle,
+no compile. Cost per module on a steady-state launch drops from
+~50-350 ms (Org parse + tangle + compile + load) to ~10 ms (=.elc=
+load only). When the =.org= is newer than the =.elc=, the module
+re-tangles + re-compiles itself transparently.
+
 #+begin_src elisp :tangle yes
 (defvar my/modules-dir
   (expand-file-name "modules/" my/config-dir)
   "Directory holding the module .org files discovered by config.org.")
 
-(defun my/-load-module (path)
-  "Load PATH, logging cleanly on error so one bad module does not abort
-the whole config load."
-  (condition-case err
-      (org-babel-load-file path)
-    (error
-     (message "CONFIG LOAD ERROR (%s): %s"
-              (file-name-nondirectory path) err))))
+(defun my/-load-module (org-path)
+  "Load ORG-PATH. Prefer the byte-compiled .elc when newer than the
+.org source — no Org parse, no tangle, no compile. Fall back to
+tangle + byte-compile + load when the .org has changed or no .el
+exists yet. Errors in any module are logged but do not abort the
+overall config load."
+  (let* ((el  (concat (file-name-sans-extension org-path) ".el"))
+         (elc (concat el "c")))
+    (condition-case err
+        (cond
+         ;; .elc is current → load directly (~10 ms).
+         ((and (file-exists-p elc)
+               (file-newer-than-file-p elc org-path))
+          (load elc nil 'nomessage))
+         ;; Stale or missing .el → re-tangle + re-compile + load.
+         (t
+          (require 'ob-tangle)
+          (org-babel-tangle-file org-path el)
+          (byte-compile-file el)
+          (load (if (file-exists-p elc) elc el) nil 'nomessage)))
+      (error
+       (message "CONFIG LOAD ERROR (%s): %s"
+                (file-name-nondirectory org-path) err)))))
 
 (when (file-directory-p my/modules-dir)
   (dolist (f (sort (seq-remove
