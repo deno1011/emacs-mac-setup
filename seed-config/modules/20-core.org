@@ -7,6 +7,41 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 ;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
 #+end_src
 
+* Startup measurement (diagnostic)
+
+[[https://github.com/dholm/benchmark-init-el][benchmark-init]] activates as the first thing this module does so it
+captures every subsequent =require= and =load=. Reports include
+=10-bootstrap.org=-deferred work that fires after init too. Inspect
+with:
+
+- =M-x benchmark-init/show-durations-tree= — sortable tree by total time
+- =M-x benchmark-init/show-durations-tabulated= — flat sortable table
+
+Init time is also printed to =*Messages*= at the very end via
+=emacs-startup-hook=, formatted to be greppable.
+
+When you're done measuring, set the block below to =:tangle no= or
+delete it; the package itself adds ~5ms to startup, the
+activation hooks add ~1µs per measured load.
+
+#+begin_src emacs-lisp
+(use-package benchmark-init
+  :ensure t
+  :demand t
+  :config
+  (benchmark-init/activate)
+  ;; Stop measuring once init is done (after-init-hook fires once the
+  ;; literate config and all use-package :demand t loads have run).
+  (add-hook 'after-init-hook #'benchmark-init/deactivate))
+
+;; Print the init-time + GC count at the very end of startup so a
+;; before/after comparison across changes is a single grep.
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (message "==> Emacs startup: init-time=%s, GCs=%d"
+                     (emacs-init-time) gcs-done)))
+#+end_src
+
 * Garbage collection (linked to [[file:~/.emacs.d/early-init.el][~/.emacs.d/early-init.el]])
 
 The GC threshold is bumped early so package loading and use-package
