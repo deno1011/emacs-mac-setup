@@ -1367,13 +1367,53 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
           (my/git-crypt-unlock my/data-dir key))))))))
 #+end_src
 
-* Step 8 — API keys: load from one BW item only
+* Step 8 — API keys: three-tier model (Bitwarden / Keychain / on-demand fetch)
+
+** Architecture
+
+API keys flow through three storage tiers:
+
+1. *Bitwarden =emacs-credentials= item* — canonical, cross-Mac source of
+   truth. Each provider's key lives as a custom field whose name matches
+   the env-var name (=GEMINI_API_KEY=, =ANTHROPIC_API_KEY=, ...).
+2. *macOS Keychain =emacs-credentials= service* — active runtime cache.
+   Each provider key is stored as an account under this service. =security
+   find-generic-password= reads it in ~10-20 ms, ~20-50× faster than
+   =bw unlock= cycles.
+3. *In-memory at request time only* — consumers call =my/api-key-fetch=,
+   which reads from Keychain and returns the value. The string lives in
+   the caller's local binding for the duration of the request; nothing is
+   captured in =process-environment= or any global =defvar=.
+
+Between requests, no API key string exists anywhere in the Emacs
+process memory.
+
+** Lifecycle
+
+- *First launch on a Mac*: =my/api-keys-load= calls
+  =my/api-keys-pull-to-keychain=, which performs ONE Bitwarden unlock,
+  copies each field into Keychain, and locks BW. Any field still empty
+  after the pull is prompted for and stored to BOTH stores.
+- *Subsequent launches*: Keychain entries already exist; no Bitwarden
+  involvement, no prompts.
+- *Rotating a key*: =M-x my/api-key-set= prompts for the new value and
+  writes to BOTH stores.
+- *External BW edit* (mobile app, BW Desktop, web): =M-x
+  my/api-keys-sync-from-bw= refreshes Keychain from BW with one unlock
+  cycle. Bootstrap does NOT auto-sync — that would add ~500 ms to every
+  Emacs start for an event that rarely happens.
+- *Re-prompting a key*: =M-x my/api-key-reset KEY= clears both stores;
+  next =my/api-keys-load= prompts and stores fresh.
+
+Consumers (gptel backends, etc.) only ever call =my/api-key-fetch= — the
+fast Keychain read. They never see Bitwarden.
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: Persist one provider API key into the consolidated Bitwarden API item.
 ;; Explanation: Persist one provider API key into the consolidated Bitwarden credentials item.
 (defun my/bw-api-key-set (env-var value)
-  "Persist ENV-VAR API key VALUE in the consolidated Bitwarden API item."
+  "Persist ENV-VAR API key VALUE as a custom field in `my/bw-credentials-item'.
+Used internally by `my/api-key-set' and `my/api-keys-load' for the BW
+side of dual-write operations. Requires BW to already be unlocked."
   (unless my/bw-session
     (error "BW not unlocked; cannot save %s" env-var))
   (let ((fields `((,env-var . ,value))))
@@ -1389,98 +1429,171 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
       (error "BW verification failed: %s was not saved to item %s"
              env-var my/bw-credentials-item))))
 
-;; Explanation: Check whether an API key field stores the explicit skip sentinel.
-(defun my/api-key--opted-out-p (value)
-  "Return t when VALUE is the skip sentinel."
-  (and (stringp value) (string= value my/api-skipped-sentinel)))
+;; Explanation: Public on-demand reader used by gptel + every other consumer.
+(defun my/api-key-fetch (env-var)
+  "Return ENV-VAR's API key value from the Keychain runtime cache.
+Fast (~10-20 ms via `security find-generic-password'); no Bitwarden
+unlock cycle. Returns nil when the field is blank, marked opted-out
+(via the `__SKIPPED__' sentinel), or has never been stored.
 
-;; Explanation: Persist the API-key skip sentinel in the consolidated Bitwarden item.
-(defun my/api-key--persist-sentinel (env-var)
-  "Persist the skip sentinel for ENV-VAR so we don't re-prompt next launch."
-  (unless my/bw-session
-    (error "BW not unlocked; cannot persist API key skip sentinel for %s" env-var))
-  (my/bw-api-key-set env-var my/api-skipped-sentinel))
+This is the function consumers should call:
 
-;; Explanation: Clear one API key custom field so bootstrap can prompt for it again.
+  (gptel-make-anthropic \"Claude\"
+                        :stream t
+                        :key (lambda () (my/api-key-fetch \"ANTHROPIC_API_KEY\")))
+
+The Keychain cache is populated by `my/api-keys-pull-to-keychain' on
+first launch and refreshed by `my/api-keys-sync-from-bw' or
+`my/api-key-set'."
+  (let ((v (my/keychain-get my/keychain-service env-var)))
+    (and (not (my/-blank-p v))
+         (not (string= v my/api-skipped-sentinel))
+         v)))
+
+;; Explanation: Pull every api-key field from BW into Keychain. One unlock cycle.
+(defun my/api-keys-pull-to-keychain ()
+  "Copy every field listed in `my/api-key-fields' from BW into Keychain.
+Performs ONE Bitwarden unlock cycle.  Preserves the `__SKIPPED__'
+sentinel verbatim so opt-outs survive sync.  Returns an alist of
+\(ENV-VAR . OUTCOME) where OUTCOME is one of `pulled', `sentinel',
+`blank', or `bw-unavailable'."
+  (let (results)
+    (cond
+     ((not (my/bw-unlock))
+      (dolist (e my/api-key-fields)
+        (push (cons e 'bw-unavailable) results)))
+     (t
+      (unwind-protect
+          (let ((item (my/bw-get-item my/bw-credentials-item)))
+            (dolist (env-var my/api-key-fields)
+              (let ((v (and item (my/bw-item-field item env-var))))
+                (cond
+                 ((my/-blank-p v)
+                  (push (cons env-var 'blank) results))
+                 ((string= v my/api-skipped-sentinel)
+                  (my/keychain-set my/keychain-service v env-var)
+                  (push (cons env-var 'sentinel) results))
+                 (t
+                  (my/keychain-set my/keychain-service v env-var)
+                  (push (cons env-var 'pulled) results))))))
+        (my/bw-lock))))
+    (nreverse results)))
+
+;; Explanation: User command — refresh Keychain from BW after an external edit.
+(defun my/api-keys-sync-from-bw ()
+  "Refresh the Keychain runtime cache from Bitwarden.
+Use after editing a key elsewhere (BW Desktop, mobile, web) so this
+Emacs picks up the change. One Bitwarden unlock cycle (~500 ms).
+Bootstrap does NOT auto-sync; that would add this latency to every
+Emacs start."
+  (interactive)
+  (let* ((results (my/api-keys-pull-to-keychain))
+         (pulled   (cl-count 'pulled   results :key #'cdr))
+         (sentinel (cl-count 'sentinel results :key #'cdr))
+         (blank    (cl-count 'blank    results :key #'cdr))
+         (unavail  (cl-count 'bw-unavailable results :key #'cdr)))
+    (message "Sync: %d pulled, %d sentinel, %d blank in BW%s"
+             pulled sentinel blank
+             (if (> unavail 0) " (BW unavailable)" ""))))
+
+;; Explanation: User command — set or rotate a single API key in BOTH stores.
+(defun my/api-key-set (env-var)
+  "Prompt for a new value for ENV-VAR; write to BOTH Bitwarden and Keychain.
+Empty input persists the `__SKIPPED__' sentinel in both stores,
+marking the key as permanently opted out. Use this when rotating a key
+to keep the two stores in sync without a separate sync step."
+  (interactive
+   (list (completing-read "Set API key (env var): "
+                          my/api-key-fields nil t)))
+  (let* ((new   (read-passwd
+                 (format "New %s (empty = skip permanently): " env-var)))
+         (value (if (my/-blank-p new) my/api-skipped-sentinel new)))
+    ;; Keychain first — always succeeds, useful even if BW is unreachable.
+    (my/keychain-set my/keychain-service value env-var)
+    ;; Then BW. If BW is unavailable, the Keychain entry is still valid;
+    ;; user can sync the BW side later with M-x my/api-keys-sync-from-bw.
+    (cond
+     ((my/bw-unlock)
+      (unwind-protect
+          (my/bw-api-key-set env-var value)
+        (my/bw-lock))
+      (message "%s %s (Keychain + Bitwarden)."
+               env-var (if (my/-blank-p new) "marked as skipped" "updated")))
+     (t
+      (message "%s %s (Keychain only — BW unavailable; run M-x my/api-keys-sync-from-bw later)."
+               env-var (if (my/-blank-p new) "marked as skipped" "updated"))))))
+
+;; Explanation: User command — clear one API key in BOTH stores; next bootstrap prompts.
 (defun my/api-key-reset (env-var)
-  "Clear any cached value or skip sentinel for ENV-VAR so the next
-bootstrap prompts again. API keys live only in `my/bw-credentials-item';
-run as `M-x my/api-key-reset' while Bitwarden is unlocked."
+  "Clear ENV-VAR's value or sentinel in BOTH Keychain and Bitwarden.
+Next `my/api-keys-load' will re-prompt and dual-write a fresh value."
   (interactive
    (list (completing-read "Reset API key (env var): "
                           my/api-key-fields nil t)))
-  (cond
-   ((not my/bw-session)
-    (message "BW locked — run M-x my/bw-unlock first."))
-   ((not (my/bw-get-item my/bw-credentials-item))
-    (message "No BW item '%s' to reset." my/bw-credentials-item))
-   (t
-    (my/bw-update-item my/bw-credentials-item :fields `((,env-var . "")))
-    (setenv env-var nil)
-    (message "Reset %s in BW '%s' — next bootstrap will prompt again."
-             env-var my/bw-credentials-item))))
+  (my/keychain-delete my/keychain-service env-var)
+  (when (my/bw-unlock)
+    (unwind-protect
+        (when (my/bw-get-item my/bw-credentials-item)
+          (my/bw-update-item my/bw-credentials-item
+                             :fields `((,env-var . ""))))
+      (my/bw-lock)))
+  (message "Reset %s (Keychain + Bitwarden) — next bootstrap will prompt."
+           env-var))
 
-;; Explanation: Populate API key environment variables from the consolidated Bitwarden item only.
+;; Explanation: Bootstrap step — populate Keychain if empty; prompt for any missing keys.
 (defun my/api-keys-load ()
-  "Populate provider API key env vars.
-Resolution order, per `my/api-key-fields' entry:
-  1. `my/bw-credentials-item' custom field (when BW is unlocked).
-  2. Prompt + persist to `my/bw-credentials-item' when BW is unlocked.
+  "Ensure the Keychain runtime cache is populated.
 
-A field whose stored value equals `my/api-skipped-sentinel' is treated
-as 'user opted out': no setenv, no prompt. Use `M-x my/api-key-reset'
-to clear that sentinel for a single key.
+On first launch (no Keychain entries exist for any `my/api-key-fields'
+entry), pull from Bitwarden with one unlock cycle. On subsequent
+launches, this is a no-op — the cache is already populated and
+`my/api-key-fetch' reads it directly.
 
-No legacy Bitwarden item names and no Keychain API-key fallback are consulted."
-  (let ((api-item (and my/bw-session (my/bw-get-item my/bw-credentials-item)))
-        loaded prompted opted-out skipped)
-    (dolist (env-var my/api-key-fields)
-      (let* ((value nil)
-             (source nil)
-             (opt-out nil))
-        ;; 1. Consolidated BW item custom field
-        (when (and api-item (my/-blank-p value))
-          (let ((v (my/bw-item-field api-item env-var)))
-            (cond
-             ((my/api-key--opted-out-p v)
-              (setq opt-out t source 'bw))
-             ((not (my/-blank-p v))
-              (setq value v source 'bw)))))
-        ;; 2. Prompt + persist only into the consolidated BW item.
-        (when (and (my/-blank-p value) (not opt-out))
-          (if (or noninteractive (not my/bw-session))
-              (push env-var skipped)
-            (let ((entered (read-passwd
-                            (format "%s (empty = skip permanently, won't ask again): "
-                                    env-var))))
-              (cond
-               ((my/-blank-p entered)
-                ;; Empty input = explicit opt-out. Persist the sentinel so
-                ;; future launches don't re-prompt.
-                (my/api-key--persist-sentinel env-var)
-                (setq opt-out t source 'prompt)
-                (push env-var opted-out))
-               (t
-                (setq value entered source 'prompt)
-                (push env-var prompted)
-                (my/bw-api-key-set env-var entered)
-                (setq api-item (my/bw-get-item my/bw-credentials-item)))))))
-        (when (and value (not (my/-blank-p value)))
-          (setenv env-var value)
-          (push (format "%s(%s)" env-var (symbol-name source)) loaded))))
-    ;; Visible progress summary
-    (when loaded
-      (message "Bootstrap: API keys loaded: %s" (mapconcat #'identity (nreverse loaded) ", ")))
-    (when prompted
-      (message "Bootstrap: API keys created via prompt + stored to %s: %s"
-               (format "Bitwarden item '%s'" my/bw-credentials-item)
-               (mapconcat #'identity (nreverse prompted) ", ")))
-    (when opted-out
-      (message "Bootstrap: opted out (will NOT re-prompt; M-x my/api-key-reset to revive): %s"
-               (mapconcat #'identity (nreverse opted-out) ", ")))
-    (when skipped
-      (message "Bootstrap: skipped (noninteractive, no value found): %s"
-               (mapconcat #'identity (nreverse skipped) ", ")))))
+For any field still missing after the pull (BW field was blank, or BW
+was unavailable), prompt the user; dual-write the entered value or the
+`__SKIPPED__' sentinel to BOTH stores. Empty input = opt out, never
+re-prompts.
+
+Consumers (gptel etc.) never call this function. They read from the
+cache via `my/api-key-fetch'."
+  (let* ((missing (cl-remove-if
+                   (lambda (env-var)
+                     (my/keychain-get my/keychain-service env-var))
+                   my/api-key-fields))
+         (first-launch (= (length missing) (length my/api-key-fields))))
+    (when first-launch
+      ;; All fields missing in Keychain — one-shot pull from BW.
+      (my/api-keys-pull-to-keychain)
+      (setq missing (cl-remove-if
+                     (lambda (env-var)
+                       (my/keychain-get my/keychain-service env-var))
+                     my/api-key-fields)))
+    ;; Prompt for any keys still missing. Empty input persists sentinel.
+    (dolist (env-var missing)
+      (cond
+       (noninteractive
+        (message "Bootstrap: skipped (noninteractive): %s" env-var))
+       (t
+        (let* ((new (read-passwd
+                     (format "%s (empty = skip permanently, won't ask again): "
+                             env-var)))
+               (value (if (my/-blank-p new) my/api-skipped-sentinel new)))
+          (my/keychain-set my/keychain-service value env-var)
+          (when (my/bw-unlock)
+            (unwind-protect
+                (my/bw-api-key-set env-var value)
+              (my/bw-lock)))))))
+    ;; Summary — counts, no values.
+    (let ((stored    (cl-count-if
+                      (lambda (e) (my/api-key-fetch e))
+                      my/api-key-fields))
+          (opted-out (cl-count-if
+                      (lambda (e)
+                        (let ((v (my/keychain-get my/keychain-service e)))
+                          (and v (string= v my/api-skipped-sentinel))))
+                      my/api-key-fields)))
+      (message "Bootstrap: API keys ready (%d active, %d opted-out) in Keychain '%s'"
+               stored opted-out my/keychain-service))))
 #+end_src
 
 * Step 9 — Orchestration (runs synchronously, in order)
