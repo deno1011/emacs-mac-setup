@@ -67,17 +67,3 @@ the whole config load."
 (let ((local (expand-file-name "local.org" my/config-dir)))
   (when (file-exists-p local) (my/-load-module local)))
 #+end_src
-
-* GTD Overlay
-
-Loads the GTD configuration from =~/emacs/data/org/gtd-config.el=.
-Runs AFTER all modules, so it overrides any org defaults set by
-=50-org.org= or its successors.
-
-#+begin_src elisp :tangle yes
-(let ((gtd-config (expand-file-name "data/org/gtd-config.el" my/data-dir)))
-  (when (file-exists-p gtd-config)
-    (condition-case err
-        (load gtd-config nil nil t)
-      (error (message "GTD CONFIG LOAD ERROR: %s" err)))))
-#+end_src

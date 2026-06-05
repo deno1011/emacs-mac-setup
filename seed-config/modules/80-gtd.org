@@ -1,0 +1,19 @@
+#+TITLE: GTD Overlay
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+Numeric prefix =80-= places this module after =50-org.org=, so the
+user's GTD tweaks override Org defaults set there.
+
+The actual GTD configuration lives in =~/emacs/data/org/gtd-config.el=
+— user data, not seeded by the distro. This module is a thin loader:
+if the file exists it loads, otherwise it no-ops cleanly.
+
+#+begin_src emacs-lisp
+(let ((gtd-config (expand-file-name "data/org/gtd-config.el" my/data-dir)))
+  (when (file-exists-p gtd-config)
+    (condition-case err
+        (load gtd-config nil nil t)
+      (error (message "GTD CONFIG LOAD ERROR: %s" err)))))
+#+end_src
