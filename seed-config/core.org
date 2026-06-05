@@ -219,13 +219,16 @@ uninstall later") stay the same.
 
 * Theme & Modeline
 
-The doom-themes block is kept around for reference but =:tangle no=, so
-=doom-one= is no longer loaded. The active theme is the built-in
-=modus-vivendi= — accessibility-grade contrast, dark background, ships
-with Emacs 28+ so no package install is needed. Same conflict
-resolution as the doom variant: disable any theme that may have been
-loaded earlier in the init chain before stacking ours, otherwise the
-inheritance cycle (modus-vivendi + doom-one earlier) can lock the UI.
+Active theme is =cyberpunk= (MELPA package =cyberpunk-theme= by n3mo) —
+dark background, neon pink / yellow / cyan accents. The doom-themes
+and modus-vivendi blocks are kept for reference with =:tangle no= so
+neither is loaded; flip the cookies to swap themes without deleting
+code.
+
+Same conflict-resolution pattern in every block: disable whatever
+theme may have been loaded earlier in the init chain BEFORE stacking
+ours. Without this, the inheritance cycle (e.g. modus-vivendi under
+doom-one) can hang Emacs while resolving face inheritance.
 
 #+begin_src emacs-lisp :tangle no
 (use-package doom-themes
@@ -237,12 +240,23 @@ inheritance cycle (modus-vivendi + doom-one earlier) can lock the UI.
   (doom-themes-org-config))
 #+end_src
 
-#+begin_src emacs-lisp
-;; Disable any theme an earlier init step may have loaded — same fix as the
-;; doom block above. Without this, stacking modus-vivendi on top of another
-;; loaded theme can cause Emacs to hang while resolving face inheritance.
+#+begin_src emacs-lisp :tangle no
+;; modus-vivendi (built-in) — accessibility-grade contrast, kept as a
+;; fallback option. Flip this block's :tangle to yes (and the cyberpunk
+;; block below to :tangle no) to switch back without losing the config.
 (mapc #'disable-theme custom-enabled-themes)
 (load-theme 'modus-vivendi t)
+#+end_src
+
+#+begin_src emacs-lisp
+(use-package cyberpunk-theme
+  :demand t
+  :config
+  ;; Disable any theme an earlier init step may have loaded — same fix as
+  ;; the doom block above. Without this, stacking cyberpunk on top of
+  ;; another loaded theme can hang Emacs while resolving face inheritance.
+  (mapc #'disable-theme custom-enabled-themes)
+  (load-theme 'cyberpunk t))
 
 (use-package doom-modeline
   :hook (after-init . doom-modeline-mode)
