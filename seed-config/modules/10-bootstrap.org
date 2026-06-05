@@ -1108,20 +1108,23 @@ IDENTITY is the plist returned by my/github-load-identity."
                              (concat "Repo pull conflict in " dir
                                      " — leaving repo alone. Resolve manually then restart Emacs.")
                              :warning)))))
-     ;; Empty / absent / only-seed-config → clone or create.
-     ;; The "only-seed-config" case fires right after a fresh install.sh
-     ;; rsync, when `config/' is the sole top-level entry. That isn't user
-     ;; data; it's just the installer's seed. Treat as effectively empty so
-     ;; my/-repo-fetch-or-create can go through the create branch and fire
-     ;; auto-init (no adoption prompt).
-     ((let ((entries (and (file-directory-p dir)
-                          (directory-files dir nil "\\`[^.]"))))
-        (or (not (file-exists-p dir))
-            (null entries)
-            (equal entries '("config"))))
+     ;; No .git directory → not a git repo yet; clone or create.
+     ;;
+     ;; This is the right signal for "uninitialized" because it doesn't
+     ;; care about what loose files happen to be in the dir. After
+     ;; install.sh's rsync we have `config/'; after module load org-roam
+     ;; may have created `wiki/emacs/.org-roam.db'; after `my/generate-
+     ;; starter-data' ran in a previous failed bootstrap we may have
+     ;; `data/org/' too. None of those count as a "git repo" — until
+     ;; `git init' runs there's no version control. So we delegate to
+     ;; `my/-repo-fetch-or-create' which is idempotent: starter-data
+     ;; skips existing files, `git init' is safe to run, `git-crypt
+     ;; init' is idempotent via the keyfile-exists check, `git add .'
+     ;; picks up whatever's there.
+     ((not (file-exists-p (expand-file-name ".git" dir)))
       (my/-repo-fetch-or-create identity))
-     ;; Has user-content but wrong/no remote — adopt local files into the
-     ;; GitHub clone while keeping the remote authoritative for conflicts.
+     ;; Has .git but wrong/no remote — adopt the existing git repo into
+     ;; the GitHub clone while keeping the remote authoritative for conflicts.
      (t
       (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
         (cond
