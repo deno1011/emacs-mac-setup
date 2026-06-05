@@ -1,6 +1,10 @@
 #+TITLE: Task Framework — Async Subprocesses + Orphan Cleanup
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
+#+begin_src emacs-lisp :tangle yes
+;;; 05-tasks.el --- Async task framework -*- lexical-binding: t; -*-
+#+end_src
+
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 Numeric prefix =05-= loads ahead of =10-bootstrap.org=. Bootstrap and
@@ -36,15 +40,21 @@ brew installs, org-roam DB rebuilds use the same primitives.
 ** Concurrency model
 
 Multiple Emacs sessions are supported. Each session generates a unique
-GUID at startup, registers itself in =~/.emacs.d/sessions/=, and tags
-every =my/task-shell= subprocess with =EMACS_TASK_GUID= via =env=
-wrap. On next startup, the cleanup pass kills only subprocesses whose
-GUID does NOT match any currently-alive Emacs session — so two
-concurrent Emacses do not nuke each other's subprocesses.
+GUID at startup and registers itself in =~/.emacs.d/sessions/<guid>=.
+Each shell task records its subprocess PID + start time under
+=~/.emacs.d/tasks/<guid>/<pid>= while running, removed when the task
+finishes. The env wrap (=env EMACS_TASK_GUID=…=) is also applied so
+subprocess scripts that care can introspect via =getenv= — but the
+file tree is the authoritative detection mechanism, since macOS =ps=
+does not surface env vars and the =env= wrapper exec's into its
+target (so the GUID is no longer in the visible argv).
 
-Liveness check is robust against PID reuse: each session marker
-records both the Emacs PID and its process start time (=ps -o
-lstart==), and the check verifies both match.
+On next startup, the cleanup pass walks =~/.emacs.d/tasks/=. For each
+subdirectory whose GUID is NOT in the currently-alive set, every PID
+marker is checked: PID alive AND recorded =lstart= matches current
+=lstart= → real orphan → SIGTERM/SIGKILL. The lstart check defeats
+PID reuse. Two concurrent Emacses do not nuke each other's
+subprocesses (each session's GUID is in the live set).
 
 * TODO Future: =my/task-elisp-async= (forked emacs --batch)
 
@@ -73,6 +83,7 @@ Defer this until a real consumer needs it.
 
 #+begin_src emacs-lisp
 (require 'cl-lib)
+(require 'subr-x)            ; hash-table-values, string-trim
 (require 'tabulated-list)
 
 (defvar my/session-guid
@@ -89,6 +100,15 @@ orphan-detection on the next launch can verify task ownership.")
   "Directory of live Emacs session markers. One file per session,
 named by `my/session-guid'. Contents: PID and `ps -o lstart=' start
 time for tamper-evident liveness checks.")
+
+(defvar my/tasks-pids-dir
+  (expand-file-name "tasks" user-emacs-directory)
+  "Per-session task PID tracking. Layout:
+  <my/tasks-pids-dir>/<session-guid>/<pid>   ← contents: lstart string
+Created on demand by `my/-task-record-pid'. Used by
+`my/tasks-cleanup-orphans' on next startup to find subprocesses
+spawned by a dead Emacs and kill them. PID reuse is defeated by
+the lstart match.")
 
 (defvar my/tasks (make-hash-table :test 'eq)
   "Registry of all tasks, keyed by name symbol.")
@@ -143,10 +163,14 @@ File format: line 1 = PID, line 2 = ps lstart= snapshot (used by
       (insert (format "%d\n%s\n" pid lstart)))))
 
 (defun my/-session-unregister ()
-  "Remove this session's marker on clean exit (kill-emacs-hook)."
-  (let ((marker (expand-file-name my/session-guid my/sessions-dir)))
+  "Remove this session's marker AND any lingering PID tracking dir
+on clean exit (kill-emacs-hook)."
+  (let ((marker (expand-file-name my/session-guid my/sessions-dir))
+        (pids-dir (expand-file-name my/session-guid my/tasks-pids-dir)))
     (when (file-exists-p marker)
-      (ignore-errors (delete-file marker)))))
+      (ignore-errors (delete-file marker)))
+    (when (file-directory-p pids-dir)
+      (ignore-errors (delete-directory pids-dir t)))))
 
 (defun my/-session-marker-live-p (file)
   "Return t when FILE corresponds to a still-running Emacs.
@@ -177,40 +201,88 @@ reuse."
           (ignore-errors (delete-file f))))))
     live))
 
+(defun my/-task-record-pid (task)
+  "Write a PID marker file recording TASK's subprocess PID + lstart.
+Skipped for elisp tasks, detached tasks, and tasks without a PID."
+  (when (and (eq (my/task-kind task) 'shell)
+             (not (my/task-detach task))
+             (my/task-process task))
+    (let* ((pid (process-id (my/task-process task)))
+           (lstart (and pid (my/-process-start-time pid)))
+           (session-dir (expand-file-name my/session-guid my/tasks-pids-dir))
+           (marker (and pid (expand-file-name (number-to-string pid)
+                                              session-dir))))
+      (when (and pid lstart marker)
+        (make-directory session-dir t)
+        (ignore-errors
+          (with-temp-file marker
+            (insert (format "%s\n" lstart))))))))
+
+(defun my/-task-remove-pid (task)
+  "Remove the PID marker file for TASK after it finishes."
+  (when (and (eq (my/task-kind task) 'shell)
+             (my/task-process task))
+    (let* ((pid (process-id (my/task-process task)))
+           (marker (and pid (expand-file-name
+                             (format "%s/%d" my/session-guid pid)
+                             my/tasks-pids-dir))))
+      (when (and marker (file-exists-p marker))
+        (ignore-errors (delete-file marker))))))
+
 (defun my/tasks-cleanup-orphans ()
-  "Kill subprocesses tagged with EMACS_TASK_GUID whose GUID matches
-no currently-alive Emacs session. Run once at module load, before
-any task is submitted by this session. Reports counts to *Messages*."
+  "Walk per-session PID markers under `my/tasks-pids-dir'. For each
+session GUID that is NOT in the currently-alive set, check every
+recorded PID: still alive AND recorded lstart matches current lstart
+→ real orphan → SIGTERM/SIGKILL. The lstart match defeats PID reuse.
+
+Stale (dead-session) marker directories are removed regardless of
+whether any live processes were found.
+
+Run once at module load, BEFORE this session submits any tasks (the
+cleanup respects `my/session-guid' as a live GUID so it won't touch
+our own about-to-be-spawned subprocesses)."
   (let* ((live (my/-live-session-guids))
-         (ps-out (with-output-to-string
-                   (with-current-buffer standard-output
-                     (call-process "ps" nil t nil
-                                   "-ax" "-o" "pid=,command="))))
-         orphans)
-    (dolist (line (split-string ps-out "\n" t))
-      (when (string-match
-             "^\\s-*\\([0-9]+\\)\\s-+env\\s-+EMACS_TASK_GUID=\\([^ \t]+\\)"
-             line)
-        (let ((pid (string-to-number (match-string 1 line)))
-              (guid (match-string 2 line)))
-          (unless (member guid live)
-            (push (cons pid guid) orphans)))))
-    ;; SIGTERM, then 0.3s grace, then SIGKILL.
-    (dolist (o orphans)
-      (ignore-errors (signal-process (car o) 'SIGTERM)))
-    (when orphans (sit-for 0.3))
-    (dolist (o orphans)
-      (when (my/-pid-alive-p (car o))
-        (ignore-errors (signal-process (car o) 'SIGKILL))))
+         (killed 0)
+         (stale-sessions 0))
+    (when (file-directory-p my/tasks-pids-dir)
+      (dolist (session-dir (directory-files my/tasks-pids-dir t "\\`[^.]"))
+        (when (file-directory-p session-dir)
+          (let ((guid (file-name-nondirectory session-dir)))
+            (unless (member guid live)
+              (cl-incf stale-sessions)
+              ;; Phase 1: SIGTERM real orphans.
+              (let (term-pids)
+                (dolist (pidfile (directory-files session-dir t "\\`[0-9]"))
+                  (let* ((pid (string-to-number
+                               (file-name-nondirectory pidfile)))
+                         (recorded
+                          (string-trim
+                           (with-temp-buffer
+                             (insert-file-contents pidfile)
+                             (buffer-string))))
+                         (current (my/-process-start-time pid)))
+                    (when (and current (string= recorded current))
+                      (ignore-errors (signal-process pid 'SIGTERM))
+                      (cl-incf killed)
+                      (push pid term-pids))))
+                ;; Phase 2: grace, then SIGKILL survivors.
+                (when term-pids
+                  (sit-for 0.3)
+                  (dolist (pid term-pids)
+                    (when (my/-pid-alive-p pid)
+                      (ignore-errors (signal-process pid 'SIGKILL))))))
+              ;; Stale session dir gets removed wholesale.
+              (ignore-errors (delete-directory session-dir t)))))))
     (cond
-     ((zerop (length orphans))
+     ((and (zerop killed) (zerop stale-sessions))
       (message "Tasks: no orphans to clean (live sessions: %d, including this one)."
                (length live)))
+     ((zerop killed)
+      (message "Tasks: removed %d stale session marker(s); no live orphan processes (%d session(s) still live)."
+               stale-sessions (length live)))
      (t
-      (let ((dead-guids (delete-dups (mapcar #'cdr orphans))))
-        (message
-         "Tasks: killed %d orphan subprocess(es) from %d dead session(s); %d session(s) still live."
-         (length orphans) (length dead-guids) (length live)))))))
+      (message "Tasks: killed %d orphan subprocess(es) from %d dead session(s); %d session(s) still live."
+               killed stale-sessions (length live))))))
 #+end_src
 
 * Public API: =my/task-shell= and =my/task-elisp=
@@ -384,24 +456,27 @@ not-yet-started tasks)."
       (let ((inhibit-read-only t)) (erase-buffer)))
     (setf (my/task-buffer task) buf)
     (condition-case err
-        (setf (my/task-process task)
-              (make-process
-               :name (format "task-%s" (symbol-name (my/task-name task)))
-               :command wrapped
-               :buffer buf
-               :noquery t
-               :filter (lambda (proc chunk)
-                         (when (buffer-live-p (process-buffer proc))
-                           (with-current-buffer (process-buffer proc)
-                             (goto-char (point-max))
-                             (let ((inhibit-read-only t))
-                               (insert chunk))))
-                         (when (my/task-on-progress task)
-                           (ignore-errors
-                             (funcall (my/task-on-progress task) chunk))))
-               :sentinel (lambda (proc _event)
-                           (when (memq (process-status proc) '(exit signal))
-                             (my/-task-shell-finished task)))))
+        (progn
+          (setf (my/task-process task)
+                (make-process
+                 :name (format "task-%s" (symbol-name (my/task-name task)))
+                 :command wrapped
+                 :buffer buf
+                 :noquery t
+                 :filter (lambda (proc chunk)
+                           (when (buffer-live-p (process-buffer proc))
+                             (with-current-buffer (process-buffer proc)
+                               (goto-char (point-max))
+                               (let ((inhibit-read-only t))
+                                 (insert chunk))))
+                           (when (my/task-on-progress task)
+                             (ignore-errors
+                               (funcall (my/task-on-progress task) chunk))))
+                 :sentinel (lambda (proc _event)
+                             (when (memq (process-status proc) '(exit signal))
+                               (my/-task-shell-finished task)))))
+          ;; Record PID for orphan-cleanup on a future Emacs startup.
+          (my/-task-record-pid task))
       (error
        ;; Failed to spawn subprocess — treat as immediate failure.
        (setf (my/task-state task) 'failure)
@@ -416,6 +491,8 @@ not-yet-started tasks)."
          (output (with-current-buffer (my/task-buffer task)
                    (string-trim (buffer-string)))))
     (setf (my/task-finished-at task) (current-time))
+    ;; PID marker no longer needed — subprocess exited.
+    (my/-task-remove-pid task)
     (cond
      ((zerop status)
       (setf (my/task-state task) 'success)
@@ -430,8 +507,10 @@ not-yet-started tasks)."
     (my/-task-fire-completion task)))
 
 (defun my/-task-start-elisp (task)
-  "Run elisp TASK's thunk on the main thread via idle timer."
-  (run-with-idle-timer
+  "Run elisp TASK's thunk on the main thread on the next tick.
+Uses `run-at-time' rather than `run-with-idle-timer' so the task fires
+reliably whether or not Emacs is idle (e.g. during batch test runs)."
+  (run-at-time
    0 nil
    (lambda ()
      (let (result error-msg)
