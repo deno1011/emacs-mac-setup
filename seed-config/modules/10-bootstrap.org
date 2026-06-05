@@ -413,6 +413,34 @@ PLIST: same keys as my/bw-create-item. Only the keys present are touched."
                       (fields . ,(vconcat new-flds))))
            (encoded (my/bw--encode-json (json-serialize payload))))
       (my/bw--call "edit" "item" id encoded "--session" my/bw-session))))
+
+;; Explanation: Remove a custom field from a BW item entirely (not just blank it).
+(defun my/bw-delete-field (item-name field-name)
+  "Remove the custom field FIELD-NAME from BW item ITEM-NAME.
+Unlike `my/bw-update-item' (which only appends/replaces fields),
+this rebuilds the fields array WITHOUT the named entry — so the
+field disappears from BW's UI too. No-op if BW is locked or the
+item / field doesn't exist."
+  (when my/bw-session
+    (let ((item (my/bw-get-item item-name)))
+      (when (and item (my/bw-item-field item field-name))
+        (let* ((id      (cdr (assoc 'id item)))
+               (login   (or (cdr (assoc 'login item)) '()))
+               (user    (or (cdr (assoc 'username login)) ""))
+               (pw      (or (cdr (assoc 'password login)) ""))
+               (fields  (my/bw-item-fields-list item))
+               (filtered (cl-remove-if
+                          (lambda (f) (string= (cdr (assoc 'name f)) field-name))
+                          fields))
+               (payload `((id . ,id)
+                          (type . 1)
+                          (name . ,item-name)
+                          (login . ((username . ,user) (password . ,pw)))
+                          (fields . ,(vconcat filtered))))
+               (encoded (my/bw--encode-json (json-serialize payload))))
+          (ignore-errors
+            (my/bw--call "edit" "item" id encoded "--session" my/bw-session))
+          t)))))
 #+end_src
 
 * Step 4 — GitHub identity bundle (token + email + fullname + repo)
@@ -1228,12 +1256,32 @@ decides how to interpret. BW lookup is a no-op when BW is locked
 (defun my/-git-crypt-write (repo value)
   "Persist VALUE as REPO's git-crypt key in BOTH BW and Keychain.
 VALUE can be a base64 key or the skip sentinel. BW write is silently
-skipped when BW is locked; Keychain write always happens."
+skipped when BW is locked; Keychain write always happens.
+Triggers `my/-git-crypt-cleanup-legacy' after the canonical write
+to garbage-collect pre-refactor single-key remnants on this Mac."
   (when my/bw-session
     (ignore-errors
       (my/bw-update-item my/bw-credentials-item
                          :fields `((,(my/-git-crypt-bw-field repo) . ,value)))))
-  (my/keychain-set my/git-crypt-keychain-service value repo))
+  (my/keychain-set my/git-crypt-keychain-service value repo)
+  (my/-git-crypt-cleanup-legacy))
+
+(defun my/-git-crypt-cleanup-legacy ()
+  "Garbage-collect pre-refactor single-key git-crypt remnants:
+
+  - BW field `GitCryptKey' (no `:<repo>' suffix) — fully removed
+    from the `emacs-credentials' item via `my/bw-delete-field'.
+  - Keychain entry under service `my/git-crypt-keychain-service'
+    with account = `(user-login-name)' (the old default).
+
+Both deletions are silent and idempotent — they happen any time
+`my/-git-crypt-write' succeeds. Safe because the canonical per-repo
+entry was just written; any reader looks at `GitCryptKey:<repo>'
+in BW or `<repo>'-account in Keychain, not at the legacy slots."
+  (when my/bw-session
+    (ignore-errors
+      (my/bw-delete-field my/bw-credentials-item "GitCryptKey")))
+  (my/keychain-delete my/git-crypt-keychain-service (user-login-name)))
 
 (defun my/-git-crypt-clear (repo)
   "Remove REPO's key from BOTH BW (empty the field) and Keychain."
