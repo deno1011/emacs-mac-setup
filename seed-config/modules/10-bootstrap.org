@@ -911,6 +911,11 @@ Used by both the empty-dir branch and the override-existing branch."
                    (shell-quote-argument git-name)
                    (shell-quote-argument git-email))
            nil log-buf nil)
+          ;; AUTO-INIT git-crypt BEFORE `git add' so the filter encrypts
+          ;; matching files as they enter the very first blob. Plaintext
+          ;; never reaches the GitHub remote. No-op if git-crypt can't be
+          ;; installed; user data falls back to plaintext gracefully.
+          (my/-repo-auto-init-git-crypt dir)
           (call-process-shell-command
            "git add . && git commit -m 'initial: distro-generated starter content' 2>&1"
            nil log-buf nil)
@@ -1350,6 +1355,123 @@ it's actually wrong."
             :warning)))
       (delete-file keyfile))
     ok))
+
+;; Explanation: Default .gitattributes patterns for repos auto-initialized with git-crypt.
+(defvar my/git-crypt-default-attributes
+  '("# Auto-added by Emacs distro bootstrap on first repo creation."
+    "# Encrypts personal data via git-crypt. Edit patterns here to refine."
+    "data/**          filter=git-crypt diff=git-crypt"
+    "wiki/**          filter=git-crypt diff=git-crypt")
+  "List of strings written into a fresh repo's `.gitattributes' when
+bootstrap auto-initializes git-crypt. Each string becomes one line.
+Edit per-Mac via secrets.el or rewrite after first push.")
+
+;; Explanation: Initialize git-crypt in a fresh repo and dual-save the generated key.
+(defun my/-repo-auto-init-git-crypt (dir)
+  "Initialize git-crypt inside DIR (a fresh `git init'd directory),
+write `.gitattributes' patterns from `my/git-crypt-default-attributes',
+export the generated key, and save the base64-encoded key to BOTH
+Bitwarden (custom field GitCryptKey on `my/bw-credentials-item') AND
+macOS Keychain (service `my/git-crypt-keychain-service').
+
+Called from `my/-repo-fetch-or-create' in the new-repo branch
+BEFORE the first `git add' so the filter encrypts matching files into
+the very first blob — plaintext never reaches the remote.
+
+No-op + warning if git-crypt is not installed and cannot be installed.
+Idempotent: skips if `.git/git-crypt/keys/default' already exists."
+  (cond
+   ((file-exists-p (expand-file-name ".git/git-crypt/keys/default" dir))
+    (message "Bootstrap: git-crypt already initialized in %s; not re-running." dir))
+   (t
+    (unless (my/git-crypt-installed-p)
+      (message "Bootstrap: installing git-crypt via brew (background)…")
+      (my/git-crypt-install))
+    (cond
+     ((not (my/git-crypt-installed-p))
+      (display-warning
+       'emacs-setup
+       "git-crypt could not be installed — fresh repo will be PLAINTEXT.
+Install with `brew install git-crypt' and run M-x my/git-crypt-enable-now."
+       :warning))
+     (t
+      (let ((default-directory dir))
+        (cond
+         ((not (zerop (call-process "git-crypt" nil "*git-crypt-init*" nil "init")))
+          (display-warning
+           'emacs-setup
+           "git-crypt init failed — see *git-crypt-init* buffer. Repo stays plaintext."
+           :warning))
+         (t
+          ;; Write .gitattributes (append if it already exists from
+          ;; my/generate-starter-data).
+          (let ((gitattrs (expand-file-name ".gitattributes" dir)))
+            (with-temp-buffer
+              (when (file-exists-p gitattrs)
+                (insert-file-contents gitattrs)
+                (goto-char (point-max))
+                (unless (bolp) (insert "\n")))
+              (dolist (line my/git-crypt-default-attributes)
+                (insert line "\n"))
+              (write-region (point-min) (point-max) gitattrs nil 'silent)))
+          ;; Export key, base64, save.
+          (let ((keyfile (make-temp-file "git-crypt-init-export-")))
+            (unwind-protect
+                (cond
+                 ((not (zerop (call-process "git-crypt" nil nil nil
+                                            "export-key" keyfile)))
+                  (display-warning
+                   'emacs-setup
+                   "git-crypt export-key failed — key NOT saved to BW/Keychain.
+Repo IS encrypted but you have no copy of the key for other Macs.
+Run `git-crypt export-key /tmp/k && base64 -i /tmp/k' manually."
+                   :error))
+                 (t
+                  (let* ((raw (with-temp-buffer
+                                (set-buffer-multibyte nil)
+                                (insert-file-contents-literally keyfile)
+                                (buffer-string)))
+                         (b64 (base64-encode-string raw t)))
+                    (when my/bw-session
+                      (ignore-errors
+                        (my/bw-update-item my/bw-credentials-item
+                                           :fields `(("GitCryptKey" . ,b64)))
+                        (message "Bootstrap: git-crypt key saved to BW '%s' (GitCryptKey field)."
+                                 my/bw-credentials-item)))
+                    (my/keychain-set my/git-crypt-keychain-service b64)
+                    (message "Bootstrap: git-crypt initialized in %s; key saved to Keychain (service %s)."
+                             dir my/git-crypt-keychain-service))))
+              (when (file-exists-p keyfile)
+                (ignore-errors (delete-file keyfile)))))))))))))
+
+;; Explanation: Interactive — enable git-crypt on an EXISTING repo (history stays plaintext on remote).
+(defun my/git-crypt-enable-now ()
+  "Initialize git-crypt on the existing repo at `my/data-dir' RIGHT
+NOW. Walks the same auto-init flow as the new-repo path: init, write
+`.gitattributes' patterns, export key, dual-save to BW + Keychain.
+
+WARNING: any plaintext blobs already on the remote will STAY plaintext
+on GitHub (git history is immutable). This command only encrypts
+files going FORWARD. If you need to scrub plaintext history, rewrite
+with `git filter-repo' separately AFTER this command and force-push
+— that's a destructive operation done outside bootstrap.
+
+After this command: edit any file under the encrypted patterns and
+commit; the blob will be ciphertext. Old commits still expose the
+content. Plan accordingly."
+  (interactive)
+  (cond
+   ((not (file-directory-p (expand-file-name ".git" my/data-dir)))
+    (message "git-crypt-enable-now: %s is not a git repo." my/data-dir))
+   ((not (y-or-n-p
+          (format "Initialize git-crypt in %s? Future commits will be encrypted; existing history on GitHub stays plaintext. Continue? "
+                  my/data-dir)))
+    (message "git-crypt-enable-now: cancelled."))
+   (t
+    (unless my/bw-session (my/bw-unlock))
+    (my/-repo-auto-init-git-crypt my/data-dir)
+    (when my/bw-session (my/bw-lock))
+    (message "git-crypt-enable-now: done. Commit + push to apply encryption to the next blob."))))
 
 ;; Explanation: Run the git-crypt bootstrap phase when the repo requires it.
 (defun my/git-crypt-step (identity)
