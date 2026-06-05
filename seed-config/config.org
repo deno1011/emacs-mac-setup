@@ -2,18 +2,20 @@
 #+STARTUP: overview
 
 Loaded by: [[file:~/.emacs.d/init.el][init.el]]
+Modules:   [[file:modules/][modules/]]
 
 * Orchestration
 
 This file is the entry point that =init.el= loads. It knows ONE thing:
-that modules live in the =modules/= subdirectory next to this file,
-discovered by listing the directory. It does not enumerate them.
+that modules live in [[file:modules/][modules/]] next to this file, discovered by
+listing the directory. It does not enumerate them.
 
 ** Convention
 
 - =modules/NN-name.org= — module file. =NN= is a numeric prefix that
-  decides load order; smaller loads first. Leave gaps between numbers
-  (10, 20, 30) so future modules can insert without renumbering.
+  decides load order; smaller loads first (so =10-bootstrap.org= runs
+  ahead of everything by virtue of its prefix). Leave gaps between
+  numbers (10, 20, 30) so future modules can insert without renumbering.
 - =modules/NN-name.disabled.org= — disabled by rename. The file stays
   on disk but the discovery loop skips it.
 - =local.org= (next to this file) — per-Mac overrides; loads LAST so it
@@ -21,26 +23,15 @@ discovered by listing the directory. It does not enumerate them.
 
 ** Discovery
 
-Module =10-bootstrap.org= must always run first (BW unlock, GitHub
-identity, private-repo clone). On a fresh Mac the cloned repo can
-introduce new modules into the working tree, so we re-scan the
-directory after bootstrap finishes — that picks up renamed or newly
-added modules without requiring a restart.
+A single sorted directory listing of [[file:modules/][modules/]] drives the load order;
+the numeric prefix on each filename does the work. =10-bootstrap.org=
+runs first because =10= sorts before =20=, not because any code here
+names it explicitly.
 
 #+begin_src elisp :tangle yes
 (defvar my/modules-dir
   (expand-file-name "modules/" my/config-dir)
   "Directory holding the module .org files discovered by config.org.")
-
-(defun my/-module-files ()
-  "Return the current sorted list of enabled module paths under
-`my/modules-dir', skipping files whose basename matches
-`.disabled.org'."
-  (when (file-directory-p my/modules-dir)
-    (sort (seq-remove
-           (lambda (f) (string-match-p "\\.disabled\\.org\\'" f))
-           (directory-files my/modules-dir t "\\.org\\'"))
-          #'string<)))
 
 (defun my/-load-module (path)
   "Load PATH, logging cleanly on error so one bad module does not abort
@@ -51,16 +42,11 @@ the whole config load."
      (message "CONFIG LOAD ERROR (%s): %s"
               (file-name-nondirectory path) err))))
 
-;; Pass 1: bootstrap only. Always present in the seeded modules/ and
-;; runs first because it may clone the user's private repo on top of
-;; the seeded config, replacing files we'd be about to load.
-(let ((bootstrap (expand-file-name "modules/10-bootstrap.org" my/config-dir)))
-  (when (file-exists-p bootstrap) (my/-load-module bootstrap)))
-
-;; Pass 2: everything else. Re-scanned after bootstrap so renamed /
-;; added modules from the just-cloned repo are seen immediately.
-(dolist (f (my/-module-files))
-  (unless (string-suffix-p "10-bootstrap.org" f)
+(when (file-directory-p my/modules-dir)
+  (dolist (f (sort (seq-remove
+                    (lambda (p) (string-match-p "\\.disabled\\.org\\'" p))
+                    (directory-files my/modules-dir t "\\.org\\'"))
+                   #'string<))
     (my/-load-module f)))
 
 ;; Per-Mac override — loads LAST, can shadow anything above. Optional.
