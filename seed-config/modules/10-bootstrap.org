@@ -1108,12 +1108,19 @@ IDENTITY is the plist returned by my/github-load-identity."
                              (concat "Repo pull conflict in " dir
                                      " — leaving repo alone. Resolve manually then restart Emacs.")
                              :warning)))))
-     ;; Empty / absent → clone or create
-     ((or (not (file-exists-p dir))
-          (and (file-directory-p dir)
-               (null (directory-files dir nil "\\`[^.]"))))
+     ;; Empty / absent / only-seed-config → clone or create.
+     ;; The "only-seed-config" case fires right after a fresh install.sh
+     ;; rsync, when `config/' is the sole top-level entry. That isn't user
+     ;; data; it's just the installer's seed. Treat as effectively empty so
+     ;; my/-repo-fetch-or-create can go through the create branch and fire
+     ;; auto-init (no adoption prompt).
+     ((let ((entries (and (file-directory-p dir)
+                          (directory-files dir nil "\\`[^.]"))))
+        (or (not (file-exists-p dir))
+            (null entries)
+            (equal entries '("config"))))
       (my/-repo-fetch-or-create identity))
-     ;; Has content but wrong/no remote — adopt local-only files into the
+     ;; Has user-content but wrong/no remote — adopt local files into the
      ;; GitHub clone while keeping the remote authoritative for conflicts.
      (t
       (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
