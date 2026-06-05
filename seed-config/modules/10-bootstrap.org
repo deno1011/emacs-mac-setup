@@ -1473,12 +1473,41 @@ content. Plan accordingly."
     (when my/bw-session (my/bw-lock))
     (message "git-crypt-enable-now: done. Commit + push to apply encryption to the next blob."))))
 
+;; Explanation: User command — persist git-crypt skip sentinel WITHOUT prompting.
+(defun my/git-crypt-skip ()
+  "Persist the `__SKIPPED__' sentinel into BW + Keychain so future
+bootstraps skip the git-crypt step entirely. Use when you do NOT
+want git-crypt enabled on this repo and want to silence the
+auto-init behaviour. Revive with `M-x my/git-crypt-reset'."
+  (interactive)
+  (when (my/bw-unlock)
+    (unwind-protect
+        (ignore-errors
+          (my/bw-update-item my/bw-credentials-item
+                             :fields `(("GitCryptKey" . ,my/api-skipped-sentinel))))
+      (my/bw-lock)))
+  (my/keychain-set my/git-crypt-keychain-service my/api-skipped-sentinel)
+  (message "git-crypt: skip sentinel persisted in BW + Keychain. Bootstrap will not auto-init or prompt. M-x my/git-crypt-reset to revive."))
+
 ;; Explanation: Run the git-crypt bootstrap phase when the repo requires it.
 (defun my/git-crypt-step (identity)
-  "Top-level dispatcher invoked from my/bootstrap after repo sync.
-IDENTITY is the plist returned by my/github-load-identity (may contain
-a :git-crypt-key already, in which case no prompt is needed).
-No-op if the repo doesn't use git-crypt or is already unlocked."
+  "Top-level dispatcher invoked from `my/bootstrap' after repo sync.
+Behaviour when the repo declares git-crypt (=.gitattributes= has
+=filter=git-crypt=) and is not already unlocked:
+
+  1. Key found in BW or Keychain (and not the skip sentinel)
+     → `my/git-crypt-unlock' uses it.
+  2. Skip sentinel set in either store
+     → silent no-op. Run `M-x my/git-crypt-reset' to revive.
+  3. No key, no sentinel
+     → `my/-repo-auto-init-git-crypt' fires AUTOMATICALLY. Generates
+       a fresh key, dual-saves to BW + Keychain, encrypts future
+       commits. Commits already on the remote stay plaintext (git
+       history is immutable; rewrite separately with `git filter-repo'
+       if needed).
+
+No prompts. To opt out before bootstrap fires, run
+`M-x my/git-crypt-skip' once."
   (cond
    ((not (and (file-directory-p my/data-dir)
               (my/repo-uses-git-crypt-p my/data-dir)))
@@ -1496,10 +1525,39 @@ No-op if the repo doesn't use git-crypt or is already unlocked."
        "git-crypt could not be installed — install manually with: brew install git-crypt"
        :warning))
      (t
-      ;; Resolver: BW → Keychain → prompt + persist (to whichever is available).
-      (let ((key (my/git-crypt-key-resolve identity)))
-        (when key
-          (my/git-crypt-unlock my/data-dir key))))))))
+      ;; Read existing stores without side effects.
+      (let* ((bw-val (plist-get identity :git-crypt-key))
+             (kc-val (my/keychain-get my/git-crypt-keychain-service))
+             (opted-out
+              (or (and (stringp bw-val)
+                       (string= bw-val my/api-skipped-sentinel))
+                  (and (stringp kc-val)
+                       (string= kc-val my/api-skipped-sentinel))))
+             (key
+              (or (and (not (my/-blank-p bw-val))
+                       (not (string= bw-val my/api-skipped-sentinel))
+                       (progn
+                         (message "Bootstrap: git-crypt key from BW '%s' (GitCryptKey)."
+                                  my/bw-credentials-item)
+                         bw-val))
+                  (and (not (my/-blank-p kc-val))
+                       (not (string= kc-val my/api-skipped-sentinel))
+                       (progn
+                         (message "Bootstrap: git-crypt key from Keychain (service %s)."
+                                  my/git-crypt-keychain-service)
+                         kc-val)))))
+        (cond
+         (opted-out
+          (message "Bootstrap: git-crypt skipped by user (M-x my/git-crypt-reset to revive)."))
+         (key
+          (my/git-crypt-unlock my/data-dir key))
+         (t
+          ;; No key, no opt-out. Auto-initialize this clone so future
+          ;; commits encrypt without any user prompt. Existing history
+          ;; on the remote stays plaintext — accept that, or opt out
+          ;; with M-x my/git-crypt-skip BEFORE the next bootstrap run.
+          (message "Bootstrap: no git-crypt key found in BW or Keychain — auto-initializing this clone (no prompts).")
+          (my/-repo-auto-init-git-crypt my/data-dir)))))))))
 #+end_src
 
 * Step 8 — API keys: three-tier model (Bitwarden / Keychain / on-demand fetch)
