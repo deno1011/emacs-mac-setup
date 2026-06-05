@@ -5,6 +5,12 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 * Org Mode
 #+begin_src emacs-lisp
+;; Directory file: links open in Dired, not the OS file browser.
+;; Without this, `[[file:modules/]]' on macOS delegates to `open' →
+;; Finder; with it, it goes through `find-file' → Dired.
+(with-eval-after-load 'org
+  (add-to-list 'org-file-apps '(directory . emacs)))
+
 (setq org-modules '(org-id org-habit org-inlinetask org-protocol))
 
 (use-package org
