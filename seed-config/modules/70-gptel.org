@@ -2,7 +2,7 @@
 #+STARTUP: overview
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
-Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 This file intentionally stays small. The AI implementation now lives in the
 separate package repository:
@@ -16,7 +16,7 @@ is installed and updated from Git.
 * Repository Roles
 
 - =~/emacs= is the private live Emacs-plus runtime repo.
-- =~/emacs/config/gptel-setup.org= is only the loader for the AI package.
+- =~/emacs/config/modules/70-gptel.org= is only the loader for the AI package.
 - =~/gptel-agent-runtime= is the standalone package development repo.
 - =~/emacs-mac-setup= is the installer/bootstrap/template repo.
 

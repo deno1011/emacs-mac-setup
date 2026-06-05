@@ -3,52 +3,76 @@
 
 Loaded by: [[file:~/.emacs.d/init.el][init.el]]
 
-Configuration is split into domain files, all in the same directory as
-this file (~/.emacs.d/config/, symlinked from the distro source).
+* Orchestration
 
-- [[file:core.org][core.org]] — Emacs base: packages, UI, font, version control, protected files, startup sync
-- [[file:org-setup.org][org-setup.org]] — Org mode: agenda, capture, tags, clocking, export, LaTeX, graphics
-- [[file:gptel-setup.org][gptel-setup.org]] — AI: gptel backends, tools, Claude Executor, workspace context, system prompt
-- [[file:wiki-setup.org][wiki-setup.org]] — LLM-maintained Emacs-knowledge wiki (Karpathy pattern) — directive, helpers (=C-c n I/M/U/Q/L=), capture template
-- [[file:org-apple-reminders-setup.org][org-apple-reminders-setup.org]] — Apple Reminders via [[https://github.com/deno1011/org-apple-reminders][org-apple-reminders]] Paket (JXA/osascript, kein CLI) — /nur macOS/
+This file is the entry point that =init.el= loads. It knows ONE thing:
+that modules live in the =modules/= subdirectory next to this file,
+discovered by listing the directory. It does not enumerate them.
 
-To apply changes after editing a sub-file, run =M-x org-babel-tangle= in that file,
-then =M-x load-file= on the generated =.el= file (or restart Emacs).
+** Convention
 
-* Bootstrap
+- =modules/NN-name.org= — module file. =NN= is a numeric prefix that
+  decides load order; smaller loads first. Leave gaps between numbers
+  (10, 20, 30) so future modules can insert without renumbering.
+- =modules/NN-name.disabled.org= — disabled by rename. The file stays
+  on disk but the discovery loop skips it.
+- =local.org= (next to this file) — per-Mac overrides; loads LAST so it
+  can override any module. Optional and untracked.
+
+** Discovery
+
+Module =10-bootstrap.org= must always run first (BW unlock, GitHub
+identity, private-repo clone). On a fresh Mac the cloned repo can
+introduce new modules into the working tree, so we re-scan the
+directory after bootstrap finishes — that picks up renamed or newly
+added modules without requiring a restart.
 
 #+begin_src elisp :tangle yes
-;; bootstrap.org MUST load first: it unlocks Bitwarden, fetches the
-;; user's GitHub identity, clones / pulls the private data repo,
-;; generates starter content where files are missing, and populates
-;; API-key env vars. Every other split file below depends on at least
-;; one of those (org-setup.org needs ~/emacs/data/org/, gptel-setup.org
-;; needs the API-key env vars, wiki-setup.org needs ~/emacs/wiki/emacs/).
-(defvar my/config-split-files
-  '("bootstrap.org" "core.org" "org-setup.org" "gptel-setup.org" "wiki-setup.org"))
-(when (eq system-type 'darwin)
-  (add-to-list 'my/config-split-files "org-apple-reminders-setup.org" t))
+(defvar my/modules-dir
+  (expand-file-name "modules/" my/config-dir)
+  "Directory holding the module .org files discovered by config.org.")
 
-;; Config files live in my/config-dir (= my/data-dir/config/, i.e.,
-;; ~/emacs/config/ by default — the user's PRIVATE repo). init.el seeds
-;; them on first install if ~/emacs/config/.bootstrap-completed is absent.
-;; If a
-;; split file is missing, the right fix is `bash install.sh` (which
-;; re-syncs the symlink), not a silent network fetch — so this loop only
-;; loads what's actually on disk and logs a clean error otherwise.
-(dolist (f my/config-split-files)
-  (let ((path (expand-file-name f my/config-dir)))
-    (if (file-exists-p path)
-        (condition-case err
-            (org-babel-load-file path)
-          (error (message "CONFIG LOAD ERROR (%s): %s" f err)))
-      (message "CONFIG MISSING: %s — try `bash ~/emacs-mac-setup-src/install.sh`" path))))
+(defun my/-module-files ()
+  "Return the current sorted list of enabled module paths under
+`my/modules-dir', skipping files whose basename matches
+`.disabled.org'."
+  (when (file-directory-p my/modules-dir)
+    (sort (seq-remove
+           (lambda (f) (string-match-p "\\.disabled\\.org\\'" f))
+           (directory-files my/modules-dir t "\\.org\\'"))
+          #'string<)))
+
+(defun my/-load-module (path)
+  "Load PATH, logging cleanly on error so one bad module does not abort
+the whole config load."
+  (condition-case err
+      (org-babel-load-file path)
+    (error
+     (message "CONFIG LOAD ERROR (%s): %s"
+              (file-name-nondirectory path) err))))
+
+;; Pass 1: bootstrap only. Always present in the seeded modules/ and
+;; runs first because it may clone the user's private repo on top of
+;; the seeded config, replacing files we'd be about to load.
+(let ((bootstrap (expand-file-name "modules/10-bootstrap.org" my/config-dir)))
+  (when (file-exists-p bootstrap) (my/-load-module bootstrap)))
+
+;; Pass 2: everything else. Re-scanned after bootstrap so renamed /
+;; added modules from the just-cloned repo are seen immediately.
+(dolist (f (my/-module-files))
+  (unless (string-suffix-p "10-bootstrap.org" f)
+    (my/-load-module f)))
+
+;; Per-Mac override — loads LAST, can shadow anything above. Optional.
+(let ((local (expand-file-name "local.org" my/config-dir)))
+  (when (file-exists-p local) (my/-load-module local)))
 #+end_src
 
 * GTD Overlay
 
 Loads the GTD configuration from =~/emacs/data/org/gtd-config.el=.
-Runs AFTER =org-setup.org= so it overrides the norang defaults.
+Runs AFTER all modules, so it overrides any org defaults set by
+=50-org.org= or its successors.
 
 #+begin_src elisp :tangle yes
 (let ((gtd-config (expand-file-name "data/org/gtd-config.el" my/data-dir)))

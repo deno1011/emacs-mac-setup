@@ -1,7 +1,7 @@
 #+TITLE: Org Mode Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
-Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 * Org Mode
 #+begin_src emacs-lisp
@@ -1507,4 +1507,4 @@ launches the browser. Updates live as you edit pages.
 
 * Apple Reminders
 
-Konfiguriert in [[file:org-reminders-setup.org][org-reminders-setup.org]] — wird von [[file:config.org][config.org]] nur auf macOS geladen.
+Konfiguriert in [[file:55-apple-reminders.org][55-apple-reminders.org]] — wird vom Modul-Discovery in [[file:../config.org][config.org]] geladen; der =eq system-type 'darwin'=-Guard sitzt innerhalb des Moduls selbst.

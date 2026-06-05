@@ -1,11 +1,11 @@
 #+TITLE: Bootstrap — Bitwarden, GitHub, Personal data, Secrets
 #+STARTUP: overview
 
-Loaded *first* by [[file:config.org][config.org]] (prepended to =my/config-split-files=).
-Everything here runs before =core.org=, =org-setup.org=, etc., so by
-the time the rest of the config loads, API keys are in =setenv=, the
-user's private repo is synced into =my/data-dir=, and =gh= is
-authenticated.
+Loaded *first* by [[file:../config.org][config.org]]'s discovery loop (numeric prefix =10-=
+puts it ahead of every other module). Everything here runs before
+[[file:20-core.org][20-core.org]], [[file:50-org.org][50-org.org]], etc., so by the time the rest of the
+config loads, API keys are in =setenv=, the user's private repo is
+synced into =my/data-dir=, and =gh= is authenticated.
 
 Flow (idempotent on every Emacs start; silent after first launch):
 1. Unlock Bitwarden — prompts on first launch, cached in macOS Keychain after.
@@ -819,17 +819,31 @@ inside multiline string literals with the structure of this file.
                "data/org/archive"))
     (make-directory (expand-file-name d root) t)))
 
-;; Explanation: Re-seed missing split config files after repo sync or adoption.
+(defvar my/distro-src-dir
+  (or (getenv "EMACS_MAC_SRC_DIR")
+      (expand-file-name "~/emacs-mac-setup-src/"))
+  "Local checkout of the public distro. Used by
+`my/bootstrap-ensure-seed-config-files' to backfill missing modules
+after repo adoption.")
+
+;; Explanation: Backfill missing config files after repo sync/adoption.
 (defun my/bootstrap-ensure-seed-config-files ()
-  "Re-seed missing config files after repo sync/adoption.
-`init.el' seeds before `bootstrap.org' runs, but repo adoption can replace
-`my/data-dir' with the private GitHub clone.  If that clone is older or partial,
-copy any missing split config files from the distro before `config.org' tries to
-load the remaining scripts."
-  (when (and (boundp 'my/seed-files)
-             (fboundp 'my/-seed-fetch))
-    (dolist (file my/seed-files)
-      (my/-seed-fetch file))))
+  "Backfill missing config files from the distro source.
+`install.sh' seeds `my/config-dir' before Emacs first launches, but
+`my/repo-sync' may then replace it with the user's private clone — which
+can be missing modules the distro provides. Walk
+`my/distro-src-dir/seed-config/' and copy any file the user's
+`my/config-dir' is missing, preserving subdirectory structure. Never
+overwrites existing files."
+  (let ((src (expand-file-name "seed-config" my/distro-src-dir)))
+    (when (file-directory-p src)
+      (dolist (file (directory-files-recursively src "."))
+        (let* ((rel  (file-relative-name file src))
+               (dest (expand-file-name rel my/config-dir)))
+          (unless (file-exists-p dest)
+            (make-directory (file-name-directory dest) t)
+            (copy-file file dest)
+            (message "Bootstrap: backfilled %s from distro." rel)))))))
 #+end_src
 
 * Step 6 — Personal repo sync
@@ -1537,27 +1551,6 @@ Idempotent; safe to invoke as M-x my/bootstrap to re-run."
 
   ;; 9. Lock BW
   (when my/bw-session (my/bw-lock))
-
-  ;; 10. Drop the .bootstrap-completed marker so init.el skips the
-  ;; URL-seed step on next launch. Delete this file manually to
-  ;; force a re-seed of any missing files from the distro.
-  (let ((marker (expand-file-name ".bootstrap-completed" my/config-dir)))
-    (unless (file-exists-p marker)
-      (with-temp-file marker
-        (insert (format "Bootstrap completed at %s.
-
-This file is a SENTINEL. Its existence tells init.el that
-my/config-dir = %s is owned by you (the user) and to NOT re-seed
-.org files from the public distro on subsequent launches.
-
-Delete this file to force init.el to re-fetch any missing seed
-files from %s on the next launch. Existing files in this directory
-are NEVER overwritten — only missing ones are pulled.
-"
-                        (format-time-string "%Y-%m-%d %H:%M:%S %Z")
-                        my/config-dir
-                        my/distro-seed-url-base)))
-      (message "Bootstrap: marker dropped at %s — next launch will skip seeding." marker)))
 
   (message "Bootstrap: done."))
 

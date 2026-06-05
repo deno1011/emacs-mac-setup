@@ -2,13 +2,13 @@
 #+STARTUP: overview
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
-Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 
 - Wiki content at =~/emacs/wiki/emacs/=
 - Schema at =~/emacs/wiki/emacs/WIKI.org=
-- Built on top of [[file:org-setup.org][org-roam]] and [[file:gptel-setup.org][gptel]]
+- Built on top of [[file:50-org.org][org-roam]] and [[file:70-gptel.org][gptel]]
 - Pattern: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
 
 * Wiki Root and Preferences
@@ -173,7 +173,7 @@ call `gptel-send' automatically. Returns the buffer."
 
 =M-x my/wiki-ingest= prompts for a file (defaults to =raw/= with
 completion), opens a dedicated buffer, and fires the ingest prompt.
-Watch the gptel buffer or the [[file:org-setup.org][org-roam-ui]] graph for the result.
+Watch the gptel buffer or the [[file:50-org.org][org-roam-ui]] graph for the result.
 
 #+begin_src emacs-lisp
 (defun my/wiki-ingest (file)

@@ -1,7 +1,7 @@
 #+TITLE: Core Emacs Configuration
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
-Loaded by: [[file:config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp :tangle yes
 ;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
@@ -16,7 +16,7 @@ long time" behaviour — every interactive command was triggering a GC
 on a heap that grew progressively more fragmented.
 
 The init-phase tuning has to run *before* =package.el= initializes,
-which means it can't live in this file (=core.org= is loaded by
+which means it can't live in this file (=20-core.org= is loaded by
 =config.org=, which is loaded by =init.el=, which already finished by
 the time tangled lisp here runs). Emacs 27+ supports
 [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Early-Init-File.html][=early-init.el=]] specifically for this purpose, and that's where the
