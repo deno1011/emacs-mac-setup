@@ -8,7 +8,7 @@ Bitwarden, no Keychain dance — just an editor that works.
 ## Open Terminal and run
 
 ```bash
-EMACS_MAC_BRANCH=sketch/distro-model /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/sketch/distro-model/install.sh)"
+EMACS_MAC_BRANCH=refactor/modular-config /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/refactor/modular-config/install.sh)"
 ```
 
 After ~10 minutes (most of it `brew install emacs-plus`), Emacs launches
