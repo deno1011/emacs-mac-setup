@@ -9,7 +9,7 @@ emacs-plus, drops a literate config into `~/.emacs.d/`, and seeds
 having to build it themselves.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh | /bin/bash
+EMACS_MAC_BRANCH=refactor/modular-config /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/refactor/modular-config/install.sh)"
 ```
 
 See [!STARTHERE.md](!STARTHERE.md) for the user-facing intro.
