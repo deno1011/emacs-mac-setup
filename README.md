@@ -1,6 +1,6 @@
 # emacs-mac-setup
 
-Opinionated preconfigured Emacs distribution for macOS.
+Preconfigured Emacs distribution for macOS.
 
 One curl, one command, fully wired on first launch — installs
 emacs-plus, drops a literate config into `~/.emacs.d/`, and seeds
