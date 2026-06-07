@@ -1,0 +1,24 @@
+#+TITLE: Fullscreen Startup
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded before every other module so graphical frames enter fullscreen as
+early as possible. This covers normal GUI starts and daemon/client
+frames; terminal frames are ignored.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 00-fullscreen.el --- Fullscreen graphical frames early -*- lexical-binding: t; -*-
+
+(defun my/fullscreen-frame (frame)
+  "Put graphical FRAME into fullscreen."
+  (when (and (frame-live-p frame)
+             (display-graphic-p frame))
+    (with-selected-frame frame
+      (unless (memq (frame-parameter frame 'fullscreen)
+                    '(fullscreen fullboth))
+        (set-frame-parameter frame 'fullscreen 'fullboth)))))
+
+(add-hook 'after-make-frame-functions #'my/fullscreen-frame)
+
+(when (display-graphic-p)
+  (my/fullscreen-frame (selected-frame)))
+#+end_src
