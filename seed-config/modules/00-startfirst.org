@@ -1,9 +1,11 @@
-#+TITLE: Fullscreen Startup
+#+TITLE: Start First
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
-Loaded before every other module so graphical frames enter fullscreen as
-early as possible. This covers normal GUI starts and daemon/client
-frames; terminal frames are ignored.
+This config is an early load config for anything which need to be executed before anything else is loaded.
+
+* Fullscreen Mode
+
+This shall be started right at the beginning so that changing to full screen is immediate and doesnt get delayed while other configs are being loaded
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 00-fullscreen.el --- Fullscreen graphical frames early -*- lexical-binding: t; -*-
