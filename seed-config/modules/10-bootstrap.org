@@ -221,6 +221,12 @@ returns ~immediately after BW reads complete."
       (my/task-shell
        task-name
        (list "bash" "-c" (my/-keychain-multi-set-script entries))
+       ;; The script contains shell-quoted secret VALUES on its argv
+       ;; (passed as the `bash -c' string). Redact wipes the task
+       ;; buffer + result slot after completion. The script's argv
+       ;; itself is still briefly visible to `ps -ef' during execution
+       ;; — that's a deeper leak addressed separately (move to stdin).
+       :redact t
        :on-success (lambda (_) (funcall cb t))
        :on-failure (lambda (_) (funcall cb nil)))
       task-name))))
@@ -259,6 +265,10 @@ shell-outs."
      (intern (format "kc-multi-get-%d"
                      (cl-incf my/-keychain-task-counter)))
      (list "bash" "-c" script)
+     ;; Stdout contains base64-encoded Keychain VALUES (BW email +
+     ;; master, etc.). Redact wipes the buffer + result after the
+     ;; on-success callback has decoded what it needs.
+     :redact t
      :on-success
      (lambda (out)
        (let* ((lines (cl-remove-if-not
@@ -450,7 +460,11 @@ of the vault is dispatched to the background."
                          (cl-incf my/-keychain-task-counter)))
          (list "bash" "-c"
                (format "bw lock --session %s >/dev/null 2>&1"
-                       (shell-quote-argument session))))))))
+                       (shell-quote-argument session)))
+         ;; Argv contains the session token inside the `bash -c'
+         ;; string. Stdout is empty (redirected) but redact for
+         ;; consistency in case `bw' starts writing diagnostics.
+         :redact t)))))
 
 ;; Explanation: Async variant of my/bw-unlock — bw subprocess wait happens off main thread.
 (cl-defun my/bw-unlock-async (callback)
@@ -494,6 +508,11 @@ Behaviour:
                               (cl-incf my/-keychain-task-counter)))
               (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
               :env `(("BW_PW" . ,master))
+              ;; Stdout IS the BW session token. Redact the buffer +
+              ;; result so neither the *task: bw-unlock-N* buffer nor
+              ;; `(my/task-result-of 'bw-unlock-N)' holds the secret
+              ;; after on-success has stashed it in `my/bw-session'.
+              :redact t
               :on-success
               (lambda (out)
                 (let* ((s (and (stringp out) (string-trim out)))
@@ -504,13 +523,16 @@ Behaviour:
                   (cond
                    (session
                     (setq my/bw-session session)
-                    ;; Background sync — fire-and-forget.
+                    ;; Background sync — fire-and-forget. Argv contains
+                    ;; the session token (via shell-quote-argument inside
+                    ;; the bash -c string) so we redact the buffer too.
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
                      (list "bash" "-c"
                            (format "bw sync --session %s >/dev/null 2>&1"
-                                   (shell-quote-argument session))))
+                                   (shell-quote-argument session)))
+                     :redact t)
                     (funcall cb session))
                    (t
                     (display-warning
@@ -615,6 +637,12 @@ real issue, add a chained second-stage task here."
                        (cl-incf my/-keychain-task-counter)))
        (list "bw" "get" "item" item-name
              "--session" my/bw-session)
+       ;; Stdout is the full BW item JSON: PAT, every API key, every
+       ;; GitCryptKey field. Redact aggressively — the on-success
+       ;; callback parses it in-memory and the buffer/result get wiped.
+       ;; Argv contains the session token as well; same separate fix
+       ;; needed for argv leak.
+       :redact t
        :on-success
        (lambda (out)
          (let ((parsed

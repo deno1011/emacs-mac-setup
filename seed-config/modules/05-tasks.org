@@ -129,7 +129,17 @@ to a terminal state (success, failure, cancelled).")
   on-success on-failure on-progress
   state result error
   process buffer
-  started-at finished-at)
+  started-at finished-at
+  ;; When `redact' is non-nil, the framework wipes both the *task: NAME*
+  ;; buffer and the task struct's `result' / `error' slots AFTER the
+  ;; on-success / on-failure callbacks have run. Callbacks see the real
+  ;; output (so they can extract the value they need); everything readable
+  ;; afterwards (`my/task-result-of', `M-x my/task-show-output', the
+  ;; status buffer's preview column) shows the sentinel "(redacted)".
+  ;;
+  ;; Use on any task whose stdout contains secrets — BW session tokens,
+  ;; the bw-get-item JSON, base64-encoded passwords, etc.
+  redact)
 #+end_src
 
 * Session marker + orphan cleanup
@@ -291,7 +301,7 @@ our own about-to-be-spawned subprocesses)."
 (cl-defun my/task-shell (name command
                               &key env cwd depends-on
                               on-success on-failure on-progress
-                              detach)
+                              detach redact)
   "Submit a shell task NAME running COMMAND.
 
 COMMAND is either a list of strings (executed directly) or a zero-arg
@@ -314,6 +324,14 @@ ON-PROGRESS receives each stdout chunk as it arrives.
 DETACH non-nil skips the EMACS_TASK_GUID wrap. Use only when the
 subprocess is meant to survive Emacs (e.g. `ollama serve').
 
+REDACT non-nil wipes the `*task: NAME*' buffer and the task struct's
+`result' / `error' slots AFTER ON-SUCCESS / ON-FAILURE have run. The
+callbacks still see the real output (so they can extract a session
+token, parse JSON, decode base64, etc.); afterwards `my/task-result-of',
+`M-x my/task-show-output', and the status buffer's preview column all
+show the sentinel \"(redacted)\". Use on any task whose stdout
+contains secrets.
+
 Returns the task struct immediately."
   (let ((task (make-my/task
                :name name :kind 'shell :command command
@@ -321,6 +339,7 @@ Returns the task struct immediately."
                :depends-on depends-on
                :on-success on-success :on-failure on-failure
                :on-progress on-progress
+               :redact redact
                :state 'pending)))
     (puthash name task my/tasks)
     (my/-task-try-start name)
@@ -504,6 +523,22 @@ not-yet-started tasks)."
       (setf (my/task-error task) (format "exit %d: %s" status output))
       (when (my/task-on-failure task)
         (ignore-errors (funcall (my/task-on-failure task) (my/task-error task))))))
+    ;; Redaction AFTER callbacks ran. Wipe the buffer + struct slots so
+    ;; secrets aren't sitting in `*task: NAME*' or returned by
+    ;; `my/task-result-of'. The callbacks already extracted what they
+    ;; needed; the framework keeps state (`success'/`failure') so
+    ;; `:depends-on' and `M-x my/task-status' still work.
+    (when (my/task-redact task)
+      (when (buffer-live-p (my/task-buffer task))
+        (with-current-buffer (my/task-buffer task)
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert "(redacted)\n"))))
+      (when (eq (my/task-state task) 'success)
+        (setf (my/task-result task) "(redacted)"))
+      (when (eq (my/task-state task) 'failure)
+        (setf (my/task-error task)
+              (format "exit %d: (redacted)" status))))
     (my/-task-fire-completion task)))
 
 (defun my/-task-start-elisp (task)
