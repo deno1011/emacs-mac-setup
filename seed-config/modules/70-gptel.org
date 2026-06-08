@@ -58,12 +58,18 @@ Once the package is available on MELPA, replace this block with =:ensure t= in
 the use-package form below and remove the =package-vc-install= call.
 
 #+begin_src emacs-lisp :tangle yes
-(unless (package-installed-p 'gptel-agent-runtime)
-  (package-vc-install
-   '(gptel-agent-runtime
-     :url "https://github.com/deno1011/gptel-agent-runtime"
-     :branch "main"
-     :ignored-files ("test/*" "docs/*" "scripts/*"))))
+;; Self-heal — same pattern as 55-apple-reminders.org. Avoid the
+;; "Overwrite previous checkout?" prompt when elpa/ contains the
+;; package directory but Emacs's package state lost the registration.
+(unless (or (package-installed-p 'gptel-agent-runtime)
+            (locate-library "gptel-agent-runtime"))
+  (cl-letf (((symbol-function 'y-or-n-p)   (lambda (&rest _) t))
+            ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+    (package-vc-install
+     '(gptel-agent-runtime
+       :url "https://github.com/deno1011/gptel-agent-runtime"
+       :branch "main"
+       :ignored-files ("test/*" "docs/*" "scripts/*")))))
 
 ;; Pull latest main asynchronously at startup. This is non-blocking and silent
 ;; if offline. Updated code becomes active from the next Emacs session.

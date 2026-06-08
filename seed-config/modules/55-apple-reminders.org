@@ -31,11 +31,23 @@ the use-package form below and remove the =package-vc-install= call.
 
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
-  (unless (package-installed-p 'org-apple-reminders)
-    (package-vc-install
-     '(org-apple-reminders
-       :url "https://github.com/deno1011/org-apple-reminders"
-       :branch "main")))
+  ;; Self-heal: `package-installed-p' returns nil for a directory in
+  ;; elpa/ that wasn't registered (e.g. installed by a previous Emacs
+  ;; whose package state didn't persist). When that happens,
+  ;; `package-vc-install' prompts "Overwrite previous checkout?" and
+  ;; blocks startup. Two checks:
+  ;;   1. If the directory exists AND `locate-library' finds it, the
+  ;;      package is REALLY there — just not registered. Skip install.
+  ;;   2. If install IS needed, auto-answer the overwrite prompt via
+  ;;      cl-letf so no interactive blocking can happen.
+  (unless (or (package-installed-p 'org-apple-reminders)
+              (locate-library "org-apple-reminders"))
+    (cl-letf (((symbol-function 'y-or-n-p)   (lambda (&rest _) t))
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+      (package-vc-install
+       '(org-apple-reminders
+         :url "https://github.com/deno1011/org-apple-reminders"
+         :branch "main"))))
   ;; Pull latest main asynchronously at startup — non-blocking, silent if offline.
   ;; Updated code is active from the next Emacs session.
   (when-let* ((lib (locate-library "org-apple-reminders"))

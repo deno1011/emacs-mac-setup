@@ -71,6 +71,30 @@ folder is missing locally, this temporarily points at
 (require 'use-package)
 (setq use-package-always-ensure t)
 
+;; Self-heal: if `package-install' fails with "Package not found in any
+;; archive" (because elpa/archives/ is missing or stale — typical after
+;; restoring ~/.emacs.d/ from a partial backup, or after the symlink
+;; collapse we fixed in install.sh), refresh archives ONCE per session
+;; and retry. Without this, every `:ensure t' on a not-yet-cached
+;; package would error out and load the rest of the literate config
+;; with broken pieces.
+(defvar my/-package-archives-refreshed nil
+  "t after `package-refresh-contents' has been called in this session.")
+(defun my/-package-install-with-refresh-once (orig-fn &rest args)
+  (condition-case err
+      (apply orig-fn args)
+    ((file-missing error)
+     (cond
+      (my/-package-archives-refreshed
+       (signal (car err) (cdr err)))
+      (t
+       (setq my/-package-archives-refreshed t)
+       (message "init.el: package-install failed for %S; refreshing archives and retrying once."
+                (car args))
+       (package-refresh-contents)
+       (apply orig-fn args))))))
+(advice-add 'package-install :around #'my/-package-install-with-refresh-once)
+
 ;; 3. Secrets — per-Mac, never tracked in git ------------------------------
 (let ((secrets (expand-file-name "secrets.el" user-emacs-directory)))
   (when (file-exists-p secrets)
