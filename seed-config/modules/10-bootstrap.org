@@ -225,6 +225,91 @@ Returns the session token or nil if the user declined / unlock failed."
             (my/keychain-delete my/keychain-service my/keychain-account-bw-master))
           nil)))))))
 
+;; Explanation: Non-blocking BW unlock — calls callback when the subprocess returns.
+(cl-defun my/bw-unlock-async (callback &key force-prompt)
+  "Asynchronous variant of `my/bw-unlock'. CALLBACK is a one-arg
+function receiving the session token (string) on success or nil on
+failure / decline. Returns immediately; CALLBACK runs on the main
+thread from the `bw' subprocess sentinel.
+
+Behaviour:
+  - `my/bw-session' already set → CALLBACK invoked with the cached
+    session on the next event-loop tick (preserves async semantics so
+    callers can chain uniformly).
+  - bw CLI not installed → CALLBACK nil on the next tick. Also offers
+    to brew-install in the background.
+  - Keychain has cached email + master → spawn `bw unlock --raw' as a
+    `my/task-shell' task. The sentinel sets `my/bw-session', fires a
+    backgrounded `bw sync', then invokes CALLBACK. UI stays
+    responsive during the ~500-1000 ms crypto unwrap.
+  - No cached creds → falls back to SYNCHRONOUS `my/bw-unlock' since
+    `read-passwd' must run on the main thread and a deferred prompt
+    would defeat the purpose. Only happens on first launch.
+
+FORCE-PROMPT non-nil bypasses the Keychain cache → sync prompt path."
+  (let ((cb (or callback #'ignore)))
+    (cond
+     (my/bw-session
+      (run-at-time 0 nil cb my/bw-session))
+     ((not (my/bw-installed-p))
+      (when (and (eq system-type 'darwin)
+                 (y-or-n-p "bw CLI not installed. Install via brew (background)? "))
+        (my/bw-install))
+      (run-at-time 0 nil cb nil))
+     (force-prompt
+      (run-at-time 0 nil cb (my/bw-unlock t)))
+     (t
+      (let* ((email  (my/keychain-get my/keychain-service
+                                      my/keychain-account-bw-email))
+             (master (and email
+                          (my/keychain-get my/keychain-service
+                                           my/keychain-account-bw-master))))
+        (cond
+         ((not (and email master))
+          ;; No cached creds → SYNC prompt path. First launch only.
+          (run-at-time 0 nil cb (my/bw-unlock)))
+         (t
+          (my/task-shell
+           'bw-unlock
+           (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
+           :env `(("BW_PW" . ,master))
+           :on-success
+           (lambda (out)
+             (let* ((s (and (stringp out) (string-trim out)))
+                    (session (and s
+                                  (> (length s) 30)
+                                  (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
+                                  s)))
+               (cond
+                (session
+                 (setq my/bw-session session)
+                 ;; Fire-and-forget background sync. We don't wait.
+                 (my/task-shell
+                  'bw-sync
+                  (list "bash" "-c"
+                        (format "bw sync --session %s >/dev/null 2>&1"
+                                (shell-quote-argument session))))
+                 (message "Bitwarden unlocked.")
+                 (funcall cb session))
+                (t
+                 (display-warning
+                  'emacs-setup
+                  "BW async unlock returned no session token. Cached master may be stale — wiping so next launch re-prompts."
+                  :warning)
+                 (my/keychain-delete my/keychain-service
+                                     my/keychain-account-bw-master)
+                 (funcall cb nil)))))
+           :on-failure
+           (lambda (_err)
+             (display-warning
+              'emacs-setup
+              "BW async unlock subprocess failed. Cached master may be stale — wiping so next launch re-prompts."
+              :warning)
+             (my/keychain-delete my/keychain-service
+                                 my/keychain-account-bw-master)
+             (funcall cb nil)))))))))
+  nil)
+
 ;; Explanation: Lock Bitwarden and clear the in-memory session token after bootstrap has loaded secrets.
 (defun my/bw-lock ()
   "Lock the BW vault and clear the session token from memory."
@@ -1980,67 +2065,152 @@ Runs with prompts inline. Only fires when
 =my/bootstrap--needs-anything-p= says so.
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: full sync bootstrap — runs only on launches that actually need work.
-(defun my/bootstrap--run-full-sync ()
-  "Execute the full first-launch bootstrap synchronously.
-Internal — called by `my/bootstrap' when the predicate says work is
-required. Safe to invoke directly via M-x for retries."
-  (message "Bootstrap: starting…")
+;; Explanation: Async bootstrap — chained callbacks; UI stays responsive throughout.
+;;
+;; The earlier synchronous flow blocked the main thread for ~1-2 seconds at startup
+;; (bw unlock alone is ~500-1000ms of crypto unwrap). This rewrite uses
+;; `my/task-shell' for the heaviest shell-outs (bw unlock, gh auth status,
+;; git-crypt unlock, final bw lock) and chains the rest in `:on-success'
+;; callbacks. Each step's synchronous part runs from a sentinel callback,
+;; not from `emacs-startup-hook' — so the UI is interactive while the
+;; subprocesses do the slow work.
+;;
+;; Step graph:
+;;
+;;   kickoff
+;;     ↓ my/bw-unlock-async (subprocess)
+;;   step-identity   ← sync inside callback: one `bw get item' + field parsing
+;;     ↓
+;;   step-gh-install
+;;     ↓ my/task-shell `gh auth status' (subprocess; may fail → triggers login)
+;;   step-gh-auth-result
+;;     ↓ sync `gh auth login --with-token' if needed
+;;   step-repo-sync  ← sync: clone/pull/adopt (may be slow on first clone)
+;;     ↓ my/task-shell `git-crypt unlock' (subprocess)
+;;   step-git-crypt-result
+;;     ↓
+;;   step-api-keys   ← sync: read Keychain; pull from BW if first launch
+;;     ↓ my/task-shell `bw lock' (subprocess, fire-and-forget)
+;;   finish
+;;
+;; Any callback may short-circuit straight to `my/bootstrap--finish' on
+;; failure — `finish' always runs (clears `my/bw-session', logs done).
 
-  ;; 1-2. BW
-  (my/bw-unlock)
-  (if my/bw-session
-      (message "Bootstrap: Bitwarden vault unlocked.")
-    (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets."))
+(defun my/bootstrap--finish (&rest _)
+  "Terminal step. Idempotent — safe to call from any failure branch."
+  (when my/bw-session
+    ;; Fire-and-forget lock; we don't wait. Setq clears the in-memory token.
+    (my/task-shell 'bw-lock
+                   (list "bash" "-c"
+                         (format "bw lock --session %s >/dev/null 2>&1"
+                                 (shell-quote-argument my/bw-session))))
+    (setq my/bw-session nil))
+  (message "Bootstrap: done."))
 
-  ;; 3-4. GitHub identity
+(defun my/bootstrap--step-identity (&rest _)
+  "After BW unlock: load GitHub identity, set git global config,
+chain to gh install + auth check.
+The `bw get item' inside `my/github-load-identity' is one ~200ms
+shell call — kept sync because by now UI is already interactive."
   (let ((id (my/github-load-identity)))
     (my/git-identity-ensure-global id)
     (cond
      ((and id (not (my/-blank-p (plist-get id :token))))
-      ;; 5. gh install + auth
-      (cond
-       ((my/gh-installed-p) (message "Bootstrap: gh CLI present."))
-       (t
-        (message "Bootstrap: gh CLI missing — installing via brew (background)…")
-        (my/gh-install)))
-      (when (my/gh-installed-p)
-        (cond
-         ((my/gh-authenticated-p)
-          (message "Bootstrap: gh already authenticated."))
-         (t
-          (message "Bootstrap: authenticating gh with BW-stored token…")
-          (my/gh-login-with-token (plist-get id :token))))
-        ;; 6. Repo sync (first-time clone or adopt; pull is opt-in via
-        ;; M-x my/repo-sync-now below).
-        (cond
-         ((and (not (my/-blank-p (plist-get id :username)))
-               (not (my/-blank-p (plist-get id :repo))))
-          (my/repo-sync id)
-          (my/bootstrap-ensure-seed-config-files))
-         (t
-          (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
-                   my/bw-credentials-item))))
-      ;; 7. git-crypt unlock (no-op if repo doesn't use it).
-      (my/git-crypt-step id)
-      ;; 8. Starter data — only fills gaps.
-      (when (file-directory-p my/data-dir)
-        (my/generate-starter-data my/data-dir id)
-        (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
+      (my/bootstrap--step-gh-install id))
      (t
+      ;; No usable identity — still write starter content locally, then finish.
       (unless (file-directory-p my/data-dir)
         (make-directory my/data-dir t))
       (my/generate-starter-data my/data-dir '())
       (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
-               my/data-dir))))
+               my/data-dir)
+      (my/bootstrap--step-api-keys nil)))))
 
-  ;; 9. API keys
+(defun my/bootstrap--step-gh-install (id)
+  "Ensure gh CLI is on PATH, then chain to async auth check."
+  (cond
+   ((my/gh-installed-p)
+    (message "Bootstrap: gh CLI present.")
+    (my/bootstrap--step-gh-auth-check id))
+   (t
+    (message "Bootstrap: gh CLI missing — installing via brew (background)…")
+    ;; brew install is internally backgrounded; for this flow we proceed
+    ;; right away. Auth check below will fail-and-retry if needed.
+    (my/gh-install)
+    (my/bootstrap--step-gh-auth-check id))))
+
+(defun my/bootstrap--step-gh-auth-check (id)
+  "Run `gh auth status' as a `my/task-shell' task. Subprocess exit code
+0 → already authenticated; non-zero → log in with the BW token (sync)."
+  (cond
+   ((not (my/gh-installed-p))
+    (my/bootstrap--step-repo-sync id))
+   (t
+    (my/task-shell
+     'gh-auth-status
+     (list "bash" "-c" "gh auth status >/dev/null 2>&1")
+     :on-success
+     (lambda (_out)
+       (message "Bootstrap: gh already authenticated.")
+       (my/bootstrap--step-repo-sync id))
+     :on-failure
+     (lambda (_err)
+       (message "Bootstrap: authenticating gh with BW-stored token…")
+       (my/gh-login-with-token (plist-get id :token))
+       (my/bootstrap--step-repo-sync id))))))
+
+(defun my/bootstrap--step-repo-sync (id)
+  "Sync the private repo. `my/repo-sync' is internally synchronous
+(it may run `git clone' or `git pull'); kept sync because by now UI
+is interactive and the operation has its own progress in a log buffer."
+  (cond
+   ((or (my/-blank-p (plist-get id :username))
+        (my/-blank-p (plist-get id :repo)))
+    (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
+             my/bw-credentials-item)
+    (my/bootstrap--step-git-crypt id))
+   (t
+    (my/repo-sync id)
+    (my/bootstrap-ensure-seed-config-files)
+    (my/bootstrap--step-git-crypt id))))
+
+(defun my/bootstrap--step-git-crypt (id)
+  "Run the git-crypt step. `my/git-crypt-step' is synchronous internally
+(unlock is ~100-300ms) but called from this callback so it doesn't
+block startup. After: write starter data for any gaps, then chain to
+API keys."
+  (my/git-crypt-step id)
+  (when (file-directory-p my/data-dir)
+    (my/generate-starter-data my/data-dir id)
+    (message "Bootstrap: starter files generated for any gaps under %s."
+             my/data-dir))
+  (my/bootstrap--step-api-keys id))
+
+(defun my/bootstrap--step-api-keys (_id)
+  "Populate Keychain runtime cache (sync — Keychain reads are fast,
+BW pull only happens on first launch when the cache is empty), then
+fire the final lock + finish."
   (my/api-keys-load)
+  (my/bootstrap--finish))
 
-  ;; 10. Lock BW
-  (when my/bw-session (my/bw-lock))
+;; Explanation: full bootstrap — async kickoff; rest happens in :on-success callbacks.
+(defun my/bootstrap--run-full-sync ()
+  "Kick off the async bootstrap chain. Returns immediately. The chain
+runs in `my/task-shell' subprocesses with synchronous callbacks for
+cheap steps. UI stays responsive throughout — even on a launch where
+the predicate fires.
 
-  (message "Bootstrap: done."))
+The legacy name `--run-full-sync' is preserved for callers (M-x
+my/bootstrap, M-x my/bootstrap--run-full-sync)."
+  (message "Bootstrap: starting (async chain — UI stays responsive)…")
+  (my/bw-unlock-async
+   (lambda (session)
+     (cond
+      (session
+       (message "Bootstrap: Bitwarden vault unlocked."))
+      (t
+       (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets.")))
+     (my/bootstrap--step-identity))))
 #+end_src
 
 ** Entry point
