@@ -24,6 +24,17 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 * Tunables (override in secrets.el)
 
 #+begin_src emacs-lisp :tangle yes
+;;; -*- lexical-binding: t; -*-
+;; Lexical binding is REQUIRED for the async callback chains in this
+;; module — every `:on-success' / `:on-failure' closure references let-
+;; bound variables from its enclosing scope. Under dynamic binding the
+;; lambdas would resolve those symbols at call-time (long after the let
+;; scope ended), error out, and the framework's `ignore-errors' wrapper
+;; in `my/-task-shell-finished' would swallow the failure silently —
+;; tasks would complete with state `success' but the callbacks would
+;; never run. The cookie must be the FIRST line of the tangled .el, so
+;; it lives at the top of the first tangled src block.
+
 (defvar my/bw-credentials-item "emacs-credentials"
   "Single Bitwarden item that bundles ALL Emacs-distro secrets:
 GitHub PAT + identity (login.username / login.password / Email /
@@ -73,6 +84,134 @@ nil if missing or `security' fails."
                    nil t)))))
     (let ((trimmed (string-trim out)))
       (if (string-empty-p trimmed) nil trimmed))))
+
+;; Explanation: Async variant of my/keychain-get — non-blocking shell-out via my/task-shell.
+(defvar my/-async-task-counter 0
+  "Monotonic counter for naming throw-away async tasks uniquely.")
+
+(defun my/keychain-get-async (service account callback)
+  "Asynchronous variant of `my/keychain-get'. Returns immediately.
+CALLBACK is invoked on the main thread with the stored string (or nil
+if missing / `security' failed). ACCOUNT defaults to `user-login-name'
+when nil.
+
+Use this in bootstrap callback chains to avoid blocking the main
+thread. Sync `my/keychain-get' is preserved for callers that need a
+value back synchronously (e.g. `my/api-key-fetch' from gptel)."
+  (let ((cb  (or callback #'ignore))
+        (acc (or account (user-login-name))))
+    (my/task-shell
+     (intern (format "kc-get-%d" (cl-incf my/-async-task-counter)))
+     (list "security" "find-generic-password" "-a" acc "-s" service "-w")
+     :on-success
+     (lambda (out)
+       (let ((trimmed (and (stringp out) (string-trim out))))
+         (funcall cb (if (or (null trimmed) (string-empty-p trimmed))
+                         nil
+                       trimmed))))
+     :on-failure
+     (lambda (_err) (funcall cb nil)))
+    nil))
+
+;; Explanation: Check multiple Keychain entries' presence in one shell-out — single subprocess for N keys.
+(defun my/keychain-batch-check-async (svc-acc-pairs callback)
+  "Check Keychain presence for each (SERVICE . ACCOUNT) pair in
+SVC-ACC-PAIRS using ONE shell subprocess (bash loop). CALLBACK
+receives an alist `((SERVICE . ACCOUNT) . PRESENT-P)' in the same
+order as the input.
+
+This is far faster than running `my/keychain-get-async' N times
+sequentially because process-spawn overhead (~5-15 ms each on macOS)
+dominates the actual `security' call cost. With 7 keys this cuts the
+bootstrap predicate from ~500-1000 ms of beachball to ~50-100 ms in
+a backgrounded task.
+
+ACCOUNT may be nil — defaults to `user-login-name' per pair."
+  (let* ((pairs (mapcar (lambda (sa)
+                          (cons (car sa)
+                                (or (cdr sa) (user-login-name))))
+                        svc-acc-pairs))
+         (script (concat
+                  "set +e\n"
+                  (mapconcat
+                   (lambda (sa)
+                     (format "if security find-generic-password -a %s -s %s -w >/dev/null 2>&1; then echo Y; else echo N; fi"
+                             (shell-quote-argument (cdr sa))
+                             (shell-quote-argument (car sa))))
+                   pairs
+                   "\n")))
+         (cb (or callback #'ignore)))
+    (my/task-shell
+     (intern (format "kc-batch-%d" (cl-incf my/-async-task-counter)))
+     (list "bash" "-c" script)
+     :on-success
+     (lambda (out)
+       (let* ((lines (split-string (or out "") "\n" t))
+              (result (cl-mapcar (lambda (sa line)
+                                   (cons sa (string= line "Y")))
+                                 pairs lines)))
+         (funcall cb result)))
+     :on-failure
+     (lambda (_err)
+       ;; Best-effort fallback: assume all present so we don't loop
+       ;; the user back into a sync re-prompt on a transient failure.
+       (funcall cb (mapcar (lambda (sa) (cons sa t)) pairs))))
+    nil))
+
+;; Explanation: Batched async read of MULTIPLE Keychain values in one shell-out (base64-safe).
+(defun my/keychain-multi-get-async (svc-acc-pairs callback)
+  "Read multiple Keychain VALUES asynchronously in ONE subprocess.
+SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT); ACCOUNT may be nil
+(defaults to `user-login-name'). CALLBACK receives an alist
+`((SERVICE . ACCOUNT) . VALUE-OR-NIL)' in input order.
+
+Each value is base64-encoded inside the bash loop so newlines / NULs /
+shell metacharacters round-trip safely; decoded in the callback. The
+empty-or-error case is encoded as an empty string → nil after decode.
+
+Use when bootstrap needs several Keychain values (e.g. bw email +
+master) and the previous approach was N sequential shell-outs."
+  (let* ((pairs (mapcar (lambda (sa)
+                          (cons (car sa)
+                                (or (cdr sa) (user-login-name))))
+                        svc-acc-pairs))
+         ;; Each iteration prints exactly one line: `V:<base64-of-value>'.
+         ;; Empty values still produce `V:' so the line count matches the
+         ;; pair count regardless of which entries are present.
+         (script (concat
+                  "set +e\n"
+                  (mapconcat
+                   (lambda (sa)
+                     (format "{ v=$(security find-generic-password -a %s -s %s -w 2>/dev/null); printf 'V:'; printf '%%s' \"${v:-}\" | base64 | tr -d '\\n'; printf '\\n'; }"
+                             (shell-quote-argument (cdr sa))
+                             (shell-quote-argument (car sa))))
+                   pairs
+                   "\n")))
+         (cb (or callback #'ignore)))
+    (my/task-shell
+     (intern (format "kc-multi-%d" (cl-incf my/-async-task-counter)))
+     (list "bash" "-c" script)
+     :on-success
+     (lambda (out)
+       (let* ((lines (cl-remove-if-not
+                      (lambda (l) (string-prefix-p "V:" l))
+                      (split-string (or out "") "\n")))
+              (decoded (mapcar
+                        (lambda (line)
+                          (let ((payload (substring line 2)))
+                            (cond
+                             ((string-empty-p payload) nil)
+                             (t (condition-case nil
+                                    (let ((s (base64-decode-string payload)))
+                                      (if (string-empty-p s) nil s))
+                                  (error nil))))))
+                        lines))
+              (result (cl-mapcar #'cons pairs decoded)))
+         (funcall cb result)))
+     :on-failure
+     (lambda (_err)
+       (funcall cb (mapcar (lambda (sa) (cons sa nil)) pairs))))
+    nil))
 
 ;; Explanation: Replace a generic password in macOS Keychain so cached bootstrap credentials stay current.
 (defun my/keychain-set (service value &optional account)
@@ -259,55 +398,60 @@ FORCE-PROMPT non-nil bypasses the Keychain cache → sync prompt path."
      (force-prompt
       (run-at-time 0 nil cb (my/bw-unlock t)))
      (t
-      (let* ((email  (my/keychain-get my/keychain-service
-                                      my/keychain-account-bw-email))
-             (master (and email
-                          (my/keychain-get my/keychain-service
-                                           my/keychain-account-bw-master))))
-        (cond
-         ((not (and email master))
-          ;; No cached creds → SYNC prompt path. First launch only.
-          (run-at-time 0 nil cb (my/bw-unlock)))
-         (t
-          (my/task-shell
-           'bw-unlock
-           (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
-           :env `(("BW_PW" . ,master))
-           :on-success
-           (lambda (out)
-             (let* ((s (and (stringp out) (string-trim out)))
-                    (session (and s
-                                  (> (length s) 30)
-                                  (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
-                                  s)))
-               (cond
-                (session
-                 (setq my/bw-session session)
-                 ;; Fire-and-forget background sync. We don't wait.
-                 (my/task-shell
-                  'bw-sync
-                  (list "bash" "-c"
-                        (format "bw sync --session %s >/dev/null 2>&1"
-                                (shell-quote-argument session))))
-                 (message "Bitwarden unlocked.")
-                 (funcall cb session))
-                (t
-                 (display-warning
-                  'emacs-setup
-                  "BW async unlock returned no session token. Cached master may be stale — wiping so next launch re-prompts."
-                  :warning)
-                 (my/keychain-delete my/keychain-service
-                                     my/keychain-account-bw-master)
-                 (funcall cb nil)))))
-           :on-failure
-           (lambda (_err)
-             (display-warning
-              'emacs-setup
-              "BW async unlock subprocess failed. Cached master may be stale — wiping so next launch re-prompts."
-              :warning)
-             (my/keychain-delete my/keychain-service
-                                 my/keychain-account-bw-master)
-             (funcall cb nil)))))))))
+      ;; Async fetch of email + master in ONE shell-out (no main-thread
+      ;; sync Keychain reads). On success: spawn `bw unlock' as a task.
+      ;; On miss: fall back to sync prompt (first launch only).
+      (my/keychain-multi-get-async
+       (list (cons my/keychain-service my/keychain-account-bw-email)
+             (cons my/keychain-service my/keychain-account-bw-master))
+       (lambda (results)
+         (let ((email  (cdr (nth 0 results)))
+               (master (cdr (nth 1 results))))
+           (cond
+            ((not (and email master))
+             ;; No cached creds → SYNC prompt path (read-passwd requires
+             ;; the main thread; only happens on first launch).
+             (funcall cb (my/bw-unlock)))
+            (t
+             (my/task-shell
+              'bw-unlock
+              (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
+              :env `(("BW_PW" . ,master))
+              :on-success
+              (lambda (out)
+                (let* ((s (and (stringp out) (string-trim out)))
+                       (session (and s
+                                     (> (length s) 30)
+                                     (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
+                                     s)))
+                  (cond
+                   (session
+                    (setq my/bw-session session)
+                    ;; Fire-and-forget background sync. We don't wait.
+                    (my/task-shell
+                     'bw-sync
+                     (list "bash" "-c"
+                           (format "bw sync --session %s >/dev/null 2>&1"
+                                   (shell-quote-argument session))))
+                    (message "Bitwarden unlocked.")
+                    (funcall cb session))
+                   (t
+                    (display-warning
+                     'emacs-setup
+                     "BW async unlock returned no session token. Cached master may be stale — wiping so next launch re-prompts."
+                     :warning)
+                    (my/keychain-delete my/keychain-service
+                                        my/keychain-account-bw-master)
+                    (funcall cb nil)))))
+              :on-failure
+              (lambda (_err)
+                (display-warning
+                 'emacs-setup
+                 "BW async unlock subprocess failed. Cached master may be stale — wiping so next launch re-prompts."
+                 :warning)
+                (my/keychain-delete my/keychain-service
+                                    my/keychain-account-bw-master)
+                (funcall cb nil)))))))))))
   nil)
 
 ;; Explanation: Lock Bitwarden and clear the in-memory session token after bootstrap has loaded secrets.
@@ -394,6 +538,40 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                    (lambda (a b)
                      (> (length (or (cdr (assoc 'fields a)) []))
                         (length (or (cdr (assoc 'fields b)) [])))))))))))
+
+;; Explanation: Async variant — runs `bw get item' in a my/task-shell task and parses JSON in callback.
+(defun my/bw-get-item-async (item-name callback)
+  "Asynchronous variant of `my/bw-get-item'. Returns immediately.
+CALLBACK is invoked on the main thread with the parsed alist, or nil
+if BW is locked / item missing / JSON parse failed.
+
+Note: does NOT implement the duplicate-name fallback of the sync
+version. Bootstrap path expects a unique item name; if duplicates
+become a real issue, add a second async stage that runs `bw list
+items --search'."
+  (let ((cb (or callback #'ignore)))
+    (cond
+     ((not my/bw-session)
+      (run-at-time 0 nil cb nil))
+     (t
+      (my/task-shell
+       (intern (format "bw-get-item-%d" (cl-incf my/-async-task-counter)))
+       (list "bw" "get" "item" item-name
+             "--session" my/bw-session)
+       :on-success
+       (lambda (out)
+         (let ((parsed
+                (when (and out (string-prefix-p "{" (string-trim out)))
+                  (condition-case nil
+                      (json-parse-string out
+                                         :object-type 'alist
+                                         :null-object nil
+                                         :false-object nil)
+                    (error nil)))))
+           (funcall cb parsed)))
+       :on-failure
+       (lambda (_err) (funcall cb nil)))))
+    nil))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
@@ -586,34 +764,29 @@ Run as `M-x my/github-identity-reset'; then restart Emacs or
     (message "Reset GitHub identity in BW '%s'. Run M-x my/bootstrap (or restart Emacs) to re-prompt."
              my/bw-credentials-item))))
 ;; Explanation: Load or complete the GitHub identity bundle stored in Bitwarden.
-(cl-defun my/github-load-identity ()
-  "Read GitHub bundle from `my/bw-credentials-item'.
-Returns plist (:username :token :email :fullname :repo :git-crypt-key)
-when a usable identity is available, nil otherwise. Three skip paths:
-  - BW locked → nil.
-  - Item carries GitHubSkipped sentinel → nil (no prompts).
-  - Item missing AND user declines the upfront opt-in → writes sentinel,
-    returns nil (no re-prompt on subsequent launches).
-Otherwise prompts only for fields that are missing or invalid."
-  (unless my/bw-session
-    (cl-return-from my/github-load-identity nil))
-  (let ((item (my/bw-get-item my/bw-credentials-item)))
-    (when (my/github--opted-out-p item)
-      (message "Bootstrap: GitHub sync opted out (M-x my/github-identity-reset to revive).")
-      (cl-return-from my/github-load-identity nil))
-    (let* ((username (and item (my/bw-item-username item)))
-           (token    (and item (my/bw-item-password item)))
-           (email    (and item (my/bw-item-field item "Email")))
-           (fullname (and item (my/bw-item-field item "Fullname")))
-           (repo     (and item (my/bw-item-field item "Repo")))
-           ;; Read per-repo git-crypt slot (field "GitCryptKey:<repo>").
-           ;; `my/-git-crypt-read' is the canonical reader at use-time; this
-           ;; eager copy is only here for backward-compat callers that may
-           ;; still read identity's :git-crypt-key. New code should use
-           ;; (my/-git-crypt-read (plist-get id :repo)) instead.
-           (git-crypt-key
-            (and item repo
-                 (my/bw-item-field item (format "GitCryptKey:%s" repo))))
+(cl-defun my/-github-build-identity-from-item (item)
+  "Build the GitHub identity plist from an already-fetched BW ITEM.
+Same return contract as `my/github-load-identity' (everything from the
+inner let onward). Extracted so `my/bootstrap--step-identity' can fetch
+ITEM via `my/bw-get-item-async' and run this synchronous decision tree
+in the callback — keeps the heavy shell-out off the main thread.
+ITEM may be nil (BW item missing)."
+  (when (my/github--opted-out-p item)
+    (message "Bootstrap: GitHub sync opted out (M-x my/github-identity-reset to revive).")
+    (cl-return-from my/-github-build-identity-from-item nil))
+  (let* ((username (and item (my/bw-item-username item)))
+         (token    (and item (my/bw-item-password item)))
+         (email    (and item (my/bw-item-field item "Email")))
+         (fullname (and item (my/bw-item-field item "Fullname")))
+         (repo     (and item (my/bw-item-field item "Repo")))
+         ;; Read per-repo git-crypt slot (field "GitCryptKey:<repo>").
+         ;; `my/-git-crypt-read' is the canonical reader at use-time; this
+         ;; eager copy is only here for backward-compat callers that may
+         ;; still read identity's :git-crypt-key. New code should use
+         ;; (my/-git-crypt-read (plist-get id :repo)) instead.
+         (git-crypt-key
+          (and item repo
+               (my/bw-item-field item (format "GitCryptKey:%s" repo))))
            (need-token (or (my/-blank-p token)
                            (not (my/github-token-valid-p token))))
            (need-username (my/-blank-p username))
@@ -684,7 +857,23 @@ Otherwise prompts only for fields that are missing or invalid."
               (message "Bootstrap: BW '%s' created." my/bw-credentials-item))
             (list :username new-username :token new-token
                   :email new-email :fullname new-fullname :repo new-repo
-                  :git-crypt-key git-crypt-key)))))))))
+                  :git-crypt-key git-crypt-key))))))))
+
+;; Explanation: Thin wrapper — sync `bw get item' + delegate to the helper.
+(cl-defun my/github-load-identity ()
+  "Read GitHub bundle from `my/bw-credentials-item' synchronously.
+Returns plist (:username :token :email :fullname :repo :git-crypt-key)
+when a usable identity is available, nil otherwise.
+
+Internally: fetch the BW item sync, then delegate to
+`my/-github-build-identity-from-item' for the field extraction +
+interactive prompt logic. Bootstrap's async path bypasses this wrapper
+and calls `my/bw-get-item-async' + the helper directly (see
+`my/bootstrap--step-identity')."
+  (unless my/bw-session
+    (cl-return-from my/github-load-identity nil))
+  (my/-github-build-identity-from-item
+   (my/bw-get-item my/bw-credentials-item)))
 
 ;; Explanation: Read a global git config key without treating absence as an error.
 (defun my/-git-global-config-get (key)
@@ -2040,20 +2229,64 @@ literally nothing to do. The predicate below checks each precondition
 in ~10 ms total — Keychain reads are fast.
 
 #+begin_src emacs-lisp :tangle yes
+;; Explanation: Async predicate — ZERO main-thread shell-outs. Batches Keychain probes into one subprocess.
+(defun my/bootstrap--needs-anything-async (callback)
+  "Async predicate. Calls CALLBACK with t when bootstrap has work to do
+on this launch, nil when it's a steady-state no-op. Returns
+immediately; CALLBACK runs from a subprocess sentinel.
+
+The previous synchronous predicate `my/bootstrap--needs-anything-p'
+shelled out `security find-generic-password' once per Keychain entry
+(2 + N api-key fields = often 7+ sequential calls), blocking the main
+thread for 350-1050 ms on EVERY launch before bootstrap even started.
+This version batches all of those probes into a single bash loop run
+as a `my/task-shell' task; the lone remaining shell-out (gh auth
+status, only checked when the cheaper signals all pass) is also
+spawned as a task.
+
+Behaviour mirrors the old sync predicate exactly: t iff ANY of
+  - BW email or master missing from Keychain
+  - any `my/api-key-fields' entry missing from Keychain
+  - private data repo not cloned (no .git/ in `my/data-dir')
+  - gh installed but not authenticated"
+  (let ((cb (or callback #'ignore)))
+    (my/keychain-batch-check-async
+     (append
+      (list (cons my/keychain-service my/keychain-account-bw-email)
+            (cons my/keychain-service my/keychain-account-bw-master))
+      (mapcar (lambda (env-var) (cons my/keychain-service env-var))
+              my/api-key-fields))
+     (lambda (results)
+       (cond
+        ;; Any Keychain entry missing → work needed.
+        ((cl-some (lambda (kv) (not (cdr kv))) results)
+         (funcall cb t))
+        ;; Private data repo not cloned → work needed.
+        ((not (file-directory-p (expand-file-name ".git" my/data-dir)))
+         (funcall cb t))
+        ;; gh not yet installed → first launch → work needed.
+        ((not (my/gh-installed-p))
+         (funcall cb t))
+        (t
+         ;; All cheap signals pass — verify gh auth without blocking.
+         (my/task-shell
+          (intern (format "boot-need-gh-%d" (cl-incf my/-async-task-counter)))
+          (list "bash" "-c" "gh auth status >/dev/null 2>&1")
+          :on-success (lambda (_) (funcall cb nil))
+          :on-failure (lambda (_) (funcall cb t))))))))
+  nil)
+
+;; Explanation: Sync predicate kept for legacy callers / interactive M-x use.
 (defun my/bootstrap--needs-anything-p ()
-  "Return non-nil when bootstrap has at least one piece of work to do.
-Fast: pure cache/filesystem checks, no BW or network."
+  "Synchronous predicate — kept for interactive M-x use and legacy
+callers. New code should call `my/bootstrap--needs-anything-async'."
   (or
-   ;; BW unlock cache absent → need to prompt for master + email
    (not (my/keychain-get my/keychain-service my/keychain-account-bw-email))
    (not (my/keychain-get my/keychain-service my/keychain-account-bw-master))
-   ;; Any API key field has no Keychain entry (no value AND no sentinel)
    (cl-some (lambda (env-var)
               (not (my/keychain-get my/keychain-service env-var)))
             my/api-key-fields)
-   ;; Private data repo not cloned yet
    (not (file-directory-p (expand-file-name ".git" my/data-dir)))
-   ;; gh CLI not authenticated yet
    (and (my/gh-installed-p) (not (my/gh-authenticated-p)))))
 #+end_src
 
@@ -2108,23 +2341,38 @@ Runs with prompts inline. Only fires when
   (message "Bootstrap: done."))
 
 (defun my/bootstrap--step-identity (&rest _)
-  "After BW unlock: load GitHub identity, set git global config,
-chain to gh install + auth check.
-The `bw get item' inside `my/github-load-identity' is one ~200ms
-shell call — kept sync because by now UI is already interactive."
-  (let ((id (my/github-load-identity)))
-    (my/git-identity-ensure-global id)
-    (cond
-     ((and id (not (my/-blank-p (plist-get id :token))))
-      (my/bootstrap--step-gh-install id))
-     (t
-      ;; No usable identity — still write starter content locally, then finish.
-      (unless (file-directory-p my/data-dir)
-        (make-directory my/data-dir t))
-      (my/generate-starter-data my/data-dir '())
-      (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
-               my/data-dir)
-      (my/bootstrap--step-api-keys nil)))))
+  "After BW unlock: fetch the consolidated BW item ASYNC, then build
+the identity, set git global config, chain to gh install + auth check.
+
+The previous version called `my/github-load-identity' which shelled
+out `bw get item' synchronously (~200-500 ms beachball). This version
+spawns the read as a `my/bw-get-item-async' task and continues in the
+callback, so the UI stays responsive while bw decrypts the item."
+  (cond
+   ((not my/bw-session)
+    ;; BW unavailable — no identity, write starter locally.
+    (unless (file-directory-p my/data-dir)
+      (make-directory my/data-dir t))
+    (my/generate-starter-data my/data-dir '())
+    (message "Bootstrap: GitHub identity unavailable (BW locked); starter content generated locally at %s."
+             my/data-dir)
+    (my/bootstrap--step-api-keys nil))
+   (t
+    (my/bw-get-item-async
+     my/bw-credentials-item
+     (lambda (item)
+       (let ((id (my/-github-build-identity-from-item item)))
+         (my/git-identity-ensure-global id)
+         (cond
+          ((and id (not (my/-blank-p (plist-get id :token))))
+           (my/bootstrap--step-gh-install id))
+          (t
+           (unless (file-directory-p my/data-dir)
+             (make-directory my/data-dir t))
+           (my/generate-starter-data my/data-dir '())
+           (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
+                    my/data-dir)
+           (my/bootstrap--step-api-keys nil)))))))))
 
 (defun my/bootstrap--step-gh-install (id)
   "Ensure gh CLI is on PATH, then chain to async auth check."
@@ -2187,11 +2435,33 @@ API keys."
   (my/bootstrap--step-api-keys id))
 
 (defun my/bootstrap--step-api-keys (_id)
-  "Populate Keychain runtime cache (sync — Keychain reads are fast,
-BW pull only happens on first launch when the cache is empty), then
-fire the final lock + finish."
-  (my/api-keys-load)
-  (my/bootstrap--finish))
+  "Verify Keychain runtime cache for all `my/api-key-fields' in ONE
+async batched subprocess (no main-thread shell-outs in the steady
+state). If everything is cached, jump straight to finish. If anything
+is missing, fall back to the synchronous `my/api-keys-load' for the
+interactive prompt path (only fires on first launch / new key field).
+
+The previous version always called `my/api-keys-load' which looped
+sequential `security' shell-outs (~5 × 100 ms) on every launch —
+that was visible as part of the spinning wheel."
+  (my/keychain-batch-check-async
+   (mapcar (lambda (env-var) (cons my/keychain-service env-var))
+           my/api-key-fields)
+   (lambda (results)
+     (let ((missing (mapcar (lambda (kv) (cdr (car kv)))
+                            (cl-remove-if (lambda (kv) (cdr kv)) results))))
+       (cond
+        ((null missing)
+         ;; Steady state — everything cached. No blocking work needed.
+         (message "Bootstrap: API keys ready (%d cached in Keychain '%s')."
+                  (length results) my/keychain-service)
+         (my/bootstrap--finish))
+        (t
+         ;; First-launch or new-field path: fall through to the sync
+         ;; loader which handles BW pull + interactive prompts. Main
+         ;; thread blocks here only when there's genuinely missing data.
+         (my/api-keys-load)
+         (my/bootstrap--finish)))))))
 
 ;; Explanation: full bootstrap — async kickoff; rest happens in :on-success callbacks.
 (defun my/bootstrap--run-full-sync ()
@@ -2221,17 +2491,23 @@ launches, returns in ~10 ms. On launches with actual work, runs the
 synchronous flow (interactive prompts on first launch).
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: bootstrap entry point. Decides sync (work pending) vs no-op (cached).
+;; Explanation: bootstrap entry point. Async predicate decides sync (work pending) vs no-op (cached).
 (defun my/bootstrap ()
   "Run bootstrap if any precondition is missing; no-op otherwise.
+Returns immediately — the predicate itself runs as a subprocess so
+the main thread NEVER blocks on `security' shell-outs at startup.
+
 Safe to call interactively (`M-x my/bootstrap') to re-trigger after
 changing state (e.g. after `M-x my/github-identity-reset')."
   (interactive)
-  (cond
-   ((my/bootstrap--needs-anything-p)
-    (my/bootstrap--run-full-sync))
-   (t
-    (message "Bootstrap: nothing to do (Keychain cache complete, repo cloned, gh authed)."))))
+  (my/bootstrap--needs-anything-async
+   (lambda (needs-work)
+     (cond
+      (needs-work
+       (my/bootstrap--run-full-sync))
+      (t
+       (message "Bootstrap: nothing to do (Keychain cache complete, repo cloned, gh authed).")))))
+  nil)
 #+end_src
 
 ** Manual repo pull
