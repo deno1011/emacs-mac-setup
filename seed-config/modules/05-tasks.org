@@ -130,16 +130,20 @@ to a terminal state (success, failure, cancelled).")
   state result error
   process buffer
   started-at finished-at
-  ;; When `redact' is non-nil, the framework wipes both the *task: NAME*
-  ;; buffer and the task struct's `result' / `error' slots AFTER the
-  ;; on-success / on-failure callbacks have run. Callbacks see the real
-  ;; output (so they can extract the value they need); everything readable
-  ;; afterwards (`my/task-result-of', `M-x my/task-show-output', the
-  ;; status buffer's preview column) shows the sentinel "(redacted)".
+  ;; `redact' non-nil opts the task into pattern-based secret masking
+  ;; (see `my/task-secret-patterns'). The task's stdout, stderr, the
+  ;; *task: NAME* buffer, and the result / error slots stay
+  ;; STRUCTURALLY visible — JSON keys, command names, status messages,
+  ;; everything you'd want for debugging — but matching secret payloads
+  ;; get replaced with `***' AFTER `on-success' / `on-failure' callbacks
+  ;; have read the real output.
   ;;
-  ;; Use on any task whose stdout contains secrets — BW session tokens,
-  ;; the bw-get-item JSON, base64-encoded passwords, etc.
-  redact)
+  ;; `secret-patterns' is an optional per-task list of EXTRA regexps
+  ;; appended to the global `my/task-secret-patterns'. Use when a
+  ;; specific task has known secret shapes that the global list doesn't
+  ;; catch (e.g. an unusual API response format).
+  redact
+  secret-patterns)
 #+end_src
 
 * Session marker + orphan cleanup
@@ -301,7 +305,7 @@ our own about-to-be-spawned subprocesses)."
 (cl-defun my/task-shell (name command
                               &key env cwd depends-on
                               on-success on-failure on-progress
-                              detach redact)
+                              detach redact secret-patterns)
   "Submit a shell task NAME running COMMAND.
 
 COMMAND is either a list of strings (executed directly) or a zero-arg
@@ -324,13 +328,18 @@ ON-PROGRESS receives each stdout chunk as it arrives.
 DETACH non-nil skips the EMACS_TASK_GUID wrap. Use only when the
 subprocess is meant to survive Emacs (e.g. `ollama serve').
 
-REDACT non-nil wipes the `*task: NAME*' buffer and the task struct's
-`result' / `error' slots AFTER ON-SUCCESS / ON-FAILURE have run. The
-callbacks still see the real output (so they can extract a session
-token, parse JSON, decode base64, etc.); afterwards `my/task-result-of',
-`M-x my/task-show-output', and the status buffer's preview column all
-show the sentinel \"(redacted)\". Use on any task whose stdout
-contains secrets.
+REDACT non-nil opts the task into pattern-based secret MASKING: after
+ON-SUCCESS / ON-FAILURE have read the real output, every regexp in
+`my/task-secret-patterns' (plus any extras in SECRET-PATTERNS) is
+matched against the *task: NAME* buffer + the result / error slots,
+and the matching payloads (or first capture group, when present) are
+replaced with `***'. The buffer stays structurally visible — JSON
+keys, command names, status messages, exit info, line counts, etc.
+remain readable for debugging — only the secret values are hidden.
+
+SECRET-PATTERNS is an optional list of regexps APPENDED to the global
+patterns. Use when a task has a known secret shape the global list
+doesn't catch.
 
 Returns the task struct immediately."
   (let ((task (make-my/task
@@ -340,6 +349,7 @@ Returns the task struct immediately."
                :on-success on-success :on-failure on-failure
                :on-progress on-progress
                :redact redact
+               :secret-patterns secret-patterns
                :state 'pending)))
     (puthash name task my/tasks)
     (my/-task-try-start name)
@@ -503,6 +513,78 @@ not-yet-started tasks)."
        (setf (my/task-finished-at task) (current-time))
        (my/-task-fire-completion task)))))
 
+(defvar my/task-secret-patterns
+  '(;; --- shell argv patterns ------------------------------------------
+    ;; `security add-generic-password -w VALUE -A' — quoted form
+    "-w[[:space:]]+'\\([^']+\\)'"
+    "-w[[:space:]]+\"\\([^\"]+\\)\""
+    ;; Same flag, unquoted: anything up to whitespace
+    "-w[[:space:]]+\\([^[:space:]'\"][^[:space:]]*\\)"
+    ;; `--session TOKEN' / `--passwordenv VAR' — TOKEN is sensitive
+    "--session[[:space:]]+\\([^[:space:]'\"][^[:space:]]*\\)"
+    ;; --- my/keychain-multi-get-async stdout ---------------------------
+    ;; Each entry prints `V:<base64>' on its own line; mask the payload.
+    "^V:\\([A-Za-z0-9+/=]+\\)"
+    ;; --- BW item JSON fields ------------------------------------------
+    ;; "login":{"username":"…","password":"…"} and custom field "value"
+    "\"password\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\""
+    "\"username\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\""
+    "\"value\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\""
+    ;; --- standalone token shapes -------------------------------------
+    ;; BW unlock --raw stdout is a single long base64 token (no
+    ;; surrounding structure). Match the body (40+ non-`=' chars)
+    ;; PLUS the trailing `=' padding — `\\b' boundaries would leave
+    ;; `==' visible. Min length 40 skips false positives like commit
+    ;; SHAs (40 hex), short identifiers, etc. — though commit SHAs
+    ;; are still flagged, which is harmless (they're already public).
+    "\\([A-Za-z0-9+/]\\{40,\\}=\\{0,2\\}\\)")
+  "List of regexps used by `my/task-shell' tasks submitted with
+`:redact t' to MASK secret payloads in their *task: NAME* buffer +
+result / error slots.
+
+For each pattern, the FIRST CAPTURE GROUP is replaced with `***'.
+Patterns without a capture group fall back to replacing the whole
+match. Apply order is left-to-right; patterns can overlap.
+
+Defaults cover BW/Keychain bootstrap secrets — adapt as new shell
+shapes appear. Append per-task overrides via the `:secret-patterns'
+keyword of `my/task-shell' (those are matched FIRST, before the
+defaults).
+
+The masking happens AFTER `:on-success' / `:on-failure' callbacks
+have run, so they always see the real output and can extract values
+they need; only the post-callback persisted state is masked.")
+
+(defun my/-task-mask-buffer-secrets (buffer patterns)
+  "Walk PATTERNS in BUFFER; replace each capture-group-1 (or whole
+match when no group) with `***'. Idempotent — already-masked
+content matches against most patterns produce no further change."
+  (when (and (buffer-live-p buffer) patterns)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t)
+            (case-fold-search nil))
+        (dolist (pattern patterns)
+          (save-excursion
+            (goto-char (point-min))
+            (while (re-search-forward pattern nil t)
+              (cond
+               ((match-beginning 1)
+                (replace-match "***" t t nil 1))
+               (t
+                (replace-match "***" t t))))))))))
+
+(defun my/-task-mask-string-secrets (s patterns)
+  "Return S with PATTERNS applied (same semantics as
+`my/-task-mask-buffer-secrets'). Returns S unchanged when nil."
+  (cond
+   ((not (stringp s)) s)
+   ((null patterns) s)
+   (t
+    (with-temp-buffer
+      (insert s)
+      (my/-task-mask-buffer-secrets (current-buffer) patterns)
+      (buffer-string)))))
+
 (defun my/-task-shell-finished (task)
   "Subprocess sentinel: collect output, set state, fire callbacks."
   (let* ((proc (my/task-process task))
@@ -523,22 +605,24 @@ not-yet-started tasks)."
       (setf (my/task-error task) (format "exit %d: %s" status output))
       (when (my/task-on-failure task)
         (ignore-errors (funcall (my/task-on-failure task) (my/task-error task))))))
-    ;; Redaction AFTER callbacks ran. Wipe the buffer + struct slots so
-    ;; secrets aren't sitting in `*task: NAME*' or returned by
-    ;; `my/task-result-of'. The callbacks already extracted what they
-    ;; needed; the framework keeps state (`success'/`failure') so
-    ;; `:depends-on' and `M-x my/task-status' still work.
+    ;; Pattern-based secret masking AFTER callbacks have extracted what
+    ;; they needed. The buffer + result/error strings stay structurally
+    ;; visible so debugging is still possible — only the matching secret
+    ;; payloads get replaced with `***'. Drives off `my/task-secret-patterns'
+    ;; (configurable defvar) plus the per-task `:secret-patterns' extras.
+    ;; State (`success' / `failure') is preserved so `:depends-on' and
+    ;; `M-x my/task-status' still work.
     (when (my/task-redact task)
-      (when (buffer-live-p (my/task-buffer task))
-        (with-current-buffer (my/task-buffer task)
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert "(redacted)\n"))))
-      (when (eq (my/task-state task) 'success)
-        (setf (my/task-result task) "(redacted)"))
-      (when (eq (my/task-state task) 'failure)
-        (setf (my/task-error task)
-              (format "exit %d: (redacted)" status))))
+      (let ((patterns (append (my/task-secret-patterns task)
+                              my/task-secret-patterns)))
+        (when (buffer-live-p (my/task-buffer task))
+          (my/-task-mask-buffer-secrets (my/task-buffer task) patterns))
+        (when (eq (my/task-state task) 'success)
+          (setf (my/task-result task)
+                (my/-task-mask-string-secrets (my/task-result task) patterns)))
+        (when (eq (my/task-state task) 'failure)
+          (setf (my/task-error task)
+                (my/-task-mask-string-secrets (my/task-error task) patterns)))))
     (my/-task-fire-completion task)))
 
 (defun my/-task-start-elisp (task)
