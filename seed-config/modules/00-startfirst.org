@@ -3,25 +3,29 @@
 
 This config is an early load config for anything which need to be executed before anything else is loaded.
 
-* Elpaca: treat =compat= as built-in (Emacs 30)
+* Instant dark theme via built-in =modus-vivendi=
 
-Elpaca's =elpaca.el= explicitly removes =compat= from its built-in
-ignored list (=(delq 'compat ...)=). That was defensive — historically
-compat was an ELPA-only package. Emacs 30 now ships compat as a true
-built-in (=lisp/emacs-lisp/compat.el=). Without putting it BACK on the
-ignored list, elpaca queues a build for compat, then byte-compilation
-of dependents (magit, embark, doom-modeline, ...) loads the built-in
-compat first, and elpaca's later activation step emits:
+The user-facing theme is =cyberpunk-theme=, set up in =20-core.org=. But
+=cyberpunk-theme= is a package — elpaca doesn't finish building it
+until =after-init-hook= fires, several seconds into startup. Without
+intervention, the first frame appears WHITE during that window and
+flips to the dark cyberpunk colors only when the package finally loads.
 
-  Warning (emacs): compat loaded before Elpaca activation
+Solution: load Emacs's built-in =modus-vivendi= (a high-contrast dark
+theme that ships with Emacs 28+) immediately at the top of this
+early-load module. =modus-vivendi= is a built-in — no install needed,
+no elpaca queue, no wait. The frame goes dark within milliseconds.
+Later, when =cyberpunk-theme= is built and 20-core.org runs its
+=(load-theme 'cyberpunk t)=, that disables modus-vivendi and stacks
+cyberpunk on top.
 
-This module loads BEFORE any module that has =:ensure t= forms, so
-adding compat to =elpaca-ignored-dependencies= here takes effect before
-elpaca's queue starts processing.
+The =background-color= preset in =~/.emacs.d/early-init.el= already
+matches modus-vivendi's background, so the modus-vivendi load itself
+is visually seamless from the very first frame paint.
 
 #+begin_src emacs-lisp :tangle yes
-(with-eval-after-load 'elpaca
-  (add-to-list 'elpaca-ignored-dependencies 'compat))
+;; Built-in dark theme — no install required.
+(load-theme 'modus-vivendi t)
 #+end_src
 
 * Fullscreen Mode

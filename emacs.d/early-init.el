@@ -24,4 +24,25 @@
 ;; hundred ms on startup.
 (setq package-enable-at-startup nil)
 
+;; Kill the WHITE FLASH at startup. early-init.el runs before the first
+;; frame is painted, so setting `default-frame-alist' here means the
+;; initial frame already has dark colors instead of the default white.
+;; Values are tuned to match `modus-vivendi' (built-in dark theme,
+;; loaded in 00-startfirst.org) closely enough that there's no visible
+;; transition when the theme later applies. Once cyberpunk-theme
+;; finishes building (via elpaca in 20-core.org), it overrides these.
+(setq default-frame-alist
+      (append '((background-color . "#000000")
+                (foreground-color . "#ffffff")
+                (ns-appearance . dark)
+                (ns-transparent-titlebar . t))
+              default-frame-alist))
+;; Same for the initial GUI frame (existing frame at the time of
+;; `package-enable-at-startup'; default-frame-alist only affects future
+;; frames). Without this the first frame still flashes white before
+;; the theme applies.
+(set-face-attribute 'default nil :background "#000000" :foreground "#ffffff")
+;; Suppress the default Emacs splash + scratch message contrast.
+(setq inhibit-startup-screen t)
+
 ;;; early-init.el ends here
