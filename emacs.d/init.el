@@ -111,21 +111,6 @@ folder is missing locally, this temporarily points at
 (add-hook 'after-init-hook #'elpaca-process-queues)
 (elpaca `(,@elpaca-order))
 
-;; Emacs 30 ships `compat' as a true built-in (lisp/emacs-lisp/compat.el).
-;; Elpaca's default `elpaca-ignored-dependencies' explicitly REMOVES compat
-;; from the built-in list — historically compat was an ELPA package, and
-;; elpaca was being defensive. That means elpaca tries to install/build
-;; `compat' as a regular dependency when a package like magit, embark, or
-;; doom-modeline declares it. During the build, byte-compilation of a
-;; dependent loads the BUILT-IN compat (which is on load-path earlier
-;; than elpaca's not-yet-built copy); when elpaca later reaches its
-;; activation step for compat, it finds compat already in `features' and
-;; emits "compat loaded before Elpaca activation". Cosmetic but persistent.
-;; Adding compat back to ignored-dependencies tells elpaca: don't try to
-;; install it, use the built-in. Warning disappears.
-(with-eval-after-load 'elpaca
-  (add-to-list 'elpaca-ignored-dependencies 'compat))
-
 ;; Install use-package and route `:ensure t' through elpaca, so existing
 ;; (use-package X :ensure t) forms in the modules install via elpaca
 ;; without source changes. Modules that already had `:ensure nil' to skip
