@@ -5,6 +5,57 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 #+begin_src emacs-lisp :tangle yes
 ;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
+
+(require 'org)
+
+(defvar my/config-dir)
+(defvar my/data-dir)
+(defvar pixel-scroll-precision-use-momentum)
+(defvar org-show-following-heading)
+(defvar org-show-hierarchy-above)
+(defvar org-show-siblings)
+(defvar org-link-mailto-program)
+(defvar org-duration-format)
+
+(declare-function benchmark-init/deactivate "benchmark-init")
+(declare-function pixel-scroll-precision "pixel-scroll")
+#+end_src
+
+* Visible repo binding
+
+The selected private config/data repo should be visible all the time so
+repo switches are obvious after restart. This is intentionally in core
+config, not in =05-tasks=: tasks only contributes task status.
+
+#+begin_src emacs-lisp
+(defun my/data-dir-repo-name ()
+  "Return the basename of `my/data-dir' for display."
+  (if (and (boundp 'my/data-dir) (stringp my/data-dir))
+      (file-name-nondirectory (directory-file-name my/data-dir))
+    "?"))
+
+(defun my/data-dir-mode-line ()
+  "Return the current private repo indicator for the mode line."
+  (propertize
+   (format " Repo:%s" (my/data-dir-repo-name))
+   'help-echo
+   (lambda (_window _object _pos)
+     (if (and (boundp 'my/data-dir) (stringp my/data-dir))
+         my/data-dir
+       "my/data-dir is not bound"))))
+
+(defun my/show-data-dir ()
+  "Show the private data/config directory Emacs is currently bound to."
+  (interactive)
+  (message "Emacs private repo: %s"
+           (if (and (boundp 'my/data-dir) (stringp my/data-dir))
+               my/data-dir
+             "not bound")))
+
+(unless (member '(:eval (my/data-dir-mode-line)) global-mode-string)
+  (setq global-mode-string
+        (append (or global-mode-string '(""))
+                '((:eval (my/data-dir-mode-line))))))
 #+end_src
 
 * Startup measurement (diagnostic)
@@ -342,6 +393,13 @@ what you usually want for prose, Org, Markdown and chat buffers.
 ;; pixel-scroll-precision-mode (Emacs 29+) for sub-line pixel scrolling.
 ;; Yamamoto has this built in — enabling it on top causes scroll conflicts,
 ;; so only activate on emacs-plus (detected by absence of mac-mouse-wheel-smooth-scroll).
+(defun my/pixel-scroll-precision-no-boundary-bounce (orig event)
+  "Call ORIG for EVENT, ignoring scroll boundary bounce signals."
+  (condition-case nil
+      (funcall orig event)
+    (beginning-of-buffer nil)
+    (end-of-buffer nil)))
+
 (when (and (fboundp 'pixel-scroll-precision-mode)
            (not (boundp 'mac-mouse-wheel-smooth-scroll)))
   (pixel-scroll-precision-mode 1)
@@ -349,11 +407,8 @@ what you usually want for prose, Org, Markdown and chat buffers.
   ;; macOS sends trackpad momentum events past buffer edges causing a bounce.
   ;; Wrap the top-level handler to absorb boundary signals silently.
   (with-eval-after-load 'pixel-scroll
-    (define-advice pixel-scroll-precision (:around (orig event) no-boundary-bounce)
-      (condition-case nil
-          (funcall orig event)
-        (beginning-of-buffer nil)
-        (end-of-buffer nil)))))
+    (advice-add 'pixel-scroll-precision
+                :around #'my/pixel-scroll-precision-no-boundary-bounce)))
 #+end_src
 
 * Version Control
@@ -365,9 +420,9 @@ what you usually want for prose, Org, Markdown and chat buffers.
 * Protected Files
 
 #+begin_src emacs-lisp :tangle yes
-;; Distro code lives under my/config-dir (~/.emacs.d/config/, symlinked
-;; from the distro repo). gptel may freely touch the user's data under
-;; my/data-dir but must never overwrite the distro itself, init.el, or
+;; Runtime loader files live in user-emacs-directory, while config lives
+;; under the selected private repo. gptel may freely touch the user's data
+;; under my/data-dir but must never overwrite config, init.el, or
 ;; early-init.el.
 (defvar my/gptel-protected-files
   (append
@@ -421,9 +476,8 @@ what you usually want for prose, Org, Markdown and chat buffers.
           (lambda ()
             ;; Auto-commit any org buffer that lives anywhere under
             ;; my/data-dir (data/org/, wiki/, notes/, TOUR.org, ...).
-            ;; Excludes the distro itself: config files live under
-            ;; user-emacs-directory (~/.emacs.d/config/), NOT under
-            ;; my/data-dir, so they can never match this regex.
+            ;; Config files are protected separately by the write guard;
+            ;; this hook only enables auto-commit for user data files.
             ;; `file-truename' on both sides handles the case where
             ;; my/data-dir is a symlink (e.g. to iCloud Drive).
             (when (and buffer-file-name
@@ -438,8 +492,8 @@ what you usually want for prose, Org, Markdown and chat buffers.
 
 The legacy startup-sync did =git pull= on =my/data-dir=, =git-crypt
 unlock=, and an rsync to =~/.emacs.d/config-readonly/=. In the distro
-model none of that is needed: the distro code is symlinked (no
-pull-on-startup), git-crypt is gone, and config-readonly is dead. The
+model none of that is needed: bootstrap owns repo sync/update checks and
+config-readonly is dead. The
 beorg mirror is the only piece worth keeping — it pushes
 =data/org/= to the iCloud folder beorg reads on iPhone.
 
@@ -546,6 +600,37 @@ Uses:
 
 (unless package-archive-contents
   (package-refresh-contents))
+
+(defun my/package-stale-archive-error-p (err)
+  "Return non-nil when ERR likely came from stale package archive metadata."
+  (let ((msg (error-message-string err)))
+    (string-match-p
+     (regexp-opt '("Not found"
+                   "HTTP Error 404"
+                   "Failed to download"
+                   "Package does not exist"
+                   "Package is unavailable"))
+     msg)))
+
+(defun my/package-install-refresh-retry (orig-fun &rest args)
+  "Call ORIG-FUN with ARGS, refreshing package archives once on stale metadata."
+  (condition-case err
+      (apply orig-fun args)
+    (error
+     (if (not (my/package-stale-archive-error-p err))
+         (signal (car err) (cdr err))
+       (message "Package install hit stale archive metadata (%s); refreshing and retrying once..."
+                (error-message-string err))
+       (setq package-archive-contents nil)
+       (package-refresh-contents)
+       (let ((retry-args (copy-sequence args)))
+         (when (and retry-args
+                    (fboundp 'package-desc-p)
+                    (package-desc-p (car retry-args)))
+           (setcar retry-args (package-desc-name (car retry-args))))
+         (apply orig-fun retry-args))))))
+
+(advice-add 'package-install :around #'my/package-install-refresh-retry)
 
 (unless (package-installed-p 'use-package)
   (package-install 'use-package))
@@ -804,7 +889,7 @@ Embark (`C-.`) is extremely powerful:
 (setq org-table-use-standard-references 'from)
 (setq org-read-date-prefer-future 'time)
 (setq org-tags-match-list-sublevels t)
-(setq org-catch-invisible-edits 'error)
+(setq org-fold-catch-invisible-edits 'error)
 (setq org-clone-delete-id t)
 (setq org-cycle-include-plain-lists t)
 (setq org-odd-levels-only nil)
@@ -841,22 +926,21 @@ Embark (`C-.`) is extremely powerful:
 (defun bh/prepare-meeting-notes ()
   "Convert selected region to meeting notes format and copy to kill ring."
   (interactive)
-  (let (prefix)
-    (save-excursion
-      (save-restriction
-        (narrow-to-region (region-beginning) (region-end))
-        (untabify (point-min) (point-max))
-        (goto-char (point-min))
-        (while (re-search-forward "^\\( *-\\) \\(TODO\\|DONE\\): " (point-max) t)
-          (replace-match (concat (make-string (length (match-string 1)) ?>) " " (match-string 2) ": ")))
-        (goto-char (point-min))
-        (kill-ring-save (point-min) (point-max))))))
+  (save-excursion
+    (save-restriction
+      (narrow-to-region (region-beginning) (region-end))
+      (untabify (point-min) (point-max))
+      (goto-char (point-min))
+      (while (re-search-forward "^\\( *-\\) \\(TODO\\|DONE\\): " (point-max) t)
+        (replace-match (concat (make-string (length (match-string 1)) ?>) " " (match-string 2) ": ")))
+      (goto-char (point-min))
+      (kill-ring-save (point-min) (point-max)))))
 
 (prefer-coding-system 'utf-8)
 (set-charset-priority 'unicode)
 (setq default-process-coding-system '(utf-8-unix . utf-8-unix))
-(setq org-time-clocksum-format
-      '(:hours "%d" :require-hours t :minutes ":%02d" :require-minutes t))
+(setq org-duration-format
+      '((special . h:mm)))
 (setq org-list-demote-modify-bullet
       '(("+" . "-") ("*" . "-") ("1." . "-") ("1)" . "-")))
 (setq org-remove-highlights-with-change t)

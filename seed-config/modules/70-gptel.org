@@ -4,6 +4,31 @@
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+#+begin_src emacs-lisp :tangle yes
+;;; 70-gptel.el --- gptel agent runtime loader -*- lexical-binding: t; -*-
+
+(require 'package)
+
+(defvar my/gptel-backends nil)
+(defvar my/gptel-ollama-backend nil)
+(defvar gptel-backend)
+(defvar gptel-model)
+(defvar gptel-default-mode)
+(defvar gptel-directives)
+(defvar gptel-agent-runtime-ollama-host)
+(defvar gptel-agent-runtime-default-local-model)
+(defvar gptel-agent-runtime-default-local-model-label)
+(defvar gptel-agent-runtime-high-fidelity-model)
+
+(declare-function gptel-make-anthropic "gptel-anthropic")
+(declare-function gptel-make-openai "gptel-openai")
+(declare-function gptel-make-gemini "gptel-gemini")
+(declare-function gptel-make-ollama "gptel-ollama")
+(declare-function gptel-agent-runtime-start-ollama-if-needed "gptel-agent-runtime")
+(declare-function gptel-agent-runtime-sync-directive-for-current-runtime "gptel-agent-runtime")
+(declare-function gptel-agent-runtime-sync-tools "gptel-agent-runtime")
+#+end_src
+
 This file intentionally stays small. The AI implementation now lives in the
 separate package repository:
 

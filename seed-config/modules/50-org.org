@@ -3,6 +3,37 @@
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+#+begin_src emacs-lisp
+;;; 50-org.el --- Org mode configuration -*- lexical-binding: t; -*-
+
+(require 'org)
+(require 'org-agenda)
+(require 'org-capture)
+(require 'org-clock)
+(require 'org-id)
+(require 'org-habit)
+(require 'org-crypt)
+(require 'org-inlinetask)
+
+(defvar my/data-dir)
+(defvar org-state)
+(defvar org-agenda-sticky)
+(defvar org-inlinetask-export)
+(defvar org-archive-mark-done)
+(defvar org-show-entry-below)
+(defvar org-agenda-repeating-timestamp-show-all)
+(defvar org-alphabetical-lists)
+(defvar org-export-htmlize-output-type)
+(defvar org-export-allow-BIND)
+(defvar org-image-actual-size)
+(defvar org-plantuml-exec-mode)
+(defvar appt-time-msg-list)
+(defvar org-roam-v2-ack)
+(defvar bh/keep-clock-running nil)
+
+(declare-function claude-executor--find-babel-blocks "claude-executor")
+#+end_src
+
 * Org Mode
 #+begin_src emacs-lisp
 ;; Directory file: links open in Dired, not the OS file browser.
@@ -88,7 +119,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
   (interactive)
   (save-excursion
     (org-back-to-heading 'invisible-ok)
-    (hide-other)
+    (outline-hide-other)
     (org-cycle)
     (org-cycle)
     (org-cycle)))
@@ -213,7 +244,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
   (interactive)
   (save-excursion
     (beginning-of-line 0)
-    (org-remove-empty-drawer-at "CLOCK" (point))))
+    (org-remove-empty-drawer-at (point))))
 (add-hook 'org-clock-out-hook 'bh/remove-empty-drawer-on-clock-out 'append)
 #+end_src
 
@@ -290,7 +321,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 (defun bh/mark-next-parent-tasks-todo ()
   "Visit each parent task and change NEXT states to TODO."
-  (let ((mystate (or (and (fboundp 'org-state) state)
+  (let ((mystate (or (and (boundp 'org-state) org-state)
                      (nth 2 (org-heading-components)))))
     (when mystate
       (save-excursion
@@ -329,7 +360,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
               (forward-line 1)
               (while (and (not has-next) (< (point) subtree-end)
                           (re-search-forward "^\\*+ NEXT " subtree-end t))
-                (unless (member "WAITING" (org-get-tags-at))
+                (unless (member "WAITING" (org-get-tags))
                   (setq has-next t))))
             (if has-next nil next-headline))
         nil))))
@@ -345,7 +376,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
               (forward-line 1)
               (while (and (not has-next) (< (point) subtree-end)
                           (re-search-forward "^\\*+ NEXT " subtree-end t))
-                (unless (member "WAITING" (org-get-tags-at))
+                (unless (member "WAITING" (org-get-tags))
                   (setq has-next t))))
             (if has-next next-headline nil))
         next-headline))))
@@ -381,7 +412,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
     (let ((next-headline (save-excursion (or (outline-next-heading) (point-max)))))
       (cond ((org-is-habit-p) next-headline)
             ((and bh/hide-scheduled-and-waiting-next-tasks
-                  (member "WAITING" (org-get-tags-at))) next-headline)
+                  (member "WAITING" (org-get-tags))) next-headline)
             ((bh/is-project-p) next-headline)
             ((and (bh/is-task-p) (not (bh/is-project-subtree-p))) next-headline)
             (t nil)))))
@@ -686,7 +717,7 @@ just makes sure the directory tree exists.
 
 (setq bh/keep-clock-running nil)
 
-(defun bh/clock-in-to-next (kw)
+(defun bh/clock-in-to-next (_kw)
   "Switch TODO→NEXT when clocking in; revert NEXT→TODO for projects."
   (when (not (and (boundp 'org-capture-mode) org-capture-mode))
     (cond ((and (member (org-get-todo-state) '("TODO")) (bh/is-task-p))    "NEXT")
@@ -733,7 +764,7 @@ just makes sure the directory tree exists.
   (setq bh/keep-clock-running t)
   (if (equal major-mode 'org-agenda-mode)
       (let* ((marker (org-get-at-bol 'org-hd-marker))
-             (tags (org-with-point-at marker (org-get-tags-at))))
+             (tags (org-with-point-at marker (org-get-tags))))
         (if (and (eq arg 4) tags)
             (org-agenda-clock-in '(16))
           (bh/clock-in-organization-task-as-default)))
@@ -801,7 +832,7 @@ just makes sure the directory tree exists.
 * Speed Commands
 #+begin_src emacs-lisp
 (setq org-use-speed-commands t)
-(setq org-speed-commands-user
+(setq org-speed-commands
       '(("0" . ignore) ("1" . ignore) ("2" . ignore) ("3" . ignore)
         ("4" . ignore) ("5" . ignore) ("6" . ignore) ("7" . ignore)
         ("8" . ignore) ("9" . ignore)
@@ -891,7 +922,7 @@ just makes sure the directory tree exists.
           (bh/narrow-to-org-project)
           (save-excursion (bh/find-project-task) (org-agenda-set-restriction-lock)))
         (org-agenda-redo)
-        (beginning-of-buffer))
+        (goto-char (point-min)))
     (bh/narrow-to-org-project)
     (save-restriction (org-agenda-set-restriction-lock))))
 
@@ -902,7 +933,7 @@ just makes sure the directory tree exists.
 
 (defun bh/view-next-project ()
   (interactive)
-  (let (num-project-left current-project)
+  (let (current-project)
     (unless (marker-position org-agenda-restrict-begin)
       (goto-char (point-min))
       (while bh/project-list (set-marker (pop bh/project-list) nil))
@@ -925,13 +956,13 @@ just makes sure the directory tree exists.
         (bh/narrow-to-project))
       (setq current-project nil)
       (org-agenda-redo)
-      (beginning-of-buffer)
-      (setq num-projects-left (length bh/project-list))
-      (if (> num-projects-left 0)
-          (message "%s projects left to view" num-projects-left)
-        (beginning-of-buffer)
+        (goto-char (point-min))
+        (let ((num-projects-left (length bh/project-list)))
+          (if (> num-projects-left 0)
+              (message "%s projects left to view" num-projects-left)
+            (goto-char (point-min))
         (setq bh/hide-scheduled-and-waiting-next-tasks t)
-        (error "All projects viewed.")))))
+            (error "All projects viewed."))))))
 
 (add-hook 'org-agenda-mode-hook
           (lambda () (org-defkey org-agenda-mode-map "V" 'bh/view-next-project)) 'append)
@@ -939,8 +970,7 @@ just makes sure the directory tree exists.
 (defun bh/set-agenda-restriction-lock (arg)
   "Set restriction lock to current task subtree or file if prefix."
   (interactive "p")
-  (let* ((pom (bh/get-pom-from-agenda-restriction-or-point))
-         (tags (org-with-point-at pom (org-get-tags-at))))
+  (let* ((pom (bh/get-pom-from-agenda-restriction-or-point)))
     (let ((restriction-type (if (equal arg 4) 'file 'subtree)))
       (save-restriction
         (cond ((and (equal major-mode 'org-agenda-mode) pom)
@@ -959,7 +989,7 @@ just makes sure the directory tree exists.
     (widen)
     (bh/set-agenda-restriction-lock 4)
     (org-agenda-redo)
-    (beginning-of-buffer)))
+    (goto-char (point-min))))
 
 (add-hook 'org-agenda-mode-hook
           (lambda () (org-defkey org-agenda-mode-map "F" 'bh/restrict-to-file-or-follow)) 'append)
@@ -1053,7 +1083,7 @@ just makes sure the directory tree exists.
 (require 'ox-ascii)
 
 (setq org-alphabetical-lists t)
-(setq org-latex-listings t)
+(setq org-latex-src-block-backend 'listings)
 (setq org-latex-compiler "pdflatex")
 (setq org-html-inline-images t)
 (setq org-export-with-sub-superscripts nil)
@@ -1461,9 +1491,9 @@ sequenceDiagram
 ;; entry (e.g. when an agenda file is mid-recover from auto-save)
 ;; doesn't abort the rest of org-setup.org. Future interactive / hook
 ;; calls still surface errors normally.
-(condition-case _err
+(condition-case err
     (bh/org-agenda-to-appt)
-  (error (message "bh/org-agenda-to-appt: skipped at load -- %S" _err)))
+  (error (message "bh/org-agenda-to-appt: skipped at load -- %S" err)))
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 #+end_src

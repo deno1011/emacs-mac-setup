@@ -21,20 +21,24 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 - =my/bw-credentials-item=   :: BW item name holding ALL Emacs secrets (default "emacs-credentials")
 - =my/keychain-service=      :: macOS Keychain service for cached BW unlock credentials (default "emacs-credentials")
 
+#+begin_src emacs-lisp :tangle yes
+;;; 10-bootstrap.el --- Bootstrap private Emacs repo -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
+
+(defvar my/config-dir)
+(defvar my/data-dir)
+(defvar my/private-config-dir)
+(defvar my/seed-config-dir)
+
+(declare-function my/task-shell "05-tasks")
+#+end_src
+
 * Tunables (override in secrets.el)
 
 #+begin_src emacs-lisp :tangle yes
-;;; -*- lexical-binding: t; -*-
-;; Lexical binding is REQUIRED for the async callback chains in this
-;; module — every `:on-success' / `:on-failure' closure references let-
-;; bound variables from its enclosing scope. Under dynamic binding the
-;; lambdas would resolve those symbols at call-time (long after the let
-;; scope ended), error out, and the framework's `ignore-errors' wrapper
-;; in `my/-task-shell-finished' would swallow the failure silently —
-;; tasks would complete with state `success' but the callbacks would
-;; never run. The cookie must be the FIRST line of the tangled .el, so
-;; it lives at the top of the first tangled src block.
-
 (defvar my/bw-credentials-item "emacs-credentials"
   "Single Bitwarden item that bundles ALL Emacs-distro secrets:
 GitHub PAT + identity (login.username / login.password / Email /
@@ -48,7 +52,7 @@ The same names are used as custom field names in `my/bw-credentials-item'.")
 
 (defconst my/api-skipped-sentinel "__SKIPPED__"
   "Sentinel value persisted in place of an API key the user declined to
-provide. The loader treats this as 'opted out' — no setenv, no
+provide. The loader treats this as opted out: no setenv, no
 prompt. Run `M-x my/api-key-reset' to clear and re-prompt a key.")
 
 (defvar my/keychain-service "emacs-credentials"
@@ -62,9 +66,58 @@ stored here; they live only in `my/bw-credentials-item'.")
 (defvar my/keychain-account-bw-email "bw-email"
   "Keychain account under `my/keychain-service' for the cached BW login email.")
 
+(defvar my/keychain-account-github-username "GitHubUsername"
+  "Keychain account under `my/keychain-service' for the cached GitHub username.")
+
+(defvar my/keychain-account-github-token "GitHubToken"
+  "Keychain account under `my/keychain-service' for the cached GitHub token.")
+
+(defvar my/keychain-account-github-email "GitHubEmail"
+  "Keychain account under `my/keychain-service' for the cached Git commit email.")
+
+(defvar my/keychain-account-github-fullname "GitHubFullname"
+  "Keychain account under `my/keychain-service' for the cached Git commit name.")
+
+(defvar my/keychain-account-github-repo "GitHubRepo"
+  "Keychain account under `my/keychain-service' for the cached private repo name.")
+
+(defvar my/keychain-account-github-skipped "GitHubSkipped"
+  "Keychain account for the cached GitHub opt-out sentinel.")
+
 (defvar my/bw-session nil
   "Transient Bitwarden session token. nil when locked. Cleared by
 my/bw-lock; never persisted to disk.")
+
+(defvar my/bw-cache-master-on-first-launch t
+  "When t, cache master to Keychain on first successful unlock.
+When nil, the second successful unlock caches it.")
+
+(defvar my/bootstrap-data-dir-file
+  (expand-file-name "data-dir.el" user-emacs-directory)
+  "Generated file loaded by init.el before `my/data-dir' is defined.
+Bootstrap writes a literal data-dir selection here; init.el performs no
+repo lookup or Bitwarden/Keychain decisions.")
+
+(defvar my/distro-source-file
+  (expand-file-name "distro-source.el" user-emacs-directory)
+  "Generated metadata file written by install.sh.
+It records the distro Git repo URL, branch, and local checkout path that
+bootstrap should update in the background.")
+
+(defvar my/distro-repo-url "https://github.com/deno1011/emacs-mac-setup.git"
+  "Git URL for the public distro checkout used as seed config source.")
+
+(defvar my/distro-branch "main"
+  "Git branch for the public distro checkout used as seed config source.")
+
+(defvar my/bootstrap-config-update-sentinel ".no-seed-config-updates"
+  "File name inside config/ that disables distro seed config overwrites.
+By default the file is absent, so bootstrap refreshes config files from
+the distro seed on every start. Create this file only when intentionally
+freezing local config files.")
+
+(when (file-exists-p my/distro-source-file)
+  (load my/distro-source-file nil 'nomessage))
 #+end_src
 
 * Step 1 — macOS Keychain primitives
@@ -84,134 +137,6 @@ nil if missing or `security' fails."
                    nil t)))))
     (let ((trimmed (string-trim out)))
       (if (string-empty-p trimmed) nil trimmed))))
-
-;; Explanation: Async variant of my/keychain-get — non-blocking shell-out via my/task-shell.
-(defvar my/-async-task-counter 0
-  "Monotonic counter for naming throw-away async tasks uniquely.")
-
-(defun my/keychain-get-async (service account callback)
-  "Asynchronous variant of `my/keychain-get'. Returns immediately.
-CALLBACK is invoked on the main thread with the stored string (or nil
-if missing / `security' failed). ACCOUNT defaults to `user-login-name'
-when nil.
-
-Use this in bootstrap callback chains to avoid blocking the main
-thread. Sync `my/keychain-get' is preserved for callers that need a
-value back synchronously (e.g. `my/api-key-fetch' from gptel)."
-  (let ((cb  (or callback #'ignore))
-        (acc (or account (user-login-name))))
-    (my/task-shell
-     (intern (format "kc-get-%d" (cl-incf my/-async-task-counter)))
-     (list "security" "find-generic-password" "-a" acc "-s" service "-w")
-     :on-success
-     (lambda (out)
-       (let ((trimmed (and (stringp out) (string-trim out))))
-         (funcall cb (if (or (null trimmed) (string-empty-p trimmed))
-                         nil
-                       trimmed))))
-     :on-failure
-     (lambda (_err) (funcall cb nil)))
-    nil))
-
-;; Explanation: Check multiple Keychain entries' presence in one shell-out — single subprocess for N keys.
-(defun my/keychain-batch-check-async (svc-acc-pairs callback)
-  "Check Keychain presence for each (SERVICE . ACCOUNT) pair in
-SVC-ACC-PAIRS using ONE shell subprocess (bash loop). CALLBACK
-receives an alist `((SERVICE . ACCOUNT) . PRESENT-P)' in the same
-order as the input.
-
-This is far faster than running `my/keychain-get-async' N times
-sequentially because process-spawn overhead (~5-15 ms each on macOS)
-dominates the actual `security' call cost. With 7 keys this cuts the
-bootstrap predicate from ~500-1000 ms of beachball to ~50-100 ms in
-a backgrounded task.
-
-ACCOUNT may be nil — defaults to `user-login-name' per pair."
-  (let* ((pairs (mapcar (lambda (sa)
-                          (cons (car sa)
-                                (or (cdr sa) (user-login-name))))
-                        svc-acc-pairs))
-         (script (concat
-                  "set +e\n"
-                  (mapconcat
-                   (lambda (sa)
-                     (format "if security find-generic-password -a %s -s %s -w >/dev/null 2>&1; then echo Y; else echo N; fi"
-                             (shell-quote-argument (cdr sa))
-                             (shell-quote-argument (car sa))))
-                   pairs
-                   "\n")))
-         (cb (or callback #'ignore)))
-    (my/task-shell
-     (intern (format "kc-batch-%d" (cl-incf my/-async-task-counter)))
-     (list "bash" "-c" script)
-     :on-success
-     (lambda (out)
-       (let* ((lines (split-string (or out "") "\n" t))
-              (result (cl-mapcar (lambda (sa line)
-                                   (cons sa (string= line "Y")))
-                                 pairs lines)))
-         (funcall cb result)))
-     :on-failure
-     (lambda (_err)
-       ;; Best-effort fallback: assume all present so we don't loop
-       ;; the user back into a sync re-prompt on a transient failure.
-       (funcall cb (mapcar (lambda (sa) (cons sa t)) pairs))))
-    nil))
-
-;; Explanation: Batched async read of MULTIPLE Keychain values in one shell-out (base64-safe).
-(defun my/keychain-multi-get-async (svc-acc-pairs callback)
-  "Read multiple Keychain VALUES asynchronously in ONE subprocess.
-SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT); ACCOUNT may be nil
-(defaults to `user-login-name'). CALLBACK receives an alist
-`((SERVICE . ACCOUNT) . VALUE-OR-NIL)' in input order.
-
-Each value is base64-encoded inside the bash loop so newlines / NULs /
-shell metacharacters round-trip safely; decoded in the callback. The
-empty-or-error case is encoded as an empty string → nil after decode.
-
-Use when bootstrap needs several Keychain values (e.g. bw email +
-master) and the previous approach was N sequential shell-outs."
-  (let* ((pairs (mapcar (lambda (sa)
-                          (cons (car sa)
-                                (or (cdr sa) (user-login-name))))
-                        svc-acc-pairs))
-         ;; Each iteration prints exactly one line: `V:<base64-of-value>'.
-         ;; Empty values still produce `V:' so the line count matches the
-         ;; pair count regardless of which entries are present.
-         (script (concat
-                  "set +e\n"
-                  (mapconcat
-                   (lambda (sa)
-                     (format "{ v=$(security find-generic-password -a %s -s %s -w 2>/dev/null); printf 'V:'; printf '%%s' \"${v:-}\" | base64 | tr -d '\\n'; printf '\\n'; }"
-                             (shell-quote-argument (cdr sa))
-                             (shell-quote-argument (car sa))))
-                   pairs
-                   "\n")))
-         (cb (or callback #'ignore)))
-    (my/task-shell
-     (intern (format "kc-multi-%d" (cl-incf my/-async-task-counter)))
-     (list "bash" "-c" script)
-     :on-success
-     (lambda (out)
-       (let* ((lines (cl-remove-if-not
-                      (lambda (l) (string-prefix-p "V:" l))
-                      (split-string (or out "") "\n")))
-              (decoded (mapcar
-                        (lambda (line)
-                          (let ((payload (substring line 2)))
-                            (cond
-                             ((string-empty-p payload) nil)
-                             (t (condition-case nil
-                                    (let ((s (base64-decode-string payload)))
-                                      (if (string-empty-p s) nil s))
-                                  (error nil))))))
-                        lines))
-              (result (cl-mapcar #'cons pairs decoded)))
-         (funcall cb result)))
-     :on-failure
-     (lambda (_err)
-       (funcall cb (mapcar (lambda (sa) (cons sa nil)) pairs))))
-    nil))
 
 ;; Explanation: Replace a generic password in macOS Keychain so cached bootstrap credentials stay current.
 (defun my/keychain-set (service value &optional account)
@@ -256,7 +181,7 @@ master) and the previous approach was N sequential shell-outs."
 
 ;; Explanation: Ask Bitwarden CLI whether the vault is locked, unlocked, or unauthenticated.
 (defun my/bw-status ()
-  "Return BW status keyword: 'unauthenticated', 'locked', 'unlocked', or 'unknown'."
+  "Return BW status keyword: unauthenticated, locked, unlocked, or unknown."
   (let ((out (with-output-to-string
                (with-current-buffer standard-output
                  (call-process "bw" nil t nil "status")))))
@@ -364,96 +289,6 @@ Returns the session token or nil if the user declined / unlock failed."
             (my/keychain-delete my/keychain-service my/keychain-account-bw-master))
           nil)))))))
 
-;; Explanation: Non-blocking BW unlock — calls callback when the subprocess returns.
-(cl-defun my/bw-unlock-async (callback &key force-prompt)
-  "Asynchronous variant of `my/bw-unlock'. CALLBACK is a one-arg
-function receiving the session token (string) on success or nil on
-failure / decline. Returns immediately; CALLBACK runs on the main
-thread from the `bw' subprocess sentinel.
-
-Behaviour:
-  - `my/bw-session' already set → CALLBACK invoked with the cached
-    session on the next event-loop tick (preserves async semantics so
-    callers can chain uniformly).
-  - bw CLI not installed → CALLBACK nil on the next tick. Also offers
-    to brew-install in the background.
-  - Keychain has cached email + master → spawn `bw unlock --raw' as a
-    `my/task-shell' task. The sentinel sets `my/bw-session', fires a
-    backgrounded `bw sync', then invokes CALLBACK. UI stays
-    responsive during the ~500-1000 ms crypto unwrap.
-  - No cached creds → falls back to SYNCHRONOUS `my/bw-unlock' since
-    `read-passwd' must run on the main thread and a deferred prompt
-    would defeat the purpose. Only happens on first launch.
-
-FORCE-PROMPT non-nil bypasses the Keychain cache → sync prompt path."
-  (let ((cb (or callback #'ignore)))
-    (cond
-     (my/bw-session
-      (run-at-time 0 nil cb my/bw-session))
-     ((not (my/bw-installed-p))
-      (when (and (eq system-type 'darwin)
-                 (y-or-n-p "bw CLI not installed. Install via brew (background)? "))
-        (my/bw-install))
-      (run-at-time 0 nil cb nil))
-     (force-prompt
-      (run-at-time 0 nil cb (my/bw-unlock t)))
-     (t
-      ;; Async fetch of email + master in ONE shell-out (no main-thread
-      ;; sync Keychain reads). On success: spawn `bw unlock' as a task.
-      ;; On miss: fall back to sync prompt (first launch only).
-      (my/keychain-multi-get-async
-       (list (cons my/keychain-service my/keychain-account-bw-email)
-             (cons my/keychain-service my/keychain-account-bw-master))
-       (lambda (results)
-         (let ((email  (cdr (nth 0 results)))
-               (master (cdr (nth 1 results))))
-           (cond
-            ((not (and email master))
-             ;; No cached creds → SYNC prompt path (read-passwd requires
-             ;; the main thread; only happens on first launch).
-             (funcall cb (my/bw-unlock)))
-            (t
-             (my/task-shell
-              'bw-unlock
-              (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
-              :env `(("BW_PW" . ,master))
-              :on-success
-              (lambda (out)
-                (let* ((s (and (stringp out) (string-trim out)))
-                       (session (and s
-                                     (> (length s) 30)
-                                     (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
-                                     s)))
-                  (cond
-                   (session
-                    (setq my/bw-session session)
-                    ;; Fire-and-forget background sync. We don't wait.
-                    (my/task-shell
-                     'bw-sync
-                     (list "bash" "-c"
-                           (format "bw sync --session %s >/dev/null 2>&1"
-                                   (shell-quote-argument session))))
-                    (message "Bitwarden unlocked.")
-                    (funcall cb session))
-                   (t
-                    (display-warning
-                     'emacs-setup
-                     "BW async unlock returned no session token. Cached master may be stale — wiping so next launch re-prompts."
-                     :warning)
-                    (my/keychain-delete my/keychain-service
-                                        my/keychain-account-bw-master)
-                    (funcall cb nil)))))
-              :on-failure
-              (lambda (_err)
-                (display-warning
-                 'emacs-setup
-                 "BW async unlock subprocess failed. Cached master may be stale — wiping so next launch re-prompts."
-                 :warning)
-                (my/keychain-delete my/keychain-service
-                                    my/keychain-account-bw-master)
-                (funcall cb nil)))))))))))
-  nil)
-
 ;; Explanation: Lock Bitwarden and clear the in-memory session token after bootstrap has loaded secrets.
 (defun my/bw-lock ()
   "Lock the BW vault and clear the session token from memory."
@@ -480,18 +315,9 @@ If you want master cached on first launch instead, set
 =my/bw-cache-master-on-first-launch= to t and accept that the master
 sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 
-#+begin_src emacs-lisp :tangle yes
-(defvar my/bw-cache-master-on-first-launch t
-  "When t, cache master to Keychain on first successful unlock
-(slight extra exposure window). When nil, second unlock caches.")
-#+end_src
-
 * Step 3 — Bitwarden item read / write helpers
 
 #+begin_src emacs-lisp :tangle yes
-(require 'cl-lib)
-(require 'json)
-
 ;; Explanation: Fetch one Bitwarden item by name, recovering from duplicate names with an exact search.
 (defun my/bw-get-item (item-name)
   "Return parsed alist for ITEM-NAME, or nil if missing / no session."
@@ -538,40 +364,6 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                    (lambda (a b)
                      (> (length (or (cdr (assoc 'fields a)) []))
                         (length (or (cdr (assoc 'fields b)) [])))))))))))
-
-;; Explanation: Async variant — runs `bw get item' in a my/task-shell task and parses JSON in callback.
-(defun my/bw-get-item-async (item-name callback)
-  "Asynchronous variant of `my/bw-get-item'. Returns immediately.
-CALLBACK is invoked on the main thread with the parsed alist, or nil
-if BW is locked / item missing / JSON parse failed.
-
-Note: does NOT implement the duplicate-name fallback of the sync
-version. Bootstrap path expects a unique item name; if duplicates
-become a real issue, add a second async stage that runs `bw list
-items --search'."
-  (let ((cb (or callback #'ignore)))
-    (cond
-     ((not my/bw-session)
-      (run-at-time 0 nil cb nil))
-     (t
-      (my/task-shell
-       (intern (format "bw-get-item-%d" (cl-incf my/-async-task-counter)))
-       (list "bw" "get" "item" item-name
-             "--session" my/bw-session)
-       :on-success
-       (lambda (out)
-         (let ((parsed
-                (when (and out (string-prefix-p "{" (string-trim out)))
-                  (condition-case nil
-                      (json-parse-string out
-                                         :object-type 'alist
-                                         :null-object nil
-                                         :false-object nil)
-                    (error nil)))))
-           (funcall cb parsed)))
-       :on-failure
-       (lambda (_err) (funcall cb nil)))))
-    nil))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
@@ -694,7 +486,7 @@ the user's private data repo:
   "Non-nil unless GitHub authoritatively rejects TOKEN with HTTP 401.
 Network failures, 5xx, 403 (rate-limit), and any other status preserve
 the cached token so a fresh PAT prompt only fires when GitHub actually
-says 'Bad credentials'. Offline / outage launches keep using the
+    says Bad credentials. Offline / outage launches keep using the
 cached token."
   (when (and token (not (string-empty-p token)))
     (let ((code (string-trim
@@ -764,29 +556,34 @@ Run as `M-x my/github-identity-reset'; then restart Emacs or
     (message "Reset GitHub identity in BW '%s'. Run M-x my/bootstrap (or restart Emacs) to re-prompt."
              my/bw-credentials-item))))
 ;; Explanation: Load or complete the GitHub identity bundle stored in Bitwarden.
-(cl-defun my/-github-build-identity-from-item (item)
-  "Build the GitHub identity plist from an already-fetched BW ITEM.
-Same return contract as `my/github-load-identity' (everything from the
-inner let onward). Extracted so `my/bootstrap--step-identity' can fetch
-ITEM via `my/bw-get-item-async' and run this synchronous decision tree
-in the callback — keeps the heavy shell-out off the main thread.
-ITEM may be nil (BW item missing)."
-  (when (my/github--opted-out-p item)
-    (message "Bootstrap: GitHub sync opted out (M-x my/github-identity-reset to revive).")
-    (cl-return-from my/-github-build-identity-from-item nil))
-  (let* ((username (and item (my/bw-item-username item)))
-         (token    (and item (my/bw-item-password item)))
-         (email    (and item (my/bw-item-field item "Email")))
-         (fullname (and item (my/bw-item-field item "Fullname")))
-         (repo     (and item (my/bw-item-field item "Repo")))
-         ;; Read per-repo git-crypt slot (field "GitCryptKey:<repo>").
-         ;; `my/-git-crypt-read' is the canonical reader at use-time; this
-         ;; eager copy is only here for backward-compat callers that may
-         ;; still read identity's :git-crypt-key. New code should use
-         ;; (my/-git-crypt-read (plist-get id :repo)) instead.
-         (git-crypt-key
-          (and item repo
-               (my/bw-item-field item (format "GitCryptKey:%s" repo))))
+(cl-defun my/github-load-identity ()
+  "Read GitHub bundle from `my/bw-credentials-item'.
+Returns plist (:username :token :email :fullname :repo :git-crypt-key)
+when a usable identity is available, nil otherwise. Three skip paths:
+  - BW locked → nil.
+  - Item carries GitHubSkipped sentinel → nil (no prompts).
+  - Item missing AND user declines the upfront opt-in → writes sentinel,
+    returns nil (no re-prompt on subsequent launches).
+Otherwise prompts only for fields that are missing or invalid."
+  (unless my/bw-session
+    (cl-return-from my/github-load-identity nil))
+  (let ((item (my/bw-get-item my/bw-credentials-item)))
+    (when (my/github--opted-out-p item)
+      (message "Bootstrap: GitHub sync opted out (M-x my/github-identity-reset to revive).")
+      (cl-return-from my/github-load-identity nil))
+    (let* ((username (and item (my/bw-item-username item)))
+           (token    (and item (my/bw-item-password item)))
+           (email    (and item (my/bw-item-field item "Email")))
+           (fullname (and item (my/bw-item-field item "Fullname")))
+           (repo     (and item (my/bw-item-field item "Repo")))
+           ;; Read per-repo git-crypt slot (field "GitCryptKey:<repo>").
+           ;; `my/-git-crypt-read' is the canonical reader at use-time; this
+           ;; eager copy is only here for backward-compat callers that may
+           ;; still read identity's :git-crypt-key. New code should use
+           ;; (my/-git-crypt-read (plist-get id :repo)) instead.
+           (git-crypt-key
+            (and item repo
+                 (my/bw-item-field item (format "GitCryptKey:%s" repo))))
            (need-token (or (my/-blank-p token)
                            (not (my/github-token-valid-p token))))
            (need-username (my/-blank-p username))
@@ -857,23 +654,7 @@ ITEM may be nil (BW item missing)."
               (message "Bootstrap: BW '%s' created." my/bw-credentials-item))
             (list :username new-username :token new-token
                   :email new-email :fullname new-fullname :repo new-repo
-                  :git-crypt-key git-crypt-key))))))))
-
-;; Explanation: Thin wrapper — sync `bw get item' + delegate to the helper.
-(cl-defun my/github-load-identity ()
-  "Read GitHub bundle from `my/bw-credentials-item' synchronously.
-Returns plist (:username :token :email :fullname :repo :git-crypt-key)
-when a usable identity is available, nil otherwise.
-
-Internally: fetch the BW item sync, then delegate to
-`my/-github-build-identity-from-item' for the field extraction +
-interactive prompt logic. Bootstrap's async path bypasses this wrapper
-and calls `my/bw-get-item-async' + the helper directly (see
-`my/bootstrap--step-identity')."
-  (unless my/bw-session
-    (cl-return-from my/github-load-identity nil))
-  (my/-github-build-identity-from-item
-   (my/bw-get-item my/bw-credentials-item)))
+                  :git-crypt-key git-crypt-key)))))))))
 
 ;; Explanation: Read a global git config key without treating absence as an error.
 (defun my/-git-global-config-get (key)
@@ -903,6 +684,69 @@ my/data-dir's post-commit auto-push hook) fall back to
       (unless (or cur-email (my/-blank-p email))
         (call-process "git" nil nil nil "config" "--global" "user.email" email)
         (message "Bootstrap: set global git user.email = %s (from BW)." email)))))
+
+;; Explanation: Convert a selected repo name into its local data directory.
+(defun my/bootstrap-data-dir-for-repo (repo)
+  "Return the local data directory for REPO.
+The repo name is the directory name by design: Repo=emacs4 maps to
+~/emacs4/. This keeps repo switching out of init.el."
+  (expand-file-name
+   (file-name-as-directory
+    (file-name-nondirectory
+     (directory-file-name (or repo "emacs"))))
+   "~"))
+
+;; Explanation: Write init.el's generated literal data-dir selection.
+(defun my/bootstrap-write-data-dir-selection (dir)
+  "Write DIR as the generated `my/data-dir' selection for future launches."
+  (make-directory (file-name-directory my/bootstrap-data-dir-file) t)
+  (with-temp-file my/bootstrap-data-dir-file
+    (insert ";;; data-dir.el --- generated by bootstrap -*- lexical-binding: t; -*-\n")
+    (insert ";; Do not edit by hand; change the Repo field in Bitwarden/Keychain.\n\n")
+    (insert (format "(setq my/data-dir %S)\n"
+                    (file-name-as-directory (expand-file-name dir)))))
+  (message "Bootstrap: wrote %s -> %s"
+           my/bootstrap-data-dir-file
+           (file-name-as-directory (expand-file-name dir))))
+
+;; Explanation: Ensure the selected repo has its matching local folder.
+(defun my/bootstrap-ensure-selected-repo-dir (identity)
+  "Ensure IDENTITY's repo lives in a same-named local folder.
+Returns non-nil when the selected folder differs from the current
+`my/data-dir', meaning a restart is needed before the full config can
+load from the newly selected repo."
+  (let* ((repo (plist-get identity :repo))
+         (target (my/bootstrap-data-dir-for-repo repo))
+         (current (file-name-as-directory (expand-file-name my/data-dir))))
+    (when (and (not (my/-blank-p repo))
+               (not (string= (file-name-as-directory (expand-file-name target))
+                             current)))
+      (let ((my/data-dir target))
+        (my/repo-sync identity)
+        (when (file-directory-p my/data-dir)
+          (my/bootstrap-ensure-seed-config-for-data-dir my/data-dir)
+          (my/-repo-commit-and-push-if-needed
+           my/data-dir "sync: seed config files")
+          (my/generate-starter-data my/data-dir identity)
+          (my/git-crypt-step identity)))
+      (my/bootstrap-write-data-dir-selection target)
+      (display-warning
+       'emacs-setup
+       (format "Selected repo '%s' now lives at %s. Restart Emacs to load that config."
+               repo target)
+       :warning)
+      t)))
+
+;; Explanation: Detect when the cached selected repo no longer matches this launch folder.
+(defun my/bootstrap-selected-repo-dir-mismatch-p ()
+  "Return non-nil when Keychain's selected repo maps to another folder."
+  (let ((repo (my/keychain-get my/keychain-service
+                               my/keychain-account-github-repo)))
+    (and (not (my/-blank-p repo))
+         (not (string= (file-name-as-directory
+                        (expand-file-name (my/bootstrap-data-dir-for-repo repo)))
+                       (file-name-as-directory
+                        (expand-file-name my/data-dir)))))))
 #+end_src
 
 * Step 5 — gh CLI install + authenticate
@@ -1099,30 +943,188 @@ inside multiline string literals with the structure of this file.
     (make-directory (expand-file-name d root) t)))
 
 (defvar my/distro-src-dir
-  (or (getenv "EMACS_MAC_SRC_DIR")
-      (expand-file-name "~/emacs-mac-setup-src/"))
+  (file-name-as-directory
+   (or (getenv "EMACS_MAC_SRC_DIR")
+       (and (boundp 'my/distro-src-dir) my/distro-src-dir)
+       (expand-file-name "~/emacs-mac-setup-src/")))
   "Local checkout of the public distro. Used by
 `my/bootstrap-ensure-seed-config-files' to backfill missing modules
 after repo adoption.")
 
-;; Explanation: Backfill missing config files after repo sync/adoption.
-(defun my/bootstrap-ensure-seed-config-files ()
-  "Backfill missing config files from the distro source.
+;; Explanation: Refresh config files from the distro seed after repo sync/adoption.
+(defun my/bootstrap-config-updates-frozen-p (&optional target-config-dir)
+  "Return non-nil when TARGET-CONFIG-DIR has the config-update sentinel."
+  (file-exists-p
+   (expand-file-name my/bootstrap-config-update-sentinel
+                     (or target-config-dir my/private-config-dir my/config-dir))))
+
+(defun my/bootstrap-freeze-config-updates (&optional target-config-dir)
+  "Create the sentinel that prevents distro seed config overwrites."
+  (interactive)
+  (let ((dir (file-name-as-directory
+              (or target-config-dir my/private-config-dir my/config-dir))))
+    (make-directory dir t)
+    (write-region
+     "Delete this file to allow bootstrap to refresh config/ from the distro seed.\n"
+     nil
+     (expand-file-name my/bootstrap-config-update-sentinel dir))
+    (message "Bootstrap: config updates frozen for %s" dir)))
+
+(defun my/bootstrap-unfreeze-config-updates (&optional target-config-dir)
+  "Remove the sentinel so distro seed config updates apply again."
+  (interactive)
+  (let ((sentinel (expand-file-name
+                   my/bootstrap-config-update-sentinel
+                   (file-name-as-directory
+                    (or target-config-dir my/private-config-dir my/config-dir)))))
+    (when (file-exists-p sentinel)
+      (delete-file sentinel))
+    (message "Bootstrap: config updates enabled for %s"
+             (file-name-directory sentinel))))
+
+(defun my/bootstrap-ensure-seed-config-files (&optional target-config-dir)
+  "Refresh config files from the distro source.
 `install.sh' seeds `my/config-dir' before Emacs first launches, but
 `my/repo-sync' may then replace it with the user's private clone — which
-can be missing modules the distro provides. Walk
-`my/distro-src-dir/seed-config/' and copy any file the user's
-`my/config-dir' is missing, preserving subdirectory structure. Never
-overwrites existing files."
-  (let ((src (expand-file-name "seed-config" my/distro-src-dir)))
-    (when (file-directory-p src)
-      (dolist (file (directory-files-recursively src "."))
-        (let* ((rel  (file-relative-name file src))
-               (dest (expand-file-name rel my/config-dir)))
-          (unless (file-exists-p dest)
-            (make-directory (file-name-directory dest) t)
-            (copy-file file dest)
-            (message "Bootstrap: backfilled %s from distro." rel)))))))
+can be missing modules or contain older modules. Walk
+`my/distro-src-dir/seed-config/' and copy files into the user's
+config directory, preserving subdirectory structure.
+
+By default, existing seed-owned config files are overwritten so users
+receive fixes on every start. To freeze local config files, create
+`my/bootstrap-config-update-sentinel' inside the target config directory
+or run `M-x my/bootstrap-freeze-config-updates'. Delete it, or run
+`M-x my/bootstrap-unfreeze-config-updates', to receive updates again.
+
+When TARGET-CONFIG-DIR is non-nil, seed that explicit config directory.
+This is required while preparing a different selected repo folder before
+the current Emacs session has restarted into it."
+  (let ((src (expand-file-name "seed-config" my/distro-src-dir))
+        (target-config-dir
+         (or target-config-dir
+             (if (and (boundp 'my/private-config-dir)
+                      (stringp my/private-config-dir))
+                 my/private-config-dir
+               (and (boundp 'my/config-dir)
+                    (stringp my/config-dir)
+                    my/config-dir)))))
+    (cond
+     ((not target-config-dir)
+      (message "Bootstrap: config refresh skipped (target config dir is not bound)."))
+     ((file-directory-p src)
+      (if (my/bootstrap-config-updates-frozen-p target-config-dir)
+          (message "Bootstrap: config updates frozen by %s."
+                   (expand-file-name my/bootstrap-config-update-sentinel
+                                     target-config-dir))
+        (dolist (file (directory-files-recursively src "."))
+          (let* ((rel  (file-relative-name file src))
+                 (dest (expand-file-name rel target-config-dir)))
+            (unless (or (string= rel my/bootstrap-config-update-sentinel)
+                        (string-suffix-p ".elc" rel))
+              (when (or (not (file-exists-p dest))
+                        (not (my/-file-same-content-p file dest)))
+                (make-directory (file-name-directory dest) t)
+                (copy-file file dest t t t t)
+                (message "Bootstrap: refreshed config %s from distro." rel))))))))))
+
+(defun my/bootstrap-ensure-seed-config-for-data-dir (&optional data-dir)
+  "Backfill seed config into DATA-DIR's config/ directory."
+  (my/bootstrap-ensure-seed-config-files
+   (expand-file-name "config/" (or data-dir my/data-dir))))
+
+;; Explanation: Build the nonblocking git update command for the distro checkout.
+(defun my/bootstrap-distro-update-command ()
+  "Return shell command that updates `my/distro-src-dir' from its configured repo."
+  (let* ((dir (file-name-as-directory (expand-file-name my/distro-src-dir)))
+         (repo (or my/distro-repo-url "https://github.com/deno1011/emacs-mac-setup.git"))
+         (branch (or my/distro-branch "main")))
+    (format
+     (concat
+      "set -e; "
+      "if [ -d %s/.git ]; then "
+      "git -C %s remote set-url origin %s; "
+      "if [ -n \"$(git -C %s status --porcelain)\" ]; then "
+      "echo 'Bootstrap: distro checkout has local edits; skipped background update.'; "
+      "exit 0; "
+      "fi; "
+      "git -C %s fetch origin %s; "
+      "git -C %s checkout %s; "
+      "git -C %s pull --ff-only origin %s; "
+      "else "
+      "mkdir -p %s; "
+      "rmdir %s 2>/dev/null || true; "
+      "git clone --branch %s %s %s; "
+      "fi")
+     (shell-quote-argument (directory-file-name dir))
+     (shell-quote-argument dir)
+     (shell-quote-argument repo)
+     (shell-quote-argument dir)
+     (shell-quote-argument dir)
+     (shell-quote-argument branch)
+     (shell-quote-argument dir)
+     (shell-quote-argument branch)
+     (shell-quote-argument dir)
+     (shell-quote-argument branch)
+     (shell-quote-argument dir)
+     (shell-quote-argument dir)
+     (shell-quote-argument branch)
+     (shell-quote-argument repo)
+     (shell-quote-argument dir))))
+
+;; Explanation: Update the local distro checkout in the background and then refresh config files.
+(defun my/bootstrap-start-distro-config-update-task ()
+  "Update the distro checkout in the background, then refresh local config files.
+This does not block Emacs startup. Updated config is written to disk for
+the next restart; currently loaded modules keep running from memory."
+  (cond
+   ((and (fboundp 'my/task-shell)
+         (or (file-directory-p my/distro-src-dir)
+             (not (my/-blank-p my/distro-repo-url))))
+    (my/task-shell
+     'distro-config-update
+     (list "sh" "-lc" (my/bootstrap-distro-update-command))
+     :on-success
+     (lambda (_out)
+       (condition-case err
+           (progn
+             (my/bootstrap-ensure-seed-config-files)
+             (message "Bootstrap: distro config refreshed from %s (%s). Restart to use newly loaded module code."
+                      my/distro-repo-url my/distro-branch))
+         (error
+          (display-warning 'emacs-setup
+                           (format "Distro config refresh after update failed: %s"
+                                   (error-message-string err))
+                           :warning))))
+     :on-failure
+     (lambda (err)
+       (display-warning 'emacs-setup
+                        (format "Distro checkout update failed: %s" err)
+                        :warning))))
+   (t
+    (message "Bootstrap: distro config update skipped (task framework or repo metadata unavailable)."))))
+
+;; Explanation: Keep the minimal rescue bootstrap current with the private config.
+(defun my/bootstrap-sync-rescue-bootstrap-source ()
+  "Copy the current private bootstrap Org into the distro seed rescue copy.
+This keeps missing-repo self-heal on the newest bootstrap logic. It only
+runs when the private config is the loaded config; rescue mode never
+copies seed files back onto themselves."
+  (when (and (boundp 'my/private-config-dir)
+             (boundp 'my/seed-config-dir)
+             (stringp my/private-config-dir)
+             (stringp my/seed-config-dir)
+             (string= (file-truename my/config-dir)
+                      (file-truename my/private-config-dir)))
+    (let ((src (expand-file-name "modules/10-bootstrap.org"
+                                 my/private-config-dir))
+          (dest (expand-file-name "modules/10-bootstrap.org"
+                                  my/seed-config-dir)))
+      (when (and (file-exists-p src)
+                 (file-directory-p (file-name-directory dest))
+                 (or (not (file-exists-p dest))
+                     (file-newer-than-file-p src dest)))
+        (copy-file src dest t)
+        (message "Bootstrap: synced rescue bootstrap source.")))))
 #+end_src
 
 * Step 6 — Personal repo sync
@@ -1130,6 +1132,12 @@ overwrites existing files."
 #+begin_src emacs-lisp :tangle yes
 (require 'cl-lib)
 (require 'subr-x)
+
+(defvar my/bootstrap-repo-created-this-run nil
+  "Non-nil when bootstrap created the selected GitHub repo in this Emacs run.")
+
+(defvar my/bootstrap-keychain-refresh-failed nil
+  "Non-nil when the startup BW-to-Keychain refresh failed this launch.")
 
 ;; Explanation: Read the origin remote URL for a local git directory.
 (defun my/git-remote-url (dir)
@@ -1142,6 +1150,19 @@ overwrites existing files."
                       (call-process "git" nil t nil "remote" "get-url" "origin")))))))
       (when (not (string-empty-p out)) out))))
 
+;; Explanation: Remove any local folder that conflicts with the selected authoritative repo.
+(defun my/-repo-remove-conflicting-local-dir (dir user repo reason)
+  "Delete DIR without prompting because USER/REPO is authoritative.
+REASON is included in the warning so the user understands why the local
+folder disappeared."
+  (when (file-exists-p dir)
+    (display-warning
+     'emacs-setup
+     (format "Repo switch is authoritative: deleting %s before restoring %s/%s (%s)."
+             dir user repo reason)
+     :warning)
+    (delete-directory dir t)))
+
 ;; Explanation: Clone the private repo or create it on GitHub when it does not exist.
 (defun my/-repo-fetch-or-create (identity)
   "Clone the user's private repo into my/data-dir, or create+push if it
@@ -1150,15 +1171,16 @@ Used by both the empty-dir branch and the override-existing branch."
   (let* ((user (plist-get identity :username))
          (repo (plist-get identity :repo))
          (dir my/data-dir)
-         (exists-on-gh (zerop (call-process-shell-command
-                               (format "gh api repos/%s/%s >/dev/null 2>&1"
-                                       (shell-quote-argument user)
-                                       (shell-quote-argument repo))
-                               nil nil))))
+	         (exists-on-gh (zerop (call-process-shell-command
+	                               (format "gh api repos/%s/%s >/dev/null 2>&1"
+	                                       (shell-quote-argument user)
+	                                       (shell-quote-argument repo))
+	                               nil nil))))
+    (setq my/bootstrap-repo-created-this-run nil)
     (cond
      (exists-on-gh
       (message "Bootstrap: cloning %s/%s into %s…" user repo dir)
-      (when (file-exists-p dir) (delete-directory dir t))
+      (my/-repo-remove-conflicting-local-dir dir user repo "fresh clone")
       (call-process-shell-command
        (format "gh repo clone %s/%s %s"
                (shell-quote-argument user) (shell-quote-argument repo)
@@ -1174,8 +1196,11 @@ Used by both the empty-dir branch and the override-existing branch."
        (t
         (message "Bootstrap: repo %s/%s does not exist on GitHub. Generating starter, creating, pushing…"
                  user repo)
+        (my/-repo-remove-conflicting-local-dir dir user repo "new repo")
+        (setq my/bootstrap-repo-created-this-run t)
         (make-directory dir t)
         (my/generate-starter-data dir identity)
+        (my/bootstrap-ensure-seed-config-for-data-dir dir)
         (let ((default-directory dir)
               ;; Git refuses to commit with empty user.name / user.email,
               ;; so we always pass a non-empty value.
@@ -1197,13 +1222,7 @@ Used by both the empty-dir branch and the override-existing branch."
           ;; service emacs-git-crypt-key account <repo>). No-op if
           ;; git-crypt can't be installed; user data falls back to
           ;; plaintext gracefully.
-          ;;
-          ;; The `let' binds the safety flag so `my/-repo-auto-init-git-crypt'
-          ;; accepts the call — this is a brand-new repo (zero commits,
-          ;; no remote yet), so generating a fresh key cannot orphan
-          ;; existing ciphertext.
-          (let ((my/-repo-just-created t))
-            (my/-repo-auto-init-git-crypt dir repo))
+          (my/-repo-auto-init-git-crypt dir repo)
           (call-process-shell-command
            "git add . && git commit -m 'initial: distro-generated starter content' 2>&1"
            nil log-buf nil)
@@ -1313,7 +1332,7 @@ finish the current bootstrap load.  Return a plist with :imported,
       (call-process "git" nil nil nil "push" "origin" "main"))))
 
 ;; Explanation: Adopt an existing local data directory into the configured GitHub repo.
-(defun my/-repo-adopt-existing-dir (identity current-remote)
+(defun my/-repo-adopt-existing-dir (identity _current-remote)
   "Adopt existing my/data-dir into the configured GitHub repo.
 The GitHub repo is authoritative for paths that exist on both sides.
 Local-only files are imported and pushed.  The original directory is
@@ -1411,22 +1430,14 @@ IDENTITY is the plist returned by my/github-load-identity."
      ;; picks up whatever's there.
      ((not (file-exists-p (expand-file-name ".git" dir)))
       (my/-repo-fetch-or-create identity))
-     ;; Has .git but wrong/no remote — adopt the existing git repo into
-     ;; the GitHub clone while keeping the remote authoritative for conflicts.
+     ;; Has .git but wrong/no remote — selected repo is authoritative.
+     ;; Delete the local folder without prompting, then clone or create the
+     ;; configured GitHub repo.
      (t
       (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
-        (cond
-         ((y-or-n-p
-           (format "%s exists with content (remote: %s) and is NOT %s/%s.
-Adopt it into the GitHub repo? Remote wins data conflicts; seeded config/ scripts win so startup can finish; local-only files are imported; full local backup is kept. "
-                   dir current-remote user repo))
-          (my/-repo-adopt-existing-dir identity current-remote))
-         (t
-          (display-warning 'emacs-setup
-                           (format "%s exists with content but is not a clone of %s/%s — leaving alone.
-To adopt later, M-x my/repo-sync (will re-prompt) or move %s manually."
-                                   dir user repo dir)
-                           :warning))))))))
+        (my/-repo-remove-conflicting-local-dir
+         dir user repo (format "wrong remote: %s" current-remote))
+        (my/-repo-fetch-or-create identity))))))
 #+end_src
 
 * Step 7.5 — git-crypt unlock for the private repo
@@ -1575,17 +1586,17 @@ emit `_' / `-' instead of `/' / `+'."
   "Return non-nil if S (after normalization) decodes as base64."
   (and s
        (condition-case nil
-           (progn (base64-decode-string (my/-normalize-base64 s)) t)
+           (progn
+             (ignore (base64-decode-string (my/-normalize-base64 s)))
+             t)
          (error nil))))
 
 ;; Explanation: User command — clear REPO's key (and sentinel) so next bootstrap retries.
 (defun my/git-crypt-reset (&optional repo)
   "Clear REPO's git-crypt key + sentinel from BOTH BW and Keychain.
 Defaults REPO to `my/-git-crypt-current-repo'. After this, the next
-bootstrap launch will SAFETY-HALT (no key found → tell user to run
-`my/git-crypt-import-key' / `my/git-crypt-skip' / `my/git-crypt-enable-now').
-Use to clear a stale key after rotating, or to revive after
-`my/git-crypt-skip' before pasting in the real key."
+bootstrap launch will auto-init (generate a fresh key) for that
+repo. Use after rotating the key, or to revive after `my/git-crypt-skip'."
   (interactive)
   (unless my/bw-session (my/bw-unlock))
   (let ((r (or repo (my/-git-crypt-current-repo))))
@@ -1594,7 +1605,7 @@ Use to clear a stale key after rotating, or to revive after
       (message "git-crypt-reset: no repo name available (BW locked AND my/data-dir undefined)."))
      (t
       (unwind-protect (my/-git-crypt-clear r) (my/bw-lock))
-      (message "git-crypt: cleared key + sentinel for repo '%s' (BW + Keychain). Next bootstrap will SAFETY-HALT — run M-x my/git-crypt-import-key to paste in the real key."
+      (message "git-crypt: cleared key + sentinel for repo '%s' (BW + Keychain). Next bootstrap will auto-init."
                r)))))
 
 ;; Explanation: User command — set per-repo skip sentinel so bootstrap stops trying.
@@ -1613,59 +1624,6 @@ Defaults REPO to `my/-git-crypt-current-repo'. Revive with
       (unwind-protect (my/-git-crypt-write r my/api-skipped-sentinel) (my/bw-lock))
       (message "git-crypt: skip sentinel persisted for repo '%s'. Bootstrap will neither prompt nor auto-init. M-x my/git-crypt-reset to revive."
                r)))))
-
-;; Explanation: User command — paste in an existing git-crypt key from another Mac.
-(defun my/git-crypt-import-key (&optional repo)
-  "Prompt (HIDDEN INPUT) for an existing base64-encoded git-crypt key
-for REPO, validate it, and dual-save to BW (field `GitCryptKey:<repo>')
-+ Keychain (service `my/git-crypt-keychain-service' account `<repo>').
-Defaults REPO to `my/-git-crypt-current-repo'.
-
-Use when you already have a git-crypt key — typically because another
-Mac set up the repo earlier and you need to import that same key onto
-this clone so it can decrypt existing ciphertext.
-
-To get the key from the source Mac:
-
-  git -C <repo> git-crypt export-key /tmp/k && base64 -i /tmp/k
-
-Empty input is treated as a no-op (use `M-x my/git-crypt-skip' instead
-to persist the skip sentinel). Invalid base64 is rejected without
-writing anything.
-
-This is the SAFE alternative to the removed auto-init-on-keyless-clone
-behaviour: the user supplies the real key explicitly instead of
-bootstrap silently generating a new one that would orphan ciphertext."
-  (interactive)
-  (unless my/bw-session (my/bw-unlock))
-  (let ((r (or repo (my/-git-crypt-current-repo))))
-    (cond
-     ((not r)
-      (message "git-crypt-import-key: no repo name available (BW locked AND my/data-dir undefined).")
-      (when my/bw-session (my/bw-lock)))
-     (t
-      (let ((entered (read-passwd
-                      (format "Existing base64 git-crypt key for repo '%s' (empty = abort): "
-                              r))))
-        (cond
-         ((my/-blank-p entered)
-          (message "git-crypt-import-key: empty input — aborted. (Use M-x my/git-crypt-skip to opt out.)")
-          (when my/bw-session (my/bw-lock)))
-         ((not (my/-valid-base64-p entered))
-          (display-warning
-           'emacs-setup
-           "git-crypt-import-key: input is not valid base64. NOTHING was saved.
-
-Re-run and paste the output of `base64 -i <keyfile>' from your source Mac:
-
-  git -C <repo> git-crypt export-key /tmp/k && base64 -i /tmp/k"
-           :warning)
-          (when my/bw-session (my/bw-lock)))
-         (t
-          (let ((normalized (my/-normalize-base64 entered)))
-            (unwind-protect (my/-git-crypt-write r normalized) (my/bw-lock))
-            (message "git-crypt-import-key: key imported for repo '%s' (BW field GitCryptKey:%s + Keychain service %s account %s). Restart Emacs (or run M-x my/bootstrap) to unlock."
-                     r r my/git-crypt-keychain-service r)))))))))
 
 ;; Explanation: Unlock the private repo with a base64 encoded git-crypt key.
 (defun my/git-crypt-unlock (dir base64-key)
@@ -1715,26 +1673,6 @@ it's actually wrong."
       (delete-file keyfile))
     ok))
 
-;; Explanation: Safety guard — auto-init is only permitted at known-safe call sites.
-(defvar my/-repo-just-created nil
-  "Dynamic safety flag. NON-nil ONLY inside the two known-safe
-auto-init call sites:
-
-  1. `my/-repo-fetch-or-create' create-branch, AFTER `git init' and
-     BEFORE the first `git add' / `gh repo create' — the repo is
-     brand-new in this run, has zero commits, and no remote ciphertext
-     can be orphaned by generating a fresh key.
-  2. `my/git-crypt-enable-now', AFTER the user confirmed the y-or-n-p
-     warning that existing remote history will stay plaintext — the
-     user has explicitly authorized key generation.
-
-`my/-repo-auto-init-git-crypt' REFUSES to run unless this flag is
-`t'. That is the safety guarantee: a clone of an existing encrypted
-repo whose key is missing from BW/Keychain can NEVER reach the
-auto-init code path and silently overwrite the real key.
-
-Never `setq' this. Always `let'-bind it.")
-
 ;; Explanation: Default .gitattributes patterns for repos auto-initialized with git-crypt.
 (defvar my/git-crypt-default-attributes
   '("# Auto-added by Emacs distro bootstrap on first repo creation."
@@ -1753,37 +1691,13 @@ export the generated key, and dual-save the base64 key under REPO's
 per-repo slot via `my/-git-crypt-write' (BW field `GitCryptKey:<repo>'
 + Keychain service `my/git-crypt-keychain-service' account `<repo>').
 
-SAFETY: REFUSES to run unless dynamic flag `my/-repo-just-created' is
-non-nil. That flag is bound to `t' only at two call sites:
-
-  - `my/-repo-fetch-or-create' create-branch, where the repo is
-    brand-new (zero commits, no GitHub remote yet — a generated key
-    cannot orphan any existing ciphertext).
-  - `my/git-crypt-enable-now', where the user explicitly confirmed
-    the action via y-or-n-p.
-
-If something else calls this function (including a hypothetical future
-caller from `my/git-crypt-step's no-key branch), the refusal triggers
-a loud error rather than silently overwriting the real key in BW. See
-`my/-repo-just-created' for the rationale.
+Called from `my/-repo-fetch-or-create' (fresh-repo branch) BEFORE the
+first `git add' so the filter encrypts matching files into the very
+first blob. Plaintext never reaches the remote.
 
 No-op + warning if git-crypt is not installed. Idempotent: skips when
 `.git/git-crypt/keys/default' already exists."
   (cond
-   ((not my/-repo-just-created)
-    (display-warning
-     'emacs-setup
-     (format "git-crypt auto-init REFUSED for %s (repo '%s').
-
-This code path is reachable only from `my/-repo-fetch-or-create's
-create-branch (brand-new repo) and `my/git-crypt-enable-now' (user
-confirmed). The dynamic flag `my/-repo-just-created' is nil here,
-so SOMETHING ELSE called this function — refusing to generate a key
-because doing so could orphan existing ciphertext on the remote.
-
-If you genuinely want to enable git-crypt on this repo, run
-M-x my/git-crypt-enable-now (you'll be prompted to confirm)." dir repo)
-     :error))
    ((not repo)
     (display-warning 'emacs-setup
                      "git-crypt auto-init: REPO is nil; cannot derive per-repo slot. Skipping."
@@ -1877,10 +1791,7 @@ content. Plan accordingly."
                          "git-crypt-enable-now: no repo name available (set BW.Repo first)."
                          :warning))
        (t
-        ;; User explicitly confirmed via y-or-n-p above → authorize
-        ;; auto-init by let-binding the safety flag.
-        (let ((my/-repo-just-created t))
-          (my/-repo-auto-init-git-crypt my/data-dir repo))
+        (my/-repo-auto-init-git-crypt my/data-dir repo)
         (when my/bw-session (my/bw-lock))
         (message "git-crypt-enable-now: done for repo '%s'. Commit + push to apply encryption to the next blob."
                  repo)))))))
@@ -1895,21 +1806,9 @@ content. Plan accordingly."
      (service `my/git-crypt-keychain-service', account `<repo>')
      holds a real value → `my/git-crypt-unlock' uses it.
   4. Either side holds the `__SKIPPED__' sentinel → silent skip.
-  5. Otherwise → SAFETY HALT. Bootstrap logs a clear warning into
-     *Warnings* explaining the user's options:
-
-       - M-x my/git-crypt-import-key — paste the existing key from
-         another Mac (Keychain Access / 1Password / paper note).
-       - M-x my/git-crypt-skip — persist the `__SKIPPED__' sentinel
-         for this repo (opt out of git-crypt on this clone).
-       - M-x my/git-crypt-enable-now — generate a brand-new key
-         (only safe when the remote has no encrypted history that
-         was encrypted with a different key).
-
-     The earlier behaviour — silently generating a new key on every
-     keyless clone — was removed because it would overwrite a real
-     `GitCryptKey:<repo>' value in BW the next time a sync ran on
-     this Mac, permanently orphaning the ciphertext on other Macs.
+  5. Otherwise, only a repo created by this bootstrap run is auto-initialized.
+     Existing encrypted GitHub clones must receive the matching key from
+     BW/Keychain; bootstrap never creates a replacement key for them.
 
 REPO is taken from IDENTITY's `:repo' plist key (= BW.Repo field)."
   (cond
@@ -1952,42 +1851,19 @@ REPO is taken from IDENTITY's `:repo' plist key (= BW.Repo field)."
          (opted-out
           (message "Bootstrap: git-crypt skipped for repo '%s' (M-x my/git-crypt-reset to revive)."
                    repo))
-         (key
-          (my/git-crypt-unlock my/data-dir key))
-         (t
-          ;; SAFETY HALT. We deliberately do NOT auto-init here.
-          ;; The remote may already be encrypted with a key that lives
-          ;; in another Mac's Keychain / a paper note / a 1Password vault
-          ;; that hasn't synced to this BW item yet. Generating a fresh
-          ;; key would orphan that ciphertext permanently. Tell the user
-          ;; what their explicit choices are and stop.
-          (display-warning
-           'emacs-setup
-           (format "Bootstrap: no git-crypt key found for repo '%s'.
-
-  Repo:      %s
-  Looked in: BW field `GitCryptKey:%s' + Keychain service `%s' account `%s'
-
-The repo declares filter=git-crypt but no key is available on this Mac.
-Bootstrap will NOT auto-generate a key (doing so would orphan any
-existing ciphertext on the GitHub remote that was encrypted with a
-different key).
-
-Pick one:
-
-  M-x my/git-crypt-import-key
-      Paste the existing key (base64) from another Mac. Saves it to
-      BW + Keychain so future bootstraps unlock automatically.
-
-  M-x my/git-crypt-skip
-      Opt out of git-crypt on this clone — persists the `__SKIPPED__'
-      sentinel for repo '%s'.
-
-  M-x my/git-crypt-enable-now
-      Generate a brand-new key. ONLY safe if you know the remote has
-      no prior encrypted history (or you accept orphaning it)."
-                   repo my/data-dir repo my/git-crypt-keychain-service repo repo)
-           :warning)))))))))
+	         (key
+	          (my/git-crypt-unlock my/data-dir key))
+	         (my/bootstrap-repo-created-this-run
+	          (message "Bootstrap: no git-crypt key for repo '%s' in BW or Keychain — auto-initializing this clone."
+	                   repo)
+	          (my/-repo-auto-init-git-crypt my/data-dir repo))
+	         (t
+	          (display-warning
+	           'emacs-setup
+	           (format "Repo '%s' uses git-crypt but no matching key was found in BW or Keychain.
+Not creating a new key for an existing encrypted clone. Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw after updating Bitwarden."
+	                   repo repo)
+	           :warning)))))))))
 #+end_src
 
 * Step 8 — API keys: three-tier model (Bitwarden / Keychain / on-demand fetch)
@@ -2102,22 +1978,85 @@ sentinel verbatim so opt-outs survive sync.  Returns an alist of
         (my/bw-lock))))
     (nreverse results)))
 
+;; Explanation: Refresh all local Keychain caches from the canonical Bitwarden item.
+(defun my/keychain-refresh-from-bw--sync ()
+  "Synchronously refresh macOS Keychain caches from Bitwarden.
+Copies GitHub identity, provider API keys, and all GitCryptKey* fields.
+Returns a plist with summary counts. This is intended to run as a task
+at the beginning of bootstrap."
+  (unless (my/bw-unlock)
+    (error "Bitwarden unavailable; cannot refresh macOS Keychain"))
+  (unwind-protect
+      (let* ((item (my/bw-get-item my/bw-credentials-item))
+             (github-count 0)
+             (api-count 0)
+             (gitcrypt-count 0))
+        (unless item
+          (error "Bitwarden item '%s' not found" my/bw-credentials-item))
+        (let* ((username (my/bw-item-username item))
+               (token (my/bw-item-password item))
+               (email (my/bw-item-field item "Email"))
+               (fullname (my/bw-item-field item "Fullname"))
+               (repo (my/bw-item-field item "Repo"))
+               (skipped (my/bw-item-field item "GitHubSkipped")))
+          (if (and skipped (string= skipped my/api-skipped-sentinel))
+              (progn
+                (my/keychain-set my/keychain-service
+                                 my/api-skipped-sentinel
+                                 my/keychain-account-github-skipped)
+                (setq github-count 1))
+            (dolist (pair `((,my/keychain-account-github-username . ,username)
+                            (,my/keychain-account-github-token . ,token)
+                            (,my/keychain-account-github-email . ,email)
+                            (,my/keychain-account-github-fullname . ,fullname)
+                            (,my/keychain-account-github-repo . ,repo)))
+              (unless (my/-blank-p (cdr pair))
+                (my/keychain-set my/keychain-service (cdr pair) (car pair))
+                (cl-incf github-count)))
+            ;; Cache only. The actual data-dir selection is written later
+            ;; by repo preparation, after the target folder is cloned or
+            ;; created.
+            ))
+        (dolist (env-var my/api-key-fields)
+          (let ((v (my/bw-item-field item env-var)))
+            (unless (my/-blank-p v)
+              (my/keychain-set my/keychain-service v env-var)
+              (cl-incf api-count))))
+        (dolist (field (my/bw-item-fields-list item))
+          (let ((name (cdr (assoc 'name field)))
+                (value (cdr (assoc 'value field))))
+            (when (and (stringp name)
+                       (string-match "\\`GitCryptKey:\\(.+\\)\\'" name)
+                       (not (my/-blank-p value)))
+              (my/keychain-set my/git-crypt-keychain-service
+                               value
+                               (match-string 1 name))
+              (my/keychain-set my/git-crypt-keychain-service value name)
+              (cl-incf gitcrypt-count))))
+        (list :github github-count :api api-count :gitcrypt gitcrypt-count))
+    (my/bw-lock)))
+
+;; Explanation: User command — refresh all Keychain caches from BW.
+(defun my/keychain-refresh-from-bw ()
+  "Refresh GitHub, API, and git-crypt Keychain entries from Bitwarden.
+When called interactively, continue into the bootstrap state check so a
+changed BW Repo field prepares the selected repo and updates data-dir.el."
+  (interactive)
+  (let ((summary (my/keychain-refresh-from-bw--sync)))
+    (message "Keychain refresh: GitHub=%d, API=%d, git-crypt=%d."
+             (or (plist-get summary :github) 0)
+             (or (plist-get summary :api) 0)
+             (or (plist-get summary :gitcrypt) 0))
+    (when (and (called-interactively-p 'interactive)
+               (fboundp 'my/bootstrap-run-if-needed))
+      (my/bootstrap-run-if-needed))
+    summary))
+
 ;; Explanation: User command — refresh Keychain from BW after an external edit.
 (defun my/api-keys-sync-from-bw ()
-  "Refresh the Keychain runtime cache from Bitwarden.
-Use after editing a key elsewhere (BW Desktop, mobile, web) so this
-Emacs picks up the change. One Bitwarden unlock cycle (~500 ms).
-Bootstrap does NOT auto-sync; that would add this latency to every
-Emacs start."
+  "Compatibility alias for `my/keychain-refresh-from-bw'."
   (interactive)
-  (let* ((results (my/api-keys-pull-to-keychain))
-         (pulled   (cl-count 'pulled   results :key #'cdr))
-         (sentinel (cl-count 'sentinel results :key #'cdr))
-         (blank    (cl-count 'blank    results :key #'cdr))
-         (unavail  (cl-count 'bw-unavailable results :key #'cdr)))
-    (message "Sync: %d pulled, %d sentinel, %d blank in BW%s"
-             pulled sentinel blank
-             (if (> unavail 0) " (BW unavailable)" ""))))
+  (my/keychain-refresh-from-bw))
 
 ;; Explanation: User command — set or rotate a single API key in BOTH stores.
 (defun my/api-key-set (env-var)
@@ -2229,64 +2168,22 @@ literally nothing to do. The predicate below checks each precondition
 in ~10 ms total — Keychain reads are fast.
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: Async predicate — ZERO main-thread shell-outs. Batches Keychain probes into one subprocess.
-(defun my/bootstrap--needs-anything-async (callback)
-  "Async predicate. Calls CALLBACK with t when bootstrap has work to do
-on this launch, nil when it's a steady-state no-op. Returns
-immediately; CALLBACK runs from a subprocess sentinel.
-
-The previous synchronous predicate `my/bootstrap--needs-anything-p'
-shelled out `security find-generic-password' once per Keychain entry
-(2 + N api-key fields = often 7+ sequential calls), blocking the main
-thread for 350-1050 ms on EVERY launch before bootstrap even started.
-This version batches all of those probes into a single bash loop run
-as a `my/task-shell' task; the lone remaining shell-out (gh auth
-status, only checked when the cheaper signals all pass) is also
-spawned as a task.
-
-Behaviour mirrors the old sync predicate exactly: t iff ANY of
-  - BW email or master missing from Keychain
-  - any `my/api-key-fields' entry missing from Keychain
-  - private data repo not cloned (no .git/ in `my/data-dir')
-  - gh installed but not authenticated"
-  (let ((cb (or callback #'ignore)))
-    (my/keychain-batch-check-async
-     (append
-      (list (cons my/keychain-service my/keychain-account-bw-email)
-            (cons my/keychain-service my/keychain-account-bw-master))
-      (mapcar (lambda (env-var) (cons my/keychain-service env-var))
-              my/api-key-fields))
-     (lambda (results)
-       (cond
-        ;; Any Keychain entry missing → work needed.
-        ((cl-some (lambda (kv) (not (cdr kv))) results)
-         (funcall cb t))
-        ;; Private data repo not cloned → work needed.
-        ((not (file-directory-p (expand-file-name ".git" my/data-dir)))
-         (funcall cb t))
-        ;; gh not yet installed → first launch → work needed.
-        ((not (my/gh-installed-p))
-         (funcall cb t))
-        (t
-         ;; All cheap signals pass — verify gh auth without blocking.
-         (my/task-shell
-          (intern (format "boot-need-gh-%d" (cl-incf my/-async-task-counter)))
-          (list "bash" "-c" "gh auth status >/dev/null 2>&1")
-          :on-success (lambda (_) (funcall cb nil))
-          :on-failure (lambda (_) (funcall cb t))))))))
-  nil)
-
-;; Explanation: Sync predicate kept for legacy callers / interactive M-x use.
 (defun my/bootstrap--needs-anything-p ()
-  "Synchronous predicate — kept for interactive M-x use and legacy
-callers. New code should call `my/bootstrap--needs-anything-async'."
+  "Return non-nil when bootstrap has at least one piece of work to do.
+Fast: pure cache/filesystem checks, no BW or network."
   (or
+   ;; BW unlock cache absent → need to prompt for master + email
    (not (my/keychain-get my/keychain-service my/keychain-account-bw-email))
    (not (my/keychain-get my/keychain-service my/keychain-account-bw-master))
+   ;; Any API key field has no Keychain entry (no value AND no sentinel)
    (cl-some (lambda (env-var)
               (not (my/keychain-get my/keychain-service env-var)))
             my/api-key-fields)
+   ;; Private data repo not cloned yet
    (not (file-directory-p (expand-file-name ".git" my/data-dir)))
+   ;; Selected repo changed in BW/Keychain since this launch folder was chosen
+   (my/bootstrap-selected-repo-dir-mismatch-p)
+   ;; gh CLI not authenticated yet
    (and (my/gh-installed-p) (not (my/gh-authenticated-p)))))
 #+end_src
 
@@ -2298,189 +2195,73 @@ Runs with prompts inline. Only fires when
 =my/bootstrap--needs-anything-p= says so.
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: Async bootstrap — chained callbacks; UI stays responsive throughout.
-;;
-;; The earlier synchronous flow blocked the main thread for ~1-2 seconds at startup
-;; (bw unlock alone is ~500-1000ms of crypto unwrap). This rewrite uses
-;; `my/task-shell' for the heaviest shell-outs (bw unlock, gh auth status,
-;; git-crypt unlock, final bw lock) and chains the rest in `:on-success'
-;; callbacks. Each step's synchronous part runs from a sentinel callback,
-;; not from `emacs-startup-hook' — so the UI is interactive while the
-;; subprocesses do the slow work.
-;;
-;; Step graph:
-;;
-;;   kickoff
-;;     ↓ my/bw-unlock-async (subprocess)
-;;   step-identity   ← sync inside callback: one `bw get item' + field parsing
-;;     ↓
-;;   step-gh-install
-;;     ↓ my/task-shell `gh auth status' (subprocess; may fail → triggers login)
-;;   step-gh-auth-result
-;;     ↓ sync `gh auth login --with-token' if needed
-;;   step-repo-sync  ← sync: clone/pull/adopt (may be slow on first clone)
-;;     ↓ my/task-shell `git-crypt unlock' (subprocess)
-;;   step-git-crypt-result
-;;     ↓
-;;   step-api-keys   ← sync: read Keychain; pull from BW if first launch
-;;     ↓ my/task-shell `bw lock' (subprocess, fire-and-forget)
-;;   finish
-;;
-;; Any callback may short-circuit straight to `my/bootstrap--finish' on
-;; failure — `finish' always runs (clears `my/bw-session', logs done).
-
-(defun my/bootstrap--finish (&rest _)
-  "Terminal step. Idempotent — safe to call from any failure branch."
-  (when my/bw-session
-    ;; Fire-and-forget lock; we don't wait. Setq clears the in-memory token.
-    (my/task-shell 'bw-lock
-                   (list "bash" "-c"
-                         (format "bw lock --session %s >/dev/null 2>&1"
-                                 (shell-quote-argument my/bw-session))))
-    (setq my/bw-session nil))
-  (message "Bootstrap: done."))
-
-(defun my/bootstrap--step-identity (&rest _)
-  "After BW unlock: fetch the consolidated BW item ASYNC, then build
-the identity, set git global config, chain to gh install + auth check.
-
-The previous version called `my/github-load-identity' which shelled
-out `bw get item' synchronously (~200-500 ms beachball). This version
-spawns the read as a `my/bw-get-item-async' task and continues in the
-callback, so the UI stays responsive while bw decrypts the item."
-  (cond
-   ((not my/bw-session)
-    ;; BW unavailable — no identity, write starter locally.
-    (unless (file-directory-p my/data-dir)
-      (make-directory my/data-dir t))
-    (my/generate-starter-data my/data-dir '())
-    (message "Bootstrap: GitHub identity unavailable (BW locked); starter content generated locally at %s."
-             my/data-dir)
-    (my/bootstrap--step-api-keys nil))
-   (t
-    (my/bw-get-item-async
-     my/bw-credentials-item
-     (lambda (item)
-       (let ((id (my/-github-build-identity-from-item item)))
-         (my/git-identity-ensure-global id)
-         (cond
-          ((and id (not (my/-blank-p (plist-get id :token))))
-           (my/bootstrap--step-gh-install id))
-          (t
-           (unless (file-directory-p my/data-dir)
-             (make-directory my/data-dir t))
-           (my/generate-starter-data my/data-dir '())
-           (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
-                    my/data-dir)
-           (my/bootstrap--step-api-keys nil)))))))))
-
-(defun my/bootstrap--step-gh-install (id)
-  "Ensure gh CLI is on PATH, then chain to async auth check."
-  (cond
-   ((my/gh-installed-p)
-    (message "Bootstrap: gh CLI present.")
-    (my/bootstrap--step-gh-auth-check id))
-   (t
-    (message "Bootstrap: gh CLI missing — installing via brew (background)…")
-    ;; brew install is internally backgrounded; for this flow we proceed
-    ;; right away. Auth check below will fail-and-retry if needed.
-    (my/gh-install)
-    (my/bootstrap--step-gh-auth-check id))))
-
-(defun my/bootstrap--step-gh-auth-check (id)
-  "Run `gh auth status' as a `my/task-shell' task. Subprocess exit code
-0 → already authenticated; non-zero → log in with the BW token (sync)."
-  (cond
-   ((not (my/gh-installed-p))
-    (my/bootstrap--step-repo-sync id))
-   (t
-    (my/task-shell
-     'gh-auth-status
-     (list "bash" "-c" "gh auth status >/dev/null 2>&1")
-     :on-success
-     (lambda (_out)
-       (message "Bootstrap: gh already authenticated.")
-       (my/bootstrap--step-repo-sync id))
-     :on-failure
-     (lambda (_err)
-       (message "Bootstrap: authenticating gh with BW-stored token…")
-       (my/gh-login-with-token (plist-get id :token))
-       (my/bootstrap--step-repo-sync id))))))
-
-(defun my/bootstrap--step-repo-sync (id)
-  "Sync the private repo. `my/repo-sync' is internally synchronous
-(it may run `git clone' or `git pull'); kept sync because by now UI
-is interactive and the operation has its own progress in a log buffer."
-  (cond
-   ((or (my/-blank-p (plist-get id :username))
-        (my/-blank-p (plist-get id :repo)))
-    (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
-             my/bw-credentials-item)
-    (my/bootstrap--step-git-crypt id))
-   (t
-    (my/repo-sync id)
-    (my/bootstrap-ensure-seed-config-files)
-    (my/bootstrap--step-git-crypt id))))
-
-(defun my/bootstrap--step-git-crypt (id)
-  "Run the git-crypt step. `my/git-crypt-step' is synchronous internally
-(unlock is ~100-300ms) but called from this callback so it doesn't
-block startup. After: write starter data for any gaps, then chain to
-API keys."
-  (my/git-crypt-step id)
-  (when (file-directory-p my/data-dir)
-    (my/generate-starter-data my/data-dir id)
-    (message "Bootstrap: starter files generated for any gaps under %s."
-             my/data-dir))
-  (my/bootstrap--step-api-keys id))
-
-(defun my/bootstrap--step-api-keys (_id)
-  "Verify Keychain runtime cache for all `my/api-key-fields' in ONE
-async batched subprocess (no main-thread shell-outs in the steady
-state). If everything is cached, jump straight to finish. If anything
-is missing, fall back to the synchronous `my/api-keys-load' for the
-interactive prompt path (only fires on first launch / new key field).
-
-The previous version always called `my/api-keys-load' which looped
-sequential `security' shell-outs (~5 × 100 ms) on every launch —
-that was visible as part of the spinning wheel."
-  (my/keychain-batch-check-async
-   (mapcar (lambda (env-var) (cons my/keychain-service env-var))
-           my/api-key-fields)
-   (lambda (results)
-     (let ((missing (mapcar (lambda (kv) (cdr (car kv)))
-                            (cl-remove-if (lambda (kv) (cdr kv)) results))))
-       (cond
-        ((null missing)
-         ;; Steady state — everything cached. No blocking work needed.
-         (message "Bootstrap: API keys ready (%d cached in Keychain '%s')."
-                  (length results) my/keychain-service)
-         (my/bootstrap--finish))
-        (t
-         ;; First-launch or new-field path: fall through to the sync
-         ;; loader which handles BW pull + interactive prompts. Main
-         ;; thread blocks here only when there's genuinely missing data.
-         (my/api-keys-load)
-         (my/bootstrap--finish)))))))
-
-;; Explanation: full bootstrap — async kickoff; rest happens in :on-success callbacks.
+;; Explanation: full sync bootstrap — runs only on launches that actually need work.
 (defun my/bootstrap--run-full-sync ()
-  "Kick off the async bootstrap chain. Returns immediately. The chain
-runs in `my/task-shell' subprocesses with synchronous callbacks for
-cheap steps. UI stays responsive throughout — even on a launch where
-the predicate fires.
+  "Execute the full first-launch bootstrap synchronously.
+Internal — called by `my/bootstrap' when the predicate says work is
+required. Safe to invoke directly via M-x for retries."
+  (message "Bootstrap: starting…")
 
-The legacy name `--run-full-sync' is preserved for callers (M-x
-my/bootstrap, M-x my/bootstrap--run-full-sync)."
-  (message "Bootstrap: starting (async chain — UI stays responsive)…")
-  (my/bw-unlock-async
-   (lambda (session)
-     (cond
-      (session
-       (message "Bootstrap: Bitwarden vault unlocked."))
-      (t
-       (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets.")))
-     (my/bootstrap--step-identity))))
+  (catch 'my/bootstrap-repo-switch-prepared
+    ;; 1-2. BW
+    (my/bw-unlock)
+    (if my/bw-session
+        (message "Bootstrap: Bitwarden vault unlocked.")
+      (message "Bootstrap: Bitwarden not in use (skipped or unavailable); will use macOS Keychain for secrets."))
+
+    ;; 3-4. GitHub identity
+    (let ((id (my/github-load-identity)))
+      (my/git-identity-ensure-global id)
+      (cond
+       ((and id (not (my/-blank-p (plist-get id :token))))
+        ;; 5. gh install + auth
+        (cond
+         ((my/gh-installed-p) (message "Bootstrap: gh CLI present."))
+         (t
+          (message "Bootstrap: gh CLI missing — installing via brew (background)…")
+          (my/gh-install)))
+        (when (my/gh-installed-p)
+          (cond
+           ((my/gh-authenticated-p)
+            (message "Bootstrap: gh already authenticated."))
+           (t
+            (message "Bootstrap: authenticating gh with BW-stored token…")
+            (my/gh-login-with-token (plist-get id :token))))
+          ;; 6. Repo sync (first-time clone or adopt; pull is opt-in via
+          ;; M-x my/repo-sync-now below).
+          (cond
+           ((and (not (my/-blank-p (plist-get id :username)))
+                 (not (my/-blank-p (plist-get id :repo))))
+            (cond
+             ((my/bootstrap-ensure-selected-repo-dir id)
+              (message "Bootstrap: repo switch prepared; restart Emacs to load the selected repo.")
+              (throw 'my/bootstrap-repo-switch-prepared t))
+             (t
+              (my/repo-sync id)
+              (my/bootstrap-ensure-seed-config-files))))
+           (t
+            (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
+                     my/bw-credentials-item))))
+        ;; 7. git-crypt unlock (no-op if repo doesn't use it).
+        (my/git-crypt-step id)
+        ;; 8. Starter data — only fills gaps.
+        (when (file-directory-p my/data-dir)
+          (my/generate-starter-data my/data-dir id)
+          (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
+       (t
+        (unless (file-directory-p my/data-dir)
+          (make-directory my/data-dir t))
+        (my/generate-starter-data my/data-dir '())
+        (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
+                 my/data-dir))))
+
+    ;; 9. API keys
+    (my/api-keys-load))
+
+  ;; 10. Lock BW
+  (when my/bw-session (my/bw-lock))
+
+  (message "Bootstrap: done."))
 #+end_src
 
 ** Entry point
@@ -2491,23 +2272,102 @@ launches, returns in ~10 ms. On launches with actual work, runs the
 synchronous flow (interactive prompts on first launch).
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: bootstrap entry point. Async predicate decides sync (work pending) vs no-op (cached).
+(defvar my/bootstrap-keychain-refresh-after-function nil
+  "Function called after the startup BW-to-Keychain refresh task settles.")
+
+;; Explanation: Run bootstrap work only when the post-refresh predicate says it is needed.
+(defun my/bootstrap-run-if-needed ()
+  "Run full bootstrap only when the current state needs work."
+  (cond
+   ((my/bootstrap--needs-anything-p)
+    (my/bootstrap--run-full-sync))
+   (t
+    (my/bootstrap-sync-rescue-bootstrap-source)
+    (message
+     (if my/bootstrap-keychain-refresh-failed
+         "Bootstrap: nothing to do using cached Keychain values (BW refresh failed)."
+       "Bootstrap: nothing to do (Keychain cache complete, repo cloned, gh authed).")))))
+
+(defun my/bootstrap-after-keychain-refresh ()
+  "Run and clear the post-Keychain-refresh continuation, if any."
+  (when my/bootstrap-keychain-refresh-after-function
+    (let ((fn my/bootstrap-keychain-refresh-after-function))
+      (setq my/bootstrap-keychain-refresh-after-function nil)
+      (funcall fn))))
+
+;; Explanation: Start the BW-to-Keychain refresh as a visible task.
+(defun my/bootstrap-start-keychain-refresh-task (&optional after-refresh)
+  "Submit the startup Bitwarden-to-Keychain refresh task.
+Uses the task framework from 05-tasks when available. The refresh runs
+at the beginning of bootstrap, before the main bootstrap task starts.
+AFTER-REFRESH is called after success or failure so startup can continue
+from the existing Keychain cache if BW is unavailable."
+  (setq my/bootstrap-keychain-refresh-after-function after-refresh)
+  (setq my/bootstrap-keychain-refresh-failed nil)
+  (cond
+   ((fboundp 'my/task-elisp)
+    (my/task-elisp
+     'bw-keychain-refresh
+     #'my/keychain-refresh-from-bw--sync
+     :on-success
+     (lambda (summary)
+       (setq my/bootstrap-keychain-refresh-failed nil)
+       (message "BW->Keychain startup refresh: GitHub=%d, API=%d, git-crypt=%d"
+                (or (plist-get summary :github) 0)
+                (or (plist-get summary :api) 0)
+                (or (plist-get summary :gitcrypt) 0))
+       (my/bootstrap-after-keychain-refresh))
+     :on-failure
+     (lambda (err)
+       (setq my/bootstrap-keychain-refresh-failed t)
+       (display-warning 'emacs-setup
+                        (format "BW->Keychain startup refresh failed: %s" err)
+                        :warning)
+       (my/bootstrap-after-keychain-refresh))))
+   (t
+    (condition-case err
+	(let ((summary (my/keychain-refresh-from-bw--sync)))
+          (setq my/bootstrap-keychain-refresh-failed nil)
+	  (message "BW->Keychain startup refresh: GitHub=%d, API=%d, git-crypt=%d"
+	           (or (plist-get summary :github) 0)
+	           (or (plist-get summary :api) 0)
+                   (or (plist-get summary :gitcrypt) 0)))
+      (error
+       (setq my/bootstrap-keychain-refresh-failed t)
+       (display-warning 'emacs-setup
+                        (format "BW->Keychain startup refresh failed: %s"
+                                (error-message-string err))
+                        :warning)))
+    (my/bootstrap-after-keychain-refresh))))
+
+;; Explanation: Run full bootstrap as a task after Keychain refresh completes.
+(defun my/bootstrap-start-full-sync-task ()
+  "Submit post-refresh bootstrap work through the task framework."
+  (cond
+   ((fboundp 'my/task-elisp)
+    (my/task-elisp
+     'bootstrap-full-sync
+     #'my/bootstrap-run-if-needed
+     :on-failure
+     (lambda (err)
+       (display-warning 'emacs-setup
+                        (format "Bootstrap full sync failed: %s" err)
+                        :warning))
+     :on-success
+     (lambda (_)
+       (message "Bootstrap task complete."))))
+   (t
+    (my/bootstrap-run-if-needed))))
+
+;; Explanation: bootstrap entry point. Decides sync (work pending) vs no-op (cached).
 (defun my/bootstrap ()
   "Run bootstrap if any precondition is missing; no-op otherwise.
-Returns immediately — the predicate itself runs as a subprocess so
-the main thread NEVER blocks on `security' shell-outs at startup.
-
 Safe to call interactively (`M-x my/bootstrap') to re-trigger after
 changing state (e.g. after `M-x my/github-identity-reset')."
   (interactive)
-  (my/bootstrap--needs-anything-async
-   (lambda (needs-work)
-     (cond
-      (needs-work
-       (my/bootstrap--run-full-sync))
-      (t
-       (message "Bootstrap: nothing to do (Keychain cache complete, repo cloned, gh authed).")))))
-  nil)
+  (my/bootstrap-start-distro-config-update-task)
+  (my/bootstrap-start-keychain-refresh-task
+   #'my/bootstrap-start-full-sync-task))
 #+end_src
 
 ** Manual repo pull

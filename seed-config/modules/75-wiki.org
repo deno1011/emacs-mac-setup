@@ -4,6 +4,24 @@
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
+#+begin_src emacs-lisp :tangle yes
+;;; 75-wiki.el --- LLM-maintained Emacs wiki -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+(require 'subr-x)
+
+(defvar my/data-dir)
+(defvar my/gptel-backends)
+(defvar gptel-backend)
+(defvar gptel-directives)
+(defvar gptel-model)
+(defvar gptel--system-message)
+(defvar gptel-use-context)
+
+(declare-function gptel-mode "gptel")
+(declare-function gptel-send "gptel")
+#+end_src
+
 LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 
 - Wiki content at =~/emacs/wiki/emacs/=

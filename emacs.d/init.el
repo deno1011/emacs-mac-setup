@@ -3,11 +3,13 @@
 ;; Thin loader. Knows only:
 ;;
 ;;   - WHERE the user's data lives (`my/data-dir', overridable via
-;;     EMACS_DATA_DIR; default ~/emacs/).
-;;   - WHERE the literate config lives (`my/config-dir' =
+;;     EMACS_DATA_DIR or generated data-dir.el; default ~/emacs/).
+;;   - WHERE the literate config lives (`my/private-config-dir' =
 ;;     <my/data-dir>/config/).
 ;;   - The ENTRY POINT FILENAME inside that directory (`config.org', or a
 ;;     pre-tangled `config.el' if present).
+;;   - A distro seed config fallback, used only when the selected private
+;;     repo folder is missing so bootstrap can clone/restore it.
 ;;
 ;; Nothing else. No module list, no seeding logic, no per-feature flags.
 ;; install.sh places the seed config files into my/config-dir on first
@@ -18,18 +20,41 @@
 ;; Init-phase GC tuning lives in early-init.el (Emacs 27+).
 
 ;; 1. Where data and config live ------------------------------------------
+(let ((generated-data-dir (expand-file-name "data-dir.el" user-emacs-directory)))
+  (when (file-exists-p generated-data-dir)
+    (load generated-data-dir nil 'nomessage)))
+
+(when (getenv "EMACS_DATA_DIR")
+  (setq my/data-dir
+        (expand-file-name
+         (file-name-as-directory (getenv "EMACS_DATA_DIR")))))
+
 (defvar my/data-dir
   (expand-file-name
    (file-name-as-directory
     (or (getenv "EMACS_DATA_DIR") "~/emacs/")))
   "Root directory for the user's personal data + literate config.
-Override per-Mac with EMACS_DATA_DIR (and `launchctl setenv' for GUI
-Emacs).")
+Override per-Mac with EMACS_DATA_DIR, or let bootstrap generate
+data-dir.el from the selected private repo name.")
 
-(defvar my/config-dir
+(defvar my/private-config-dir
   (expand-file-name "config/" my/data-dir)
   "Directory containing the literate config. Lives INSIDE the user's
 private repo so edits sync across Macs via git.")
+
+(defvar my/seed-config-dir
+  (expand-file-name
+   "seed-config/"
+   (or (getenv "EMACS_MAC_SRC_DIR")
+       (expand-file-name "~/emacs-mac-setup-src/")))
+  "Distro seed config used only as a rescue loader for bootstrap.")
+
+(defvar my/config-dir my/private-config-dir
+  "Config directory loaded for this startup.
+Normally this is `my/private-config-dir'. If the selected private repo
+folder is missing locally, this temporarily points at
+`my/seed-config-dir' so bootstrap can clone/restore the GitHub repo into
+`my/data-dir'.")
 
 (add-to-list 'load-path my/config-dir)
 
@@ -52,9 +77,48 @@ private repo so edits sync across Macs via git.")
     (load secrets nil 'nomessage)))
 
 ;; 4. Entry point — config.org (or pre-tangled config.el if present) ------
-(let ((config-org (expand-file-name "config.org" my/config-dir))
-      (config-el  (expand-file-name "config.el"  my/config-dir)))
+(let* ((private-org (expand-file-name "config.org" my/private-config-dir))
+       (private-el  (expand-file-name "config.el"  my/private-config-dir))
+       (seed-org    (expand-file-name "config.org" my/seed-config-dir))
+       (seed-el     (expand-file-name "config.el"  my/seed-config-dir))
+       (rescue-bootstrap nil)
+       (entry-dir
+        (cond
+         ((or (file-exists-p private-el) (file-exists-p private-org))
+          my/private-config-dir)
+         ((or (file-exists-p seed-el) (file-exists-p seed-org))
+          (setq rescue-bootstrap t)
+          (display-warning
+           'emacs-setup
+           (format "Private config missing at %s; loading seed bootstrap so %s can be restored from GitHub."
+                   my/private-config-dir my/data-dir)
+           :warning)
+          my/seed-config-dir)
+         (t my/private-config-dir)))
+       (config-org (expand-file-name "config.org" entry-dir))
+       (config-el  (expand-file-name "config.el"  entry-dir)))
+  (setq my/config-dir entry-dir)
+  (add-to-list 'load-path my/config-dir)
   (cond
+   (rescue-bootstrap
+    (require 'org)
+    ;; Load only the task runner and bootstrap. Loading the full seed
+    ;; config would create starter data under `my/data-dir' before the
+    ;; GitHub repo can be cloned/restored.
+    (dolist (module '("05-tasks.org" "10-bootstrap.org"))
+      (let ((path (expand-file-name module
+                                    (expand-file-name "modules/" my/seed-config-dir))))
+        (when (file-exists-p path)
+          (condition-case err
+              (org-babel-load-file path)
+            (error
+             (display-warning
+              'emacs-setup
+              (format "Rescue bootstrap module %s failed: %s"
+                      module err)
+              :warning))))))
+    (when (fboundp 'my/bootstrap)
+      (add-hook 'emacs-startup-hook #'my/bootstrap)))
    ((file-exists-p config-el)
     (load config-el nil 'nomessage))
    ((file-exists-p config-org)
@@ -63,9 +127,8 @@ private repo so edits sync across Macs via git.")
    (t
     (display-warning
      'emacs-setup
-     (format "No config.org or config.el at %s — run install.sh to seed
-the distro into ~/emacs/config/, or copy your config there manually."
-             my/config-dir)
+     (format "No private config at %s and no seed config at %s."
+             my/private-config-dir my/seed-config-dir)
      :error))))
 
 ;; 5. custom.el — keep customize out of init.el ---------------------------

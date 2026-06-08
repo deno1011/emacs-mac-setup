@@ -6,6 +6,19 @@ sync between org-mode and Apple Reminders.
 
 macOS only (JXA/osascript required).
 
+#+begin_src emacs-lisp :tangle yes
+;;; 55-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
+
+(require 'package)
+
+(defvar my/data-dir)
+(defvar org-apple-reminders-sync-file)
+(defvar org-apple-reminders-auto-sync-interval)
+(defvar org-apple-reminders-included-lists)
+
+(declare-function org-apple-reminders-setup "org-apple-reminders")
+#+end_src
+
 * Installation and auto-update
 
 Installs =org-apple-reminders= from GitHub via =package-vc-install= (Emacs 29+).
@@ -63,6 +76,10 @@ delete, …), so no manual =global-set-key= calls are needed.
     ;; nil = sync all Apple Reminders lists (the default — not restricted).
     ;; Set to a list of names to restrict, or pick interactively with `C-c r i'.
     (setq org-apple-reminders-included-lists nil)
+
+    ;; New unlinked TODOs in known reminder files use the nearest level-1
+    ;; heading as the Apple list name. TODOs outside a list section use the
+    ;; configured/default Apple Reminders list.
 
     ;; org-apple-reminders-setup installs the C-c r command map itself.
     (org-apple-reminders-setup)))
