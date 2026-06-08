@@ -116,7 +116,9 @@ elif [ -d "$EMACS_D" ]; then
 fi
 
 # 2. Distro source clone --------------------------------------------------
-# (This is also where secrets.el lived — gone with the clone.)
+# Note: secrets.el now lives in the real ~/.emacs.d/ (already moved aside in
+# step 1), not inside the distro source. Removing the source no longer
+# destroys the user's secrets.el.
 if [ -d "$SRC_DIR" ]; then
   echo "==> Removing distro source at $SRC_DIR"
   rm -rf "$SRC_DIR"

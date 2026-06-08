@@ -12,7 +12,9 @@
 #
 # After this runs you have:
 #   - emacs-plus installed
-#   - ~/.emacs.d  -> symlink to the distro's emacs.d/   (updates via `git pull`)
+#   - ~/.emacs.d  -> real directory; init.el + early-init.el are copied in
+#                    from the distro on every install, runtime state (data-dir.el,
+#                    distro-source.el, secrets.el, custom.el, …) lives here.
 #   - ~/emacs/    -> example wiki + GTD agenda + TOUR.org (your data from here on)
 #   - ~/.emacs.d/secrets.el -> template; uncomment one method to add your API keys
 #
@@ -203,25 +205,68 @@ else
   git clone --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
 fi
 
-# 4. Symlink ~/.emacs.d -> $SRC_DIR/emacs.d --------------------------------
+# 4. Real ~/.emacs.d/ — copy distro files in, leave runtime state alone --
+#
+# This used to be a symlink ~/.emacs.d -> $SRC_DIR/emacs.d, which meant
+# `data-dir.el', `distro-source.el', `secrets.el', `custom.el', `eln-cache/'
+# etc. all landed INSIDE the distro git checkout. Three failure modes
+# followed from that:
+#   1. `git clean -fd' on the distro checkout (e.g. during reset) wiped
+#      every runtime file (none were tracked).
+#   2. `git checkout' to a branch that doesn't have `emacs.d/' (e.g. the
+#      pre-modular `main') made the symlink target vanish — Emacs
+#      couldn't find init.el and failed to start.
+#   3. Backup tools that follow symlinks ended up backing up the distro
+#      tree alongside runtime state.
+#
+# Real directory + copy is the standard layout. Distro-owned files
+# (init.el, early-init.el, secrets.el.template) get copied IN on every
+# install; runtime files (data-dir.el, distro-source.el, secrets.el,
+# custom.el, history, abbrev_defs, …) are NEVER touched and live in the
+# real ~/.emacs.d/ regardless of branch-switches in $SRC_DIR.
 if [ -L "$EMACS_D" ]; then
-  current_target="$(readlink "$EMACS_D")"
-  if [ "$current_target" != "$SRC_DIR/emacs.d" ]; then
-    echo "==> Re-pointing $EMACS_D from $current_target to $SRC_DIR/emacs.d"
-    ln -sfn "$SRC_DIR/emacs.d" "$EMACS_D"
+  target="$(readlink "$EMACS_D")"
+  echo "==> $EMACS_D is currently a symlink to $target — replacing with real directory"
+  rm "$EMACS_D"
+  mkdir -p "$EMACS_D"
+  # Recover any runtime files that the symlink was pointing at, if the
+  # target was the distro emacs.d. They'll be re-copied by step 5 (init.el,
+  # early-init.el) and step 5b (distro-source.el writer), but custom.el,
+  # secrets.el, etc. need to be preserved.
+  if [ -d "$target" ]; then
+    for f in custom.el abbrev_defs history org-clock-save.el \
+             data-dir.el distro-source.el secrets.el; do
+      if [ -f "$target/$f" ] && [ ! -e "$EMACS_D/$f" ]; then
+        cp "$target/$f" "$EMACS_D/$f"
+        echo "    recovered $EMACS_D/$f"
+      fi
+    done
+    if [ -d "$target/eln-cache" ] && [ ! -d "$EMACS_D/eln-cache" ]; then
+      cp -R "$target/eln-cache" "$EMACS_D/"
+      echo "    recovered $EMACS_D/eln-cache/"
+    fi
+    if [ -d "$target/elpa" ] && [ ! -d "$EMACS_D/elpa" ]; then
+      cp -R "$target/elpa" "$EMACS_D/"
+      echo "    recovered $EMACS_D/elpa/"
+    fi
   fi
-elif [ -e "$EMACS_D" ]; then
-  backup="$EMACS_D.backup-$(date +%s)"
-  echo "==> Existing $EMACS_D is a real directory; backing up to $backup"
-  mv "$EMACS_D" "$backup"
-  ln -s "$SRC_DIR/emacs.d" "$EMACS_D"
-else
-  ln -s "$SRC_DIR/emacs.d" "$EMACS_D"
+elif [ ! -e "$EMACS_D" ]; then
+  mkdir -p "$EMACS_D"
 fi
 
-# 5. secrets.el — per-Mac, never overwritten on update.
-if [ ! -e "$SRC_DIR/emacs.d/secrets.el" ]; then
-  cp "$SRC_DIR/emacs.d/secrets.el.template" "$SRC_DIR/emacs.d/secrets.el"
+# Copy distro-owned thin loader files INTO the real ~/.emacs.d/.
+# `-p' preserves timestamps; `-f' overwrites our own previous copy (the
+# loader IS distro-owned and should track the seed). Runtime files are
+# never touched here.
+cp -fp "$SRC_DIR/emacs.d/init.el"       "$EMACS_D/init.el"
+cp -fp "$SRC_DIR/emacs.d/early-init.el" "$EMACS_D/early-init.el"
+echo "==> Copied init.el + early-init.el into $EMACS_D"
+
+# 5. secrets.el — per-Mac, never overwritten on update. Seeded from the
+# template only if no real secrets.el exists yet.
+if [ ! -e "$EMACS_D/secrets.el" ]; then
+  cp "$SRC_DIR/emacs.d/secrets.el.template" "$EMACS_D/secrets.el"
+  echo "==> Seeded $EMACS_D/secrets.el from secrets.el.template"
 fi
 
 # 5b. distro-source.el — runtime metadata so next launch of Emacs picks
@@ -331,7 +376,7 @@ echo ""
 echo "======================================================================"
 echo "Done."
 echo "======================================================================"
-echo "  ~/.emacs.d:  $EMACS_D  ->  $SRC_DIR/emacs.d"
+echo "  ~/.emacs.d:  $EMACS_D  (real dir; init.el + early-init.el copied from $SRC_DIR/emacs.d/)"
 echo "  Data root:   $DATA_DIR    (= my/data-dir; literate config lives at \$DATA_DIR/config/)"
 echo "  Modules:     \$DATA_DIR/config/modules/   (one .org per concern, ordered by NN- prefix)"
 echo "  Secrets:     $SRC_DIR/emacs.d/secrets.el   (per-Mac, not in git)"
