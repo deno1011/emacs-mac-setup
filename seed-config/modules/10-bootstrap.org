@@ -30,7 +30,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 
 (defvar my/config-dir)
 (defvar my/data-dir)
-(defvar my/private-config-dir)
+;; (`my/private-config-dir' is gone — config lives at `my/config-dir' = ~/.emacs.d/config/.)
 (defvar my/seed-config-dir)
 
 (declare-function my/task-shell "05-tasks")
@@ -1020,9 +1020,10 @@ load from the newly selected repo."
       (let ((my/data-dir target))
         (my/repo-sync identity)
         (when (file-directory-p my/data-dir)
-          (my/bootstrap-ensure-seed-config-for-data-dir my/data-dir)
-          (my/-repo-commit-and-push-if-needed
-           my/data-dir "sync: seed config files")
+          ;; Config no longer lives inside the data dir; it's at
+          ;; ~/.emacs.d/config/ (managed by install.sh + the
+          ;; distro-config-update task). Only generate starter user data
+          ;; here (org/, wiki/, etc.) — that's what `my/data-dir' owns now.
           (my/generate-starter-data my/data-dir identity)
           (my/git-crypt-step identity)))
       (my/bootstrap-write-data-dir-selection target)
@@ -1249,16 +1250,18 @@ after repo adoption.")
 
 ;; Explanation: Refresh config files from the distro seed after repo sync/adoption.
 (defun my/bootstrap-config-updates-frozen-p (&optional target-config-dir)
-  "Return non-nil when TARGET-CONFIG-DIR has the config-update sentinel."
+  "Return non-nil when TARGET-CONFIG-DIR (default `my/config-dir')
+has the config-update sentinel."
   (file-exists-p
    (expand-file-name my/bootstrap-config-update-sentinel
-                     (or target-config-dir my/private-config-dir my/config-dir))))
+                     (or target-config-dir my/config-dir))))
 
 (defun my/bootstrap-freeze-config-updates (&optional target-config-dir)
-  "Create the sentinel that prevents distro seed config overwrites."
+  "Create the sentinel that prevents distro seed config overwrites.
+Defaults to `my/config-dir' (= ~/.emacs.d/config/)."
   (interactive)
   (let ((dir (file-name-as-directory
-              (or target-config-dir my/private-config-dir my/config-dir))))
+              (or target-config-dir my/config-dir))))
     (make-directory dir t)
     (write-region
      "Delete this file to allow bootstrap to refresh config/ from the distro seed.\n"
@@ -1267,46 +1270,36 @@ after repo adoption.")
     (message "Bootstrap: config updates frozen for %s" dir)))
 
 (defun my/bootstrap-unfreeze-config-updates (&optional target-config-dir)
-  "Remove the sentinel so distro seed config updates apply again."
+  "Remove the sentinel so distro seed config updates apply again.
+Defaults to `my/config-dir' (= ~/.emacs.d/config/)."
   (interactive)
   (let ((sentinel (expand-file-name
                    my/bootstrap-config-update-sentinel
                    (file-name-as-directory
-                    (or target-config-dir my/private-config-dir my/config-dir)))))
+                    (or target-config-dir my/config-dir)))))
     (when (file-exists-p sentinel)
       (delete-file sentinel))
     (message "Bootstrap: config updates enabled for %s"
              (file-name-directory sentinel))))
 
-(defun my/bootstrap-ensure-seed-config-files (&optional target-config-dir)
-  "Refresh config files from the distro source.
-`install.sh' seeds `my/config-dir' before Emacs first launches, but
-`my/repo-sync' may then replace it with the user's private clone — which
-can be missing modules or contain older modules. Walk
-`my/distro-src-dir/seed-config/' and copy files into the user's
-config directory, preserving subdirectory structure.
+(defun my/bootstrap-ensure-seed-config-files ()
+  "Refresh config files from the distro source into `my/config-dir'
+(which is always ~/.emacs.d/config/). Walk
+`my/distro-src-dir/seed-config/' and copy files into `my/config-dir',
+preserving subdirectory structure.
 
-By default, existing seed-owned config files are overwritten so users
-receive fixes on every start. To freeze local config files, create
-`my/bootstrap-config-update-sentinel' inside the target config directory
-or run `M-x my/bootstrap-freeze-config-updates'. Delete it, or run
-`M-x my/bootstrap-unfreeze-config-updates', to receive updates again.
-
-When TARGET-CONFIG-DIR is non-nil, seed that explicit config directory.
-This is required while preparing a different selected repo folder before
-the current Emacs session has restarted into it."
+By default, existing seed-owned config files are OVERWRITTEN so users
+receive fixes on every start. To freeze local config from distro
+updates, create `my/bootstrap-config-update-sentinel' inside
+`my/config-dir', or run `M-x my/bootstrap-freeze-config-updates'.
+Delete the sentinel or `M-x my/bootstrap-unfreeze-config-updates' to
+receive updates again."
   (let ((src (expand-file-name "seed-config" my/distro-src-dir))
         (target-config-dir
-         (or target-config-dir
-             (if (and (boundp 'my/private-config-dir)
-                      (stringp my/private-config-dir))
-                 my/private-config-dir
-               (and (boundp 'my/config-dir)
-                    (stringp my/config-dir)
-                    my/config-dir)))))
+         (and (boundp 'my/config-dir) (stringp my/config-dir) my/config-dir)))
     (cond
      ((not target-config-dir)
-      (message "Bootstrap: config refresh skipped (target config dir is not bound)."))
+      (message "Bootstrap: config refresh skipped (`my/config-dir' is not bound)."))
      ((file-directory-p src)
       (if (my/bootstrap-config-updates-frozen-p target-config-dir)
           (message "Bootstrap: config updates frozen by %s."
@@ -1322,11 +1315,6 @@ the current Emacs session has restarted into it."
                 (make-directory (file-name-directory dest) t)
                 (copy-file file dest t t t t)
                 (message "Bootstrap: refreshed config %s from distro." rel))))))))))
-
-(defun my/bootstrap-ensure-seed-config-for-data-dir (&optional data-dir)
-  "Backfill seed config into DATA-DIR's config/ directory."
-  (my/bootstrap-ensure-seed-config-files
-   (expand-file-name "config/" (or data-dir my/data-dir))))
 
 ;; Explanation: Build the nonblocking git update command for the distro checkout.
 (defun my/bootstrap-distro-update-command ()
@@ -1482,28 +1470,10 @@ is a no-op)."
                 my/bootstrap-emacs-plus-formula err)
         :warning))))))
 
-;; Explanation: Keep the minimal rescue bootstrap current with the private config.
-(defun my/bootstrap-sync-rescue-bootstrap-source ()
-  "Copy the current private bootstrap Org into the distro seed rescue copy.
-This keeps missing-repo self-heal on the newest bootstrap logic. It only
-runs when the private config is the loaded config; rescue mode never
-copies seed files back onto themselves."
-  (when (and (boundp 'my/private-config-dir)
-             (boundp 'my/seed-config-dir)
-             (stringp my/private-config-dir)
-             (stringp my/seed-config-dir)
-             (string= (file-truename my/config-dir)
-                      (file-truename my/private-config-dir)))
-    (let ((src (expand-file-name "modules/10-bootstrap.org"
-                                 my/private-config-dir))
-          (dest (expand-file-name "modules/10-bootstrap.org"
-                                  my/seed-config-dir)))
-      (when (and (file-exists-p src)
-                 (file-directory-p (file-name-directory dest))
-                 (or (not (file-exists-p dest))
-                     (file-newer-than-file-p src dest)))
-        (copy-file src dest t)
-        (message "Bootstrap: synced rescue bootstrap source.")))))
+;; (Removed `my/bootstrap-sync-rescue-bootstrap-source' — was for the
+;; legacy architecture where the user's private repo carried its own
+;; copy of bootstrap.org. Config now lives at ~/.emacs.d/config/, no
+;; per-Mac private bootstrap copy exists.)
 #+end_src
 
 * Step 6 — Personal repo sync
@@ -1579,7 +1549,8 @@ Used by both the empty-dir branch and the override-existing branch."
         (setq my/bootstrap-repo-created-this-run t)
         (make-directory dir t)
         (my/generate-starter-data dir identity)
-        (my/bootstrap-ensure-seed-config-for-data-dir dir)
+        ;; (Removed ensure-seed-config-for-data-dir — config lives at
+        ;; ~/.emacs.d/config/ now, not inside this data dir.)
         (let ((default-directory dir)
               ;; Git refuses to commit with empty user.name / user.email,
               ;; so we always pass a non-empty value.
@@ -2786,7 +2757,6 @@ synchronous flow (interactive prompts on first launch).
    ((my/bootstrap--needs-anything-p)
     (my/bootstrap--run-full-sync))
    (t
-    (my/bootstrap-sync-rescue-bootstrap-source)
     (message
      (if my/bootstrap-keychain-refresh-failed
          "Bootstrap: nothing to do using cached Keychain values (BW refresh failed)."

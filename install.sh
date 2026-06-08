@@ -328,32 +328,40 @@ EOF
   echo "==> Wrote $EMACS_D/data-dir.el from \$EMACS_DATA_DIR=$EMACS_DATA_DIR"
 fi
 
-# 6. Seed the literate config into the user's data dir ($DATA_DIR/config/).
+# 6. Seed the literate config into ~/.emacs.d/config/.
+#
+# Config is distro-managed and lives in ~/.emacs.d/config/ — INDEPENDENT
+# of the user's data folder. Previously seeded into $DATA_DIR/config/,
+# which created a chicken-and-egg problem: install.sh defaulted DATA_DIR
+# to ~/emacs/ when EMACS_DATA_DIR wasn't set, so config landed under the
+# wrong root if BW.Repo later said the data folder should be ~/emacs12/.
+# Putting config in ~/.emacs.d/config/ makes it location-agnostic: the
+# user can switch BW.Repo / EMACS_DATA_DIR freely, and `my/data-dir' only
+# affects WHERE USER DATA lives (org files, wiki, etc.).
 #
 # Policy matches `my/bootstrap-ensure-seed-config-files' in
-# seed-config/modules/10-bootstrap.org (the bootstrap's auto-update task):
-# distro-tracked files in seed-config/ are OVERWRITTEN in the user's
-# config dir on every install, so fixes flow through immediately and
-# users on a single curl can recover from a broken state.
+# seed-config/modules/10-bootstrap.org: distro-tracked files in
+# seed-config/ are OVERWRITTEN on every install so fixes flow through.
 #
-# Users who want to FREEZE their local config from distro updates
-# (e.g. while iterating on a personal patch) create the sentinel file:
-#     touch $DATA_DIR/config/.no-seed-config-updates
+# Users who want to FREEZE local config from distro updates (e.g. while
+# iterating on a personal patch) create the sentinel file:
+#     touch ~/.emacs.d/config/.no-seed-config-updates
 # Then install.sh falls back to --ignore-existing (legacy behavior) so
 # local changes never get overwritten. `M-x my/bootstrap-freeze-config-updates'
 # inside Emacs writes the same sentinel.
-mkdir -p "$DATA_DIR/config/modules"
-SEED_SENTINEL="$DATA_DIR/config/.no-seed-config-updates"
+CONFIG_DIR="$EMACS_D/config"
+mkdir -p "$CONFIG_DIR/modules"
+SEED_SENTINEL="$CONFIG_DIR/.no-seed-config-updates"
 if [ -e "$SEED_SENTINEL" ]; then
-  rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
-  echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (FROZEN — only new files added; existing preserved)"
+  rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$CONFIG_DIR/"
+  echo "==> Seeded $CONFIG_DIR/ from $SRC_DIR/seed-config/ (FROZEN — only new files added; existing preserved)"
   echo "    (delete $SEED_SENTINEL or run M-x my/bootstrap-unfreeze-config-updates to re-enable updates)"
 else
   # --update so we only touch destination files that are OLDER than the
   # source (or missing). Avoids racing the bootstrap's distro-config-update
   # task if it ran on a more recent seed than this install.sh fetched.
-  rsync -a --update "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
-  echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
+  rsync -a --update "$SRC_DIR/seed-config/" "$CONFIG_DIR/"
+  echo "==> Seeded $CONFIG_DIR/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
 fi
 
 # 6b. Wipe legacy ~/.emacs.d/elpa/ (package.el state) when elpaca is in use --
@@ -441,11 +449,12 @@ echo "======================================================================"
 echo "Done."
 echo "======================================================================"
 echo "  ~/.emacs.d:  $EMACS_D  (real dir; init.el + early-init.el copied from $SRC_DIR/emacs.d/)"
-echo "  Data root:   $DATA_DIR    (= my/data-dir; literate config lives at \$DATA_DIR/config/)"
-echo "  Modules:     \$DATA_DIR/config/modules/   (one .org per concern, ordered by NN- prefix)"
+echo "  Config:      $CONFIG_DIR    (distro-managed; copied here on every install + refreshed by bootstrap)"
+echo "  Modules:     $CONFIG_DIR/modules/   (one .org per concern, ordered by NN- prefix)"
+echo "  Data root:   $DATA_DIR    (= my/data-dir; user org files, wiki, agenda; per-Mac, switchable via BW.Repo)"
 echo "  Secrets:     $SRC_DIR/emacs.d/secrets.el   (per-Mac, not in git)"
 echo ""
-echo "  First launch (init.el) loads \$DATA_DIR/config/config.org, which"
+echo "  First launch (init.el) loads $CONFIG_DIR/config.org, which"
 echo "  discovers and runs the modules in numeric order. The first module"
 echo "  (10-bootstrap.org) does:"
 echo "    1. Ask whether to use Bitwarden for secrets (recommended)"
