@@ -923,7 +923,13 @@ Used by both the empty-dir branch and the override-existing branch."
           ;; service emacs-git-crypt-key account <repo>). No-op if
           ;; git-crypt can't be installed; user data falls back to
           ;; plaintext gracefully.
-          (my/-repo-auto-init-git-crypt dir repo)
+          ;;
+          ;; The `let' binds the safety flag so `my/-repo-auto-init-git-crypt'
+          ;; accepts the call — this is a brand-new repo (zero commits,
+          ;; no remote yet), so generating a fresh key cannot orphan
+          ;; existing ciphertext.
+          (let ((my/-repo-just-created t))
+            (my/-repo-auto-init-git-crypt dir repo))
           (call-process-shell-command
            "git add . && git commit -m 'initial: distro-generated starter content' 2>&1"
            nil log-buf nil)
@@ -1302,8 +1308,10 @@ emit `_' / `-' instead of `/' / `+'."
 (defun my/git-crypt-reset (&optional repo)
   "Clear REPO's git-crypt key + sentinel from BOTH BW and Keychain.
 Defaults REPO to `my/-git-crypt-current-repo'. After this, the next
-bootstrap launch will auto-init (generate a fresh key) for that
-repo. Use after rotating the key, or to revive after `my/git-crypt-skip'."
+bootstrap launch will SAFETY-HALT (no key found → tell user to run
+`my/git-crypt-import-key' / `my/git-crypt-skip' / `my/git-crypt-enable-now').
+Use to clear a stale key after rotating, or to revive after
+`my/git-crypt-skip' before pasting in the real key."
   (interactive)
   (unless my/bw-session (my/bw-unlock))
   (let ((r (or repo (my/-git-crypt-current-repo))))
@@ -1312,7 +1320,7 @@ repo. Use after rotating the key, or to revive after `my/git-crypt-skip'."
       (message "git-crypt-reset: no repo name available (BW locked AND my/data-dir undefined)."))
      (t
       (unwind-protect (my/-git-crypt-clear r) (my/bw-lock))
-      (message "git-crypt: cleared key + sentinel for repo '%s' (BW + Keychain). Next bootstrap will auto-init."
+      (message "git-crypt: cleared key + sentinel for repo '%s' (BW + Keychain). Next bootstrap will SAFETY-HALT — run M-x my/git-crypt-import-key to paste in the real key."
                r)))))
 
 ;; Explanation: User command — set per-repo skip sentinel so bootstrap stops trying.
@@ -1331,6 +1339,59 @@ Defaults REPO to `my/-git-crypt-current-repo'. Revive with
       (unwind-protect (my/-git-crypt-write r my/api-skipped-sentinel) (my/bw-lock))
       (message "git-crypt: skip sentinel persisted for repo '%s'. Bootstrap will neither prompt nor auto-init. M-x my/git-crypt-reset to revive."
                r)))))
+
+;; Explanation: User command — paste in an existing git-crypt key from another Mac.
+(defun my/git-crypt-import-key (&optional repo)
+  "Prompt (HIDDEN INPUT) for an existing base64-encoded git-crypt key
+for REPO, validate it, and dual-save to BW (field `GitCryptKey:<repo>')
++ Keychain (service `my/git-crypt-keychain-service' account `<repo>').
+Defaults REPO to `my/-git-crypt-current-repo'.
+
+Use when you already have a git-crypt key — typically because another
+Mac set up the repo earlier and you need to import that same key onto
+this clone so it can decrypt existing ciphertext.
+
+To get the key from the source Mac:
+
+  git -C <repo> git-crypt export-key /tmp/k && base64 -i /tmp/k
+
+Empty input is treated as a no-op (use `M-x my/git-crypt-skip' instead
+to persist the skip sentinel). Invalid base64 is rejected without
+writing anything.
+
+This is the SAFE alternative to the removed auto-init-on-keyless-clone
+behaviour: the user supplies the real key explicitly instead of
+bootstrap silently generating a new one that would orphan ciphertext."
+  (interactive)
+  (unless my/bw-session (my/bw-unlock))
+  (let ((r (or repo (my/-git-crypt-current-repo))))
+    (cond
+     ((not r)
+      (message "git-crypt-import-key: no repo name available (BW locked AND my/data-dir undefined).")
+      (when my/bw-session (my/bw-lock)))
+     (t
+      (let ((entered (read-passwd
+                      (format "Existing base64 git-crypt key for repo '%s' (empty = abort): "
+                              r))))
+        (cond
+         ((my/-blank-p entered)
+          (message "git-crypt-import-key: empty input — aborted. (Use M-x my/git-crypt-skip to opt out.)")
+          (when my/bw-session (my/bw-lock)))
+         ((not (my/-valid-base64-p entered))
+          (display-warning
+           'emacs-setup
+           "git-crypt-import-key: input is not valid base64. NOTHING was saved.
+
+Re-run and paste the output of `base64 -i <keyfile>' from your source Mac:
+
+  git -C <repo> git-crypt export-key /tmp/k && base64 -i /tmp/k"
+           :warning)
+          (when my/bw-session (my/bw-lock)))
+         (t
+          (let ((normalized (my/-normalize-base64 entered)))
+            (unwind-protect (my/-git-crypt-write r normalized) (my/bw-lock))
+            (message "git-crypt-import-key: key imported for repo '%s' (BW field GitCryptKey:%s + Keychain service %s account %s). Restart Emacs (or run M-x my/bootstrap) to unlock."
+                     r r my/git-crypt-keychain-service r)))))))))
 
 ;; Explanation: Unlock the private repo with a base64 encoded git-crypt key.
 (defun my/git-crypt-unlock (dir base64-key)
@@ -1380,6 +1441,26 @@ it's actually wrong."
       (delete-file keyfile))
     ok))
 
+;; Explanation: Safety guard — auto-init is only permitted at known-safe call sites.
+(defvar my/-repo-just-created nil
+  "Dynamic safety flag. NON-nil ONLY inside the two known-safe
+auto-init call sites:
+
+  1. `my/-repo-fetch-or-create' create-branch, AFTER `git init' and
+     BEFORE the first `git add' / `gh repo create' — the repo is
+     brand-new in this run, has zero commits, and no remote ciphertext
+     can be orphaned by generating a fresh key.
+  2. `my/git-crypt-enable-now', AFTER the user confirmed the y-or-n-p
+     warning that existing remote history will stay plaintext — the
+     user has explicitly authorized key generation.
+
+`my/-repo-auto-init-git-crypt' REFUSES to run unless this flag is
+`t'. That is the safety guarantee: a clone of an existing encrypted
+repo whose key is missing from BW/Keychain can NEVER reach the
+auto-init code path and silently overwrite the real key.
+
+Never `setq' this. Always `let'-bind it.")
+
 ;; Explanation: Default .gitattributes patterns for repos auto-initialized with git-crypt.
 (defvar my/git-crypt-default-attributes
   '("# Auto-added by Emacs distro bootstrap on first repo creation."
@@ -1398,13 +1479,37 @@ export the generated key, and dual-save the base64 key under REPO's
 per-repo slot via `my/-git-crypt-write' (BW field `GitCryptKey:<repo>'
 + Keychain service `my/git-crypt-keychain-service' account `<repo>').
 
-Called from `my/-repo-fetch-or-create' (fresh-repo branch) BEFORE the
-first `git add' so the filter encrypts matching files into the very
-first blob. Plaintext never reaches the remote.
+SAFETY: REFUSES to run unless dynamic flag `my/-repo-just-created' is
+non-nil. That flag is bound to `t' only at two call sites:
+
+  - `my/-repo-fetch-or-create' create-branch, where the repo is
+    brand-new (zero commits, no GitHub remote yet — a generated key
+    cannot orphan any existing ciphertext).
+  - `my/git-crypt-enable-now', where the user explicitly confirmed
+    the action via y-or-n-p.
+
+If something else calls this function (including a hypothetical future
+caller from `my/git-crypt-step's no-key branch), the refusal triggers
+a loud error rather than silently overwriting the real key in BW. See
+`my/-repo-just-created' for the rationale.
 
 No-op + warning if git-crypt is not installed. Idempotent: skips when
 `.git/git-crypt/keys/default' already exists."
   (cond
+   ((not my/-repo-just-created)
+    (display-warning
+     'emacs-setup
+     (format "git-crypt auto-init REFUSED for %s (repo '%s').
+
+This code path is reachable only from `my/-repo-fetch-or-create's
+create-branch (brand-new repo) and `my/git-crypt-enable-now' (user
+confirmed). The dynamic flag `my/-repo-just-created' is nil here,
+so SOMETHING ELSE called this function — refusing to generate a key
+because doing so could orphan existing ciphertext on the remote.
+
+If you genuinely want to enable git-crypt on this repo, run
+M-x my/git-crypt-enable-now (you'll be prompted to confirm)." dir repo)
+     :error))
    ((not repo)
     (display-warning 'emacs-setup
                      "git-crypt auto-init: REPO is nil; cannot derive per-repo slot. Skipping."
@@ -1498,7 +1603,10 @@ content. Plan accordingly."
                          "git-crypt-enable-now: no repo name available (set BW.Repo first)."
                          :warning))
        (t
-        (my/-repo-auto-init-git-crypt my/data-dir repo)
+        ;; User explicitly confirmed via y-or-n-p above → authorize
+        ;; auto-init by let-binding the safety flag.
+        (let ((my/-repo-just-created t))
+          (my/-repo-auto-init-git-crypt my/data-dir repo))
         (when my/bw-session (my/bw-lock))
         (message "git-crypt-enable-now: done for repo '%s'. Commit + push to apply encryption to the next blob."
                  repo)))))))
@@ -1513,10 +1621,21 @@ content. Plan accordingly."
      (service `my/git-crypt-keychain-service', account `<repo>')
      holds a real value → `my/git-crypt-unlock' uses it.
   4. Either side holds the `__SKIPPED__' sentinel → silent skip.
-  5. Otherwise → `my/-repo-auto-init-git-crypt' fires automatically.
-     Generates a fresh key, writes it under REPO's slot in BW +
-     Keychain, encrypts future commits. Commits already on the
-     remote stay plaintext (git history is immutable).
+  5. Otherwise → SAFETY HALT. Bootstrap logs a clear warning into
+     *Warnings* explaining the user's options:
+
+       - M-x my/git-crypt-import-key — paste the existing key from
+         another Mac (Keychain Access / 1Password / paper note).
+       - M-x my/git-crypt-skip — persist the `__SKIPPED__' sentinel
+         for this repo (opt out of git-crypt on this clone).
+       - M-x my/git-crypt-enable-now — generate a brand-new key
+         (only safe when the remote has no encrypted history that
+         was encrypted with a different key).
+
+     The earlier behaviour — silently generating a new key on every
+     keyless clone — was removed because it would overwrite a real
+     `GitCryptKey:<repo>' value in BW the next time a sync ran on
+     this Mac, permanently orphaning the ciphertext on other Macs.
 
 REPO is taken from IDENTITY's `:repo' plist key (= BW.Repo field)."
   (cond
@@ -1562,9 +1681,39 @@ REPO is taken from IDENTITY's `:repo' plist key (= BW.Repo field)."
          (key
           (my/git-crypt-unlock my/data-dir key))
          (t
-          (message "Bootstrap: no git-crypt key for repo '%s' in BW or Keychain — auto-initializing this clone."
-                   repo)
-          (my/-repo-auto-init-git-crypt my/data-dir repo)))))))))
+          ;; SAFETY HALT. We deliberately do NOT auto-init here.
+          ;; The remote may already be encrypted with a key that lives
+          ;; in another Mac's Keychain / a paper note / a 1Password vault
+          ;; that hasn't synced to this BW item yet. Generating a fresh
+          ;; key would orphan that ciphertext permanently. Tell the user
+          ;; what their explicit choices are and stop.
+          (display-warning
+           'emacs-setup
+           (format "Bootstrap: no git-crypt key found for repo '%s'.
+
+  Repo:      %s
+  Looked in: BW field `GitCryptKey:%s' + Keychain service `%s' account `%s'
+
+The repo declares filter=git-crypt but no key is available on this Mac.
+Bootstrap will NOT auto-generate a key (doing so would orphan any
+existing ciphertext on the GitHub remote that was encrypted with a
+different key).
+
+Pick one:
+
+  M-x my/git-crypt-import-key
+      Paste the existing key (base64) from another Mac. Saves it to
+      BW + Keychain so future bootstraps unlock automatically.
+
+  M-x my/git-crypt-skip
+      Opt out of git-crypt on this clone — persists the `__SKIPPED__'
+      sentinel for repo '%s'.
+
+  M-x my/git-crypt-enable-now
+      Generate a brand-new key. ONLY safe if you know the remote has
+      no prior encrypted history (or you accept orphaning it)."
+                   repo my/data-dir repo my/git-crypt-keychain-service repo repo)
+           :warning)))))))))
 #+end_src
 
 * Step 8 — API keys: three-tier model (Bitwarden / Keychain / on-demand fetch)
