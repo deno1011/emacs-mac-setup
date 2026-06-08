@@ -75,12 +75,25 @@ registration (Anthropic, OpenAI, LM Studio, MLX, Ollama) and the default
 model selection live in the next section of this file.
 
 #+begin_src emacs-lisp :tangle yes
+;; Install gptel FIRST — gptel-agent-runtime depends on it. If elpaca
+;; queues the runtime ahead of gptel and tries to build it before gptel
+;; is ready, the runtime fails its dependency check ("Condition
+;; (finished . gptel) failed: gptel failed"). Putting gptel's
+;; use-package here (instead of in the "Backends Setup" section below)
+;; ensures elpaca queues + builds it ahead of the runtime.
+(use-package gptel
+  :ensure t
+  :demand t
+  :config
+  (setq gptel-default-mode 'org-mode))
+
 (use-package gptel-agent-runtime
   :ensure (gptel-agent-runtime
            :host github
            :repo "deno1011/gptel-agent-runtime"
            :branch "main"
            :files (:defaults (:exclude "test" "docs" "scripts")))
+  :after gptel
   :demand t
   :config
   (message "gptel-agent-runtime loaded from package"))
@@ -109,11 +122,9 @@ for the duration of the HTTP request. See =modules/10-bootstrap.org=
 Step 8 for the storage model.
 
 #+begin_src emacs-lisp :tangle yes
-(use-package gptel
-  :ensure t
-  :demand t
-  :config
-  (setq gptel-default-mode 'org-mode))
+;; gptel itself is declared higher up in this file (before
+;; gptel-agent-runtime so it queues first). Backends are configured
+;; here once gptel has loaded.
 
 (require 'gptel-anthropic nil t)
 (require 'gptel-openai nil t)
