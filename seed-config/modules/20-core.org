@@ -483,30 +483,34 @@ what you usually want for prose, Org, Markdown and chat buffers.
 
 * Auto-commit Org files
 #+begin_src emacs-lisp
-;; `:demand t' forces elpaca to build this BEFORE the `org-mode-hook'
-;; below can fire; otherwise the hook calls `git-auto-commit-mode' as a
-;; void function (one of the errors the user hit on first install).
+;; `:demand t' queues the package for eager build by elpaca, but the
+;; build still doesn't complete until `after-init-hook' runs. Registering
+;; `(add-hook 'org-mode-hook ...)' at MODULE LOAD time means the hook
+;; can fire (e.g. when Org session restore opens .org buffers) BEFORE
+;; the package is built — calling `git-auto-commit-mode' as a void
+;; function. Moving the `add-hook' INSIDE `:config' ties hook
+;; registration to package load: the hook only exists once the package
+;; has been loaded by elpaca.
 (use-package git-auto-commit-mode
   :ensure t
   :demand t
   :config
   (setq gac-automatically-push-p nil
-        gac-automatically-add-new-files-p t))
-
-(add-hook 'org-mode-hook
-          (lambda ()
-            ;; Auto-commit any org buffer that lives anywhere under
-            ;; my/data-dir (data/org/, wiki/, notes/, TOUR.org, ...).
-            ;; Config files are protected separately by the write guard;
-            ;; this hook only enables auto-commit for user data files.
-            ;; `file-truename' on both sides handles the case where
-            ;; my/data-dir is a symlink (e.g. to iCloud Drive).
-            (when (and buffer-file-name
-                       my/data-dir
-                       (string-prefix-p
-                        (file-name-as-directory (file-truename my/data-dir))
-                        (file-truename buffer-file-name)))
-              (git-auto-commit-mode 1))))
+        gac-automatically-add-new-files-p t)
+  (add-hook 'org-mode-hook
+            (lambda ()
+              ;; Auto-commit any org buffer that lives anywhere under
+              ;; my/data-dir (data/org/, wiki/, notes/, TOUR.org, ...).
+              ;; Config files are protected separately by the write
+              ;; guard; this hook only enables auto-commit for user
+              ;; data files. `file-truename' on both sides handles the
+              ;; case where my/data-dir is a symlink (e.g. iCloud Drive).
+              (when (and buffer-file-name
+                         my/data-dir
+                         (string-prefix-p
+                          (file-name-as-directory (file-truename my/data-dir))
+                          (file-truename buffer-file-name)))
+                (git-auto-commit-mode 1)))))
 #+end_src
 
 * Startup Sync — beorg only

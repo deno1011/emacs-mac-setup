@@ -125,6 +125,15 @@ Step 8 for the storage model.
 ;; gptel itself is declared higher up in this file (before
 ;; gptel-agent-runtime so it queues first). Backends are configured
 ;; here once gptel has loaded.
+;;
+;; Wrapped in `with-eval-after-load' so `gptel-make-anthropic' etc. are
+;; only called once gptel + its provider modules have actually loaded.
+;; Without this wrap the calls fire at MODULE LOAD time, before elpaca
+;; has built gptel (elpaca-process-queues runs on `after-init-hook',
+;; which is AFTER this module finishes loading). Symptom otherwise:
+;;
+;;   CONFIG LOAD ERROR (70-gptel.org): (void-function gptel-make-anthropic)
+(with-eval-after-load 'gptel
 
 (require 'gptel-anthropic nil t)
 (require 'gptel-openai nil t)
@@ -308,6 +317,8 @@ Step 8 for the storage model.
            (if (my/api-key-fetch "GEMINI_API_KEY")
                ""
              " (M-x my/api-key-set GEMINI_API_KEY before sending requests)")))
+
+)  ;; end (with-eval-after-load 'gptel ...)
 #+end_src
 
 * Architecture Reference
