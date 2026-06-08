@@ -124,16 +124,21 @@ Step 8 for the storage model.
 #+begin_src emacs-lisp :tangle yes
 ;; gptel itself is declared higher up in this file (before
 ;; gptel-agent-runtime so it queues first). Backends are configured
-;; here once gptel has loaded.
+;; here once BOTH gptel AND gptel-agent-runtime have loaded.
 ;;
-;; Wrapped in `with-eval-after-load' so `gptel-make-anthropic' etc. are
-;; only called once gptel + its provider modules have actually loaded.
-;; Without this wrap the calls fire at MODULE LOAD time, before elpaca
-;; has built gptel (elpaca-process-queues runs on `after-init-hook',
-;; which is AFTER this module finishes loading). Symptom otherwise:
+;; Wait for `gptel-agent-runtime' (not `gptel') because gptel-agent-
+;; runtime's `:config' block defines defvaralias mappings from our
+;; `my/gptel-backends' / `my/gptel-ollama-backend' to its own internal
+;; names. If we set `my/gptel-backends' BEFORE that alias is in place,
+;; gptel-agent-runtime overwrites the value when it later sets up the
+;; alias — Emacs emits "defvaralias: Overwriting value of
+;; my/gptel-backends by aliasing to ...". Sequencing on
+;; gptel-agent-runtime instead means the alias is established first,
+;; then our `setq' flows through it correctly.
 ;;
-;;   CONFIG LOAD ERROR (70-gptel.org): (void-function gptel-make-anthropic)
-(with-eval-after-load 'gptel
+;; Both packages are built by elpaca on `after-init-hook'; this block
+;; runs once gptel-agent-runtime's `:config' has completed.
+(with-eval-after-load 'gptel-agent-runtime
 
 (require 'gptel-anthropic nil t)
 (require 'gptel-openai nil t)
@@ -318,7 +323,7 @@ Step 8 for the storage model.
                ""
              " (M-x my/api-key-set GEMINI_API_KEY before sending requests)")))
 
-)  ;; end (with-eval-after-load 'gptel ...)
+)  ;; end (with-eval-after-load 'gptel-agent-runtime ...)
 #+end_src
 
 * Architecture Reference
