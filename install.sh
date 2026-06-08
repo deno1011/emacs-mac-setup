@@ -212,6 +212,66 @@ mkdir -p "$DATA_DIR/config/modules"
 rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
 echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (existing files preserved)"
 
+# 7. Daemon-aware launchers ------------------------------------------------
+#
+# Subsequent Emacs starts go through the daemon (~/Library/LaunchAgents/
+# homebrew.mxcl.emacs-plus@30.plist, installed by `brew services start' —
+# the bootstrap auto-configures this on first launch). New emacsclient
+# frames open in 10-50 ms instead of paying the full ~2-3 s bootstrap
+# cost each time. The wrapper below starts the daemon on demand for the
+# rare case where the LaunchAgent hasn't booted it yet (e.g. first
+# install before the LaunchAgent loads, or right after `brew services
+# stop emacs-plus@30').
+mkdir -p "$HOME/bin"
+cat > "$HOME/bin/emacs-gui" <<'EOF'
+#!/bin/bash
+# Open an Emacs GUI frame via the daemon. Starts the daemon on demand.
+if ! emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
+    emacs --daemon
+    sleep 1
+fi
+exec emacsclient -c -n "$@"
+EOF
+chmod +x "$HOME/bin/emacs-gui"
+echo "==> Wrote $HOME/bin/emacs-gui (daemon-aware launcher)"
+
+# macOS .app wrapper so the Dock / Launchpad / Spotlight icon also uses the
+# daemon model. Stays under ~/Applications/ so brew updates to emacs-plus
+# never touch it. Unsigned — Gatekeeper will warn on first launch; the user
+# right-clicks Open the first time.
+APP_DIR="$HOME/Applications/Emacs Client.app"
+mkdir -p "$APP_DIR/Contents/MacOS"
+cat > "$APP_DIR/Contents/MacOS/Emacs Client" <<'EOF'
+#!/bin/bash
+exec "$HOME/bin/emacs-gui" "$@"
+EOF
+chmod +x "$APP_DIR/Contents/MacOS/Emacs Client"
+cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>Emacs Client</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.gnu.EmacsClient</string>
+    <key>CFBundleName</key>
+    <string>Emacs Client</string>
+    <key>CFBundleDisplayName</key>
+    <string>Emacs Client</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>
+EOF
+echo "==> Wrote $APP_DIR (.app wrapper for the daemon-aware launcher)"
+
 # 6. Done ------------------------------------------------------------------
 echo ""
 echo "======================================================================"

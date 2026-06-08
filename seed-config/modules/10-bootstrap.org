@@ -1399,6 +1399,89 @@ the next restart; currently loaded modules keep running from memory."
    (t
     (message "Bootstrap: distro config update skipped (task framework or repo metadata unavailable)."))))
 
+;; --- Emacs daemon LaunchAgent (brew services) -------------------------------
+;; The daemon is what makes `emacsclient -c' open in 10-50 ms instead of
+;; paying the ~2-3 s bootstrap cost on every Emacs invocation. We want it
+;; auto-started at macOS login, which is what `brew services start
+;; emacs-plus@30' configures (installs a plist into
+;; ~/Library/LaunchAgents/). Bootstrap checks once per launch whether
+;; the LaunchAgent is in place; when missing, it runs the brew command
+;; as a background task — no main-thread blocking, no startup delay.
+;;
+;; First-launch caveat: on the very first start, the user is already
+;; INSIDE the daemon that `~/bin/emacs-gui' spawned manually. Running
+;; `brew services start' may try to manage that daemon and briefly
+;; restart it. Subsequent launches see the plist already there and
+;; no-op.
+
+(defvar my/bootstrap-emacs-plus-formula "emacs-plus@30"
+  "Homebrew formula name for the managed emacs daemon. Used to build
+the expected LaunchAgent plist path and as the `brew services'
+target. Override per-Mac via secrets.el (e.g. set to \"emacs-plus@29\"
+or \"emacs-plus\" on older installs).")
+
+(defun my/bootstrap-daemon-plist-path ()
+  "Return the absolute path of brew's LaunchAgent plist for the
+emacs-plus daemon. Used to detect whether the daemon is configured
+to start at macOS login."
+  (expand-file-name
+   (format "~/Library/LaunchAgents/homebrew.mxcl.%s.plist"
+           my/bootstrap-emacs-plus-formula)))
+
+(defun my/bootstrap-daemon-service-configured-p ()
+  "Return non-nil when brew services is already set up to start the
+emacs daemon at macOS login (i.e. the LaunchAgent plist exists)."
+  (file-exists-p (my/bootstrap-daemon-plist-path)))
+
+;; Explanation: Ensure brew services starts the emacs daemon at macOS login.
+(defun my/bootstrap-start-daemon-service-task ()
+  "Background task: ensure `brew services start emacs-plus@N' has been
+run so the emacs daemon launches automatically at macOS login.
+
+No-op when:
+  - the LaunchAgent plist already exists (already configured), or
+  - we're not on macOS, or
+  - `brew' isn't on PATH, or
+  - the task framework isn't loaded yet.
+
+When configuration IS needed, dispatches `brew services start' as a
+`my/task-shell' subprocess (non-blocking; shows up in
+`M-x my/task-status' as `emacs-daemon-service-setup'). On macOS,
+that command installs the plist into ~/Library/LaunchAgents/ AND may
+briefly cycle the currently-running daemon (one-time disruption — on
+all subsequent boots the daemon comes up automatically and bootstrap
+is a no-op)."
+  (cond
+   ((not (eq system-type 'darwin))
+    nil)
+   ((my/bootstrap-daemon-service-configured-p)
+    (message "Bootstrap: emacs daemon LaunchAgent already configured (%s)."
+             my/bootstrap-emacs-plus-formula))
+   ((not (fboundp 'my/task-shell))
+    nil)
+   ((not (executable-find "brew"))
+    (display-warning
+     'emacs-setup
+     "Bootstrap: brew not on PATH; cannot auto-configure the emacs daemon LaunchAgent. Install via: brew services start emacs-plus@30"
+     :warning))
+   (t
+    (message "Bootstrap: emacs daemon LaunchAgent missing; running `brew services start %s' (background)."
+             my/bootstrap-emacs-plus-formula)
+    (my/task-shell
+     'emacs-daemon-service-setup
+     (list "brew" "services" "start" my/bootstrap-emacs-plus-formula)
+     :on-success
+     (lambda (_out)
+       (message "Bootstrap: emacs daemon LaunchAgent installed at %s — daemon will auto-start on next login."
+                (my/bootstrap-daemon-plist-path)))
+     :on-failure
+     (lambda (err)
+       (display-warning
+        'emacs-setup
+        (format "Bootstrap: `brew services start %s' failed: %s. Run manually to set up daemon auto-start."
+                my/bootstrap-emacs-plus-formula err)
+        :warning))))))
+
 ;; Explanation: Keep the minimal rescue bootstrap current with the private config.
 (defun my/bootstrap-sync-rescue-bootstrap-source ()
   "Copy the current private bootstrap Org into the distro seed rescue copy.
@@ -2806,6 +2889,7 @@ Safe to call interactively (`M-x my/bootstrap') to re-trigger after
 changing state (e.g. after `M-x my/github-identity-reset')."
   (interactive)
   (my/bootstrap-start-distro-config-update-task)
+  (my/bootstrap-start-daemon-service-task)
   (my/bootstrap-start-keychain-refresh-task
    #'my/bootstrap-start-full-sync-task))
 #+end_src
