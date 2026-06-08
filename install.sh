@@ -24,6 +24,31 @@
 set -e
 trap 'echo "" >&2; echo "==> install.sh FAILED at line $LINENO: $BASH_COMMAND" >&2; echo "    Re-run with: bash -x ~/emacs-mac-setup-src/install.sh 2>&1 | tee /tmp/install.log" >&2' ERR
 
+# CLI flags ----------------------------------------------------------------
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      cat <<HELP
+Usage: bash install.sh
+
+Installs / repairs Emacs from the deno1011/emacs-mac-setup distro.
+Package management is handled by elpaca (see emacs.d/init.el's bootstrap
+snippet). To update individual packages from inside Emacs after install:
+  M-x elpaca-fetch-all     ;; fetch latest commits for every recipe
+  M-x elpaca-merge-all     ;; merge fetched refs into HEAD per package
+  M-x elpaca-status        ;; UI showing every package's state
+
+Env vars:
+  EMACS_MAC_BRANCH      Distro branch to install onto (default: main)
+  EMACS_MAC_REPO_URL    Distro repo URL
+  EMACS_MAC_SRC_DIR     Where to clone the distro (default: ~/emacs-mac-setup-src)
+  EMACS_DATA_DIR        Per-Mac data dir override (default: bootstrap derives from BW.Repo)
+HELP
+      exit 0
+      ;;
+  esac
+done
+
 # Branch / repo / src-dir defaults. Precedence:
 #   1. EMACS_MAC_* env vars (highest — explicit one-off override)
 #   2. ~/.emacs.d/distro-source.el saved from a previous install.sh run

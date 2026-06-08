@@ -54,39 +54,14 @@ Emacs becomes idle. Updated package code is active from the next Emacs session.
 For day-to-day development use the =main= branch. The =stable= branch currently
 points to the same version and can later become the slower-moving install target.
 
-Once the package is available on MELPA, replace this block with =:ensure t= in
-the use-package form below and remove the =package-vc-install= call.
+Installation is handled by elpaca via the recipe in the use-package form
+below. Updates: =M-x elpaca-fetch gptel-agent-runtime= or =M-x elpaca-fetch-all=.
 
 #+begin_src emacs-lisp :tangle yes
-;; Self-heal — same pattern as 55-apple-reminders.org. Avoid the
-;; "Overwrite previous checkout?" prompt when elpa/ contains the
-;; package directory but Emacs's package state lost the registration.
-(unless (or (package-installed-p 'gptel-agent-runtime)
-            (locate-library "gptel-agent-runtime"))
-  (cl-letf (((symbol-function 'y-or-n-p)   (lambda (&rest _) t))
-            ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
-    (package-vc-install
-     '(gptel-agent-runtime
-       :url "https://github.com/deno1011/gptel-agent-runtime"
-       :branch "main"
-       :ignored-files ("test/*" "docs/*" "scripts/*")))))
-
-;; Pull latest main asynchronously at startup. This is non-blocking and silent
-;; if offline. Updated code becomes active from the next Emacs session.
-(when-let* ((lib (locate-library "gptel-agent-runtime"))
-            (dir (file-name-directory lib)))
-  (run-with-idle-timer
-   10 nil
-   (lambda (update-dir)
-     (make-process
-      :name "gptel-agent-runtime-update"
-      :command (list "git" "-C" update-dir "pull" "--rebase" "--quiet")
-      :noquery t
-      :sentinel (lambda (proc _)
-                  (when (and (not (process-live-p proc))
-                             (zerop (process-exit-status proc)))
-                    (message "gptel-agent-runtime: updated — restart to apply")))))
-   dir))
+;; Elpaca handles install. The use-package form's `:ensure (RECIPE)' below
+;; tells elpaca to clone from deno1011/gptel-agent-runtime. Updates are
+;; user-triggered (M-x elpaca-fetch-all) rather than silent background
+;; pulls — keeps the install reproducible with the rest of the lockfile.
 #+end_src
 
 * Configuration
@@ -103,7 +78,11 @@ model selection live in the next section of this file.
 
 #+begin_src emacs-lisp :tangle yes
 (use-package gptel-agent-runtime
-  :ensure nil
+  :ensure (gptel-agent-runtime
+           :host github
+           :repo "deno1011/gptel-agent-runtime"
+           :branch "main"
+           :files (:defaults (:exclude "test" "docs" "scripts")))
   :demand t
   :config
   (message "gptel-agent-runtime loaded from package"))

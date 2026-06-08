@@ -27,39 +27,17 @@ Emacs becomes idle — so the package is always at the latest =main= commit on t
 next startup, without slowing down init.
 
 Once the package is available on MELPA, replace this block with =:ensure t= in
-the use-package form below and remove the =package-vc-install= call.
+the use-package form below.
+
+Elpaca clones from GitHub directly (no MELPA dependency), generates
+autoloads, and handles updates via =M-x elpaca-fetch-all=. No more
+"Overwrite previous checkout?" prompts; no `cl-letf` workarounds;
+no async background `git pull` race.
 
 #+begin_src emacs-lisp :tangle yes
-(when (eq system-type 'darwin)
-  ;; Self-heal: `package-installed-p' returns nil for a directory in
-  ;; elpa/ that wasn't registered (e.g. installed by a previous Emacs
-  ;; whose package state didn't persist). When that happens,
-  ;; `package-vc-install' prompts "Overwrite previous checkout?" and
-  ;; blocks startup. Two checks:
-  ;;   1. If the directory exists AND `locate-library' finds it, the
-  ;;      package is REALLY there — just not registered. Skip install.
-  ;;   2. If install IS needed, auto-answer the overwrite prompt via
-  ;;      cl-letf so no interactive blocking can happen.
-  (unless (or (package-installed-p 'org-apple-reminders)
-              (locate-library "org-apple-reminders"))
-    (cl-letf (((symbol-function 'y-or-n-p)   (lambda (&rest _) t))
-              ((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
-      (package-vc-install
-       '(org-apple-reminders
-         :url "https://github.com/deno1011/org-apple-reminders"
-         :branch "main"))))
-  ;; Pull latest main asynchronously at startup — non-blocking, silent if offline.
-  ;; Updated code is active from the next Emacs session.
-  (when-let* ((lib (locate-library "org-apple-reminders"))
-              (dir (file-name-directory lib)))
-    (make-process
-     :name "org-ar-update"
-     :command (list "git" "-C" dir "pull" "--rebase" "--quiet")
-     :noquery t
-     :sentinel (lambda (proc _)
-                 (when (and (not (process-live-p proc))
-                            (zerop (process-exit-status proc)))
-                   (message "org-apple-reminders: updated — restart to apply"))))))
+;; Installation handled by the use-package form below via elpaca's
+;; recipe syntax. Updates: `M-x elpaca-fetch org-apple-reminders'
+;; (or `M-x elpaca-fetch-all' for everything).
 #+end_src
 
 * Configuration
@@ -80,7 +58,10 @@ delete, …), so no manual =global-set-key= calls are needed.
 #+begin_src emacs-lisp :tangle yes
 (when (eq system-type 'darwin)
   (use-package org-apple-reminders
-    :ensure nil
+    :ensure (org-apple-reminders
+             :host github
+             :repo "deno1011/org-apple-reminders"
+             :branch "main")
     :config
     (setq org-apple-reminders-sync-file
           (expand-file-name "data/org/reminders.org" my/data-dir))

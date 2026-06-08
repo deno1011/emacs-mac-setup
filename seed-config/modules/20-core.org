@@ -21,50 +21,6 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (declare-function pixel-scroll-precision "pixel-scroll")
 #+end_src
 
-* Package install resilience (must run before any =use-package :ensure t=)
-
-A single advice that makes =package-install= self-heal when archives are
-empty or stale. Without it, the FIRST =:ensure t= use-package form in any
-later module would error out as soon as the user's =elpa/archives/= is
-missing or out of date — typical after restoring =~/.emacs.d/= from a
-partial backup, after the recovery flow that wiped =elpa/= state, or just
-on a cold install.
-
-Generic by design: this advice wraps =package-install= itself, so it
-covers every package any module declares — present or future — without
-needing the resilience code to be updated when modules grow. Lives in
-the literate config (not =init.el=) so init stays a thin loader.
-
-#+begin_src emacs-lisp :tangle yes
-(defvar my/-package-archives-refreshed nil
-  "Non-nil after `package-refresh-contents' has been called in this
-Emacs session. Read by the self-heal advice on `package-install' to
-ensure the refresh happens at most ONCE per session, even if many
-later use-package forms fail in a row.")
-
-(defun my/-package-install-with-refresh-once (orig-fn &rest args)
-  "Around-advice on `package-install'. On first failure (typically
-`file-missing' from a not-yet-cached package), refresh archives ONCE
-per session and retry. Subsequent failures pass through normally.
-
-Generic: catches every package the user adds via `use-package :ensure t'
-or direct calls. No maintenance when modules grow."
-  (condition-case err
-      (apply orig-fn args)
-    ((file-missing error)
-     (cond
-      (my/-package-archives-refreshed
-       (signal (car err) (cdr err)))
-      (t
-       (setq my/-package-archives-refreshed t)
-       (message "20-core: package-install failed for %S; refreshing archives and retrying once."
-                (car args))
-       (package-refresh-contents)
-       (apply orig-fn args))))))
-
-(advice-add 'package-install :around #'my/-package-install-with-refresh-once)
-#+end_src
-
 * Visible repo binding
 
 The selected private config/data repo should be visible all the time so

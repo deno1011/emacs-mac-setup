@@ -58,17 +58,66 @@ folder is missing locally, this temporarily points at
 
 (add-to-list 'load-path my/config-dir)
 
-;; 2. Package archives + use-package --------------------------------------
-(require 'package)
-(setq package-archives
-      '(("gnu"    . "https://elpa.gnu.org/packages/")
-        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-        ("melpa"  . "https://melpa.org/packages/")))
-(package-initialize)
-(unless (package-installed-p 'use-package)
-  (package-refresh-contents)
-  (package-install 'use-package))
-(require 'use-package)
+;; 2. Package manager: elpaca ---------------------------------------------
+;;
+;; We use elpaca (https://github.com/progfolio/elpaca) instead of the built-in
+;; package.el. Elpaca clones each package from git into ~/.emacs.d/elpaca/
+;; (one tree per package), generates autoloads, byte-compiles selectively
+;; (no test/scripts/docs noise), and ships a built-in lockfile for
+;; reproducibility. This replaces ~400 lines of custom Layer 1+2+3 code
+;; (test/script strip, packages.lock, validation) we previously built on
+;; top of package.el.
+;;
+;; The bootstrap snippet below is the exact upstream recommended form
+;; (per elpaca's README); we keep it close to upstream so updates from
+;; the elpaca repo apply cleanly.
+(defvar elpaca-installer-version 0.8)
+(defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
+(defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
+(defvar elpaca-repos-directory (expand-file-name "repos/" elpaca-directory))
+(defvar elpaca-order '(elpaca :repo "https://github.com/progfolio/elpaca.git"
+                              :ref nil :depth 1 :inherit ignore
+                              :files (:defaults "elpaca-test.el" (:exclude "extensions"))
+                              :build (:not elpaca--activate-package)))
+(let* ((repo  (expand-file-name "elpaca/" elpaca-repos-directory))
+       (build (expand-file-name "elpaca/" elpaca-builds-directory))
+       (order (cdr elpaca-order))
+       (default-directory repo))
+  (add-to-list 'load-path (if (file-exists-p build) build repo))
+  (unless (file-exists-p repo)
+    (make-directory repo t)
+    (when (<= emacs-major-version 28) (require 'subr-x))
+    (condition-case-unless-debug err
+        (if-let* ((buffer (pop-to-buffer-same-window "*elpaca-bootstrap*"))
+                  ((zerop (apply #'call-process `("git" nil ,buffer t "clone"
+                                                  ,@(when-let* ((depth (plist-get order :depth)))
+                                                      (list (format "--depth=%d" depth) "--no-single-branch"))
+                                                  ,(plist-get order :repo) ,repo))))
+                  ((zerop (call-process "git" nil buffer t "checkout"
+                                        (or (plist-get order :ref) "--"))))
+                  (emacs (concat invocation-directory invocation-name))
+                  ((zerop (call-process emacs nil buffer nil "-Q" "-L" "." "--batch"
+                                        "--eval" "(byte-recompile-directory \".\" 0 'force)")))
+                  ((require 'elpaca))
+                  ((elpaca-generate-autoloads "elpaca" repo)))
+            (progn (message "%s" (buffer-string)) (kill-buffer buffer))
+          (error "%s" (with-current-buffer buffer (buffer-string))))
+      ((error) (warn "%s" err) (delete-directory repo 'recursive))))
+  (unless (require 'elpaca-autoloads nil t)
+    (require 'elpaca)
+    (elpaca-generate-autoloads "elpaca" repo)
+    (load "./elpaca-autoloads")))
+(add-hook 'after-init-hook #'elpaca-process-queues)
+(elpaca `(,@elpaca-order))
+
+;; Install use-package and route `:ensure t' through elpaca, so existing
+;; (use-package X :ensure t) forms in the modules install via elpaca
+;; without source changes. Modules that already had `:ensure nil' to skip
+;; install continue to work as before.
+(elpaca elpaca-use-package
+  (require 'elpaca-use-package)
+  (elpaca-use-package-mode))
+(elpaca-wait)
 (setq use-package-always-ensure t)
 
 ;; 3. Secrets — per-Mac, never tracked in git ------------------------------
