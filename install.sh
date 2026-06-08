@@ -304,12 +304,32 @@ EOF
 fi
 
 # 6. Seed the literate config into the user's data dir ($DATA_DIR/config/).
-# `--ignore-existing` is the "user owns this once placed" rule — re-running
-# install.sh refreshes only files the user has never created. Replacing the
-# old init.el seeding logic so init.el can be a thin loader.
+#
+# Policy matches `my/bootstrap-ensure-seed-config-files' in
+# seed-config/modules/10-bootstrap.org (the bootstrap's auto-update task):
+# distro-tracked files in seed-config/ are OVERWRITTEN in the user's
+# config dir on every install, so fixes flow through immediately and
+# users on a single curl can recover from a broken state.
+#
+# Users who want to FREEZE their local config from distro updates
+# (e.g. while iterating on a personal patch) create the sentinel file:
+#     touch $DATA_DIR/config/.no-seed-config-updates
+# Then install.sh falls back to --ignore-existing (legacy behavior) so
+# local changes never get overwritten. `M-x my/bootstrap-freeze-config-updates'
+# inside Emacs writes the same sentinel.
 mkdir -p "$DATA_DIR/config/modules"
-rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
-echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (existing files preserved)"
+SEED_SENTINEL="$DATA_DIR/config/.no-seed-config-updates"
+if [ -e "$SEED_SENTINEL" ]; then
+  rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
+  echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (FROZEN — only new files added; existing preserved)"
+  echo "    (delete $SEED_SENTINEL or run M-x my/bootstrap-unfreeze-config-updates to re-enable updates)"
+else
+  # --update so we only touch destination files that are OLDER than the
+  # source (or missing). Avoids racing the bootstrap's distro-config-update
+  # task if it ran on a more recent seed than this install.sh fetched.
+  rsync -a --update "$SRC_DIR/seed-config/" "$DATA_DIR/config/"
+  echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
+fi
 
 # 7. Daemon-aware launchers ------------------------------------------------
 #
