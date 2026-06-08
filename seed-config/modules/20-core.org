@@ -19,6 +19,10 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 (declare-function benchmark-init/deactivate "benchmark-init")
 (declare-function pixel-scroll-precision "pixel-scroll")
+;; `git-auto-commit-mode' is enabled from an `org-mode-hook' below; the
+;; package is installed by elpaca but the byte-compiler doesn't see the
+;; definition at compile time.
+(declare-function git-auto-commit-mode "git-auto-commit-mode")
 #+end_src
 
 * Visible repo binding

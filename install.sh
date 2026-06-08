@@ -356,48 +356,23 @@ else
   echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
 fi
 
-# 6b. Repair broken elpa state --------------------------------------------
+# 6b. Wipe legacy ~/.emacs.d/elpa/ (package.el state) when elpaca is in use --
 #
-# Symptom this fixes: packages whose <pkg>-autoloads.el file is missing
-# from ~/.emacs.d/elpa/<pkg>-VERSION/. When that file is absent,
-# package-initialize silently skips the package — its sources are on
-# disk but its directory is NOT added to load-path. Result:
+# We use elpaca exclusively now — packages live in ~/.emacs.d/elpaca/.
+# A pre-existing ~/.emacs.d/elpa/ from an earlier package.el setup is
+# pure dead weight: it isn't on `load-path' under the current init.el
+# (we don't call `package-initialize'), but its presence can still trip
+# elpaca's "compat loaded before Elpaca activation" warning when stale
+# byte-compiled autoload files in elpa/ get picked up by Emacs's lazy
+# load mechanism through legacy paths.
 #
-#     Error (use-package): Cannot load <pkg>
-#     Error (use-package): X/:catch: Cannot open load file: No such file or directory, <pkg>
-#
-# Cause: any previous install where autoload generation didn't complete
-# (network-induced extract failure, the symlink collapse we recently
-# recovered from, manual elpa manipulation, ...). The package looks
-# half-installed but is broken in a way `package-installed-p' returns t
-# for — so config self-heal can't detect it.
-#
-# Repair: call `package-generate-autoloads' for every elpa/ subdir that
-# has source .el files but no autoloads file. Cheap — no network.
-# Skips dirs that already have autoloads. Idempotent.
-EMACS_BIN="$(command -v emacs)"
-if [ -n "$EMACS_BIN" ] && [ -d "$EMACS_D/elpa" ]; then
-  echo "==> Scanning $EMACS_D/elpa for missing autoloads..."
-  "$EMACS_BIN" --batch \
-    --eval "(require 'package)" \
-    --eval "(setq package-user-dir \"$EMACS_D/elpa\")" \
-    --eval "(let ((fixed 0))
-              (dolist (dir (directory-files package-user-dir t \"^[a-zA-Z]\"))
-                (when (file-directory-p dir)
-                  (let* ((dirname (file-name-nondirectory dir))
-                         (pkg-name (replace-regexp-in-string \"-[0-9].*\\\\\\\\'\" \"\" dirname))
-                         (autoloads (expand-file-name (concat pkg-name \"-autoloads.el\") dir)))
-                    (unless (or (string= dirname \"archives\")
-                                (file-exists-p autoloads)
-                                (not (directory-files dir nil \"\\\\\\\\.el\\\\\\\\'\" t)))
-                      (condition-case err
-                          (progn
-                            (package-generate-autoloads pkg-name dir)
-                            (setq fixed (1+ fixed))
-                            (message \"    repaired %s\" dirname))
-                        (error (message \"    skipped %s (%s)\" dirname err)))))))
-              (message \"==> Regenerated autoloads for %d package(s)\" fixed))" 2>&1 \
-    | grep -E "^(==>|    )" || true
+# Wipe it once when both directories exist. The user's runtime state
+# (custom.el, secrets.el, distro-source.el, data-dir.el, ...) lives in
+# ~/.emacs.d/ at the top level — only the elpa/ SUBDIR is removed.
+if [ -d "$EMACS_D/elpa" ] && [ -d "$EMACS_D/elpaca" ]; then
+  size=$(du -sh "$EMACS_D/elpa" 2>/dev/null | cut -f1)
+  echo "==> Removing legacy package.el state at $EMACS_D/elpa ($size) — elpaca is in use"
+  rm -rf "$EMACS_D/elpa"
 fi
 
 # 7. Daemon-aware launchers ------------------------------------------------
