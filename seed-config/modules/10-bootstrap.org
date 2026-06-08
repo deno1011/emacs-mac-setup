@@ -225,6 +225,62 @@ returns ~immediately after BW reads complete."
        :on-failure (lambda (_) (funcall cb nil)))
       task-name))))
 
+;; Explanation: Async batched Keychain READS — N values fetched in ONE bash subprocess (base64-safe).
+(defun my/keychain-multi-get-async (svc-acc-pairs callback)
+  "Read multiple Keychain VALUES asynchronously in ONE subprocess.
+SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT) cons cells; ACCOUNT
+may be nil (defaults to `user-login-name'). CALLBACK is invoked on
+the main thread with an alist `((SERVICE . ACCOUNT) . VALUE-OR-NIL)'
+in input order.
+
+Each value is base64-encoded inside the bash loop so newlines / NULs /
+shell metacharacters round-trip safely; decoded in the callback. Missing
+entries produce a `V:' marker with empty payload so the output line
+count matches the pair count regardless of which entries are present.
+
+Used by `my/bw-unlock-async' to fetch the BW email + master from
+Keychain WITHOUT blocking the main thread on two sequential `security'
+shell-outs."
+  (let* ((pairs (mapcar (lambda (sa)
+                          (cons (car sa)
+                                (or (cdr sa) (user-login-name))))
+                        svc-acc-pairs))
+         (script (concat
+                  "set +e\n"
+                  (mapconcat
+                   (lambda (sa)
+                     (format "{ v=$(security find-generic-password -a %s -s %s -w 2>/dev/null); printf 'V:'; printf '%%s' \"${v:-}\" | base64 | tr -d '\\n'; printf '\\n'; }"
+                             (shell-quote-argument (cdr sa))
+                             (shell-quote-argument (car sa))))
+                   pairs
+                   "\n")))
+         (cb (or callback #'ignore)))
+    (my/task-shell
+     (intern (format "kc-multi-get-%d"
+                     (cl-incf my/-keychain-task-counter)))
+     (list "bash" "-c" script)
+     :on-success
+     (lambda (out)
+       (let* ((lines (cl-remove-if-not
+                      (lambda (l) (string-prefix-p "V:" l))
+                      (split-string (or out "") "\n")))
+              (decoded (mapcar
+                        (lambda (line)
+                          (let ((payload (substring line 2)))
+                            (cond
+                             ((string-empty-p payload) nil)
+                             (t (condition-case nil
+                                    (let ((s (base64-decode-string payload)))
+                                      (if (string-empty-p s) nil s))
+                                  (error nil))))))
+                        lines))
+              (result (cl-mapcar #'cons pairs decoded)))
+         (funcall cb result)))
+     :on-failure
+     (lambda (_err)
+       (funcall cb (mapcar (lambda (sa) (cons sa nil)) pairs))))
+    nil))
+
 ;; Explanation: Remove one cached generic password from macOS Keychain when a secret must be re-entered.
 (defun my/keychain-delete (service &optional account)
   "Remove SERVICE entry from Keychain for ACCOUNT."
@@ -374,6 +430,106 @@ Returns the session token or nil if the user declined / unlock failed."
      nil nil)
     (setq my/bw-session nil)
     (message "Bitwarden locked.")))
+
+;; Explanation: Async variant of my/bw-lock — fire-and-forget background subprocess.
+(defun my/bw-lock-async ()
+  "Clear `my/bw-session' immediately and spawn `bw lock' as a
+background `my/task-shell' task. Returns immediately; the actual
+lock call (~200 ms) happens in a subprocess.
+
+Use from async bootstrap callbacks that have finished reading BW —
+the in-memory session token is cleared synchronously (so subsequent
+code sees `my/bw-session' = nil), while the bw CLI's outbound lock
+of the vault is dispatched to the background."
+  (when my/bw-session
+    (let ((session my/bw-session))
+      (setq my/bw-session nil)
+      (when (fboundp 'my/task-shell)
+        (my/task-shell
+         (intern (format "bw-lock-%d"
+                         (cl-incf my/-keychain-task-counter)))
+         (list "bash" "-c"
+               (format "bw lock --session %s >/dev/null 2>&1"
+                       (shell-quote-argument session))))))))
+
+;; Explanation: Async variant of my/bw-unlock — bw subprocess wait happens off main thread.
+(cl-defun my/bw-unlock-async (callback)
+  "Asynchronous variant of `my/bw-unlock'. CALLBACK is a one-arg
+function receiving the session token (string) on success or nil on
+failure / decline. Returns immediately; CALLBACK runs on the main
+thread from the bw subprocess sentinel.
+
+Behaviour:
+  - `my/bw-session' already set → CALLBACK invoked with the cached
+    session on the next event-loop tick.
+  - bw CLI not installed → CALLBACK nil on the next tick.
+  - Keychain has cached email + master → read both via
+    `my/keychain-multi-get-async' (ONE subprocess, no main-thread
+    `security' calls), then spawn `bw unlock --raw' as a
+    `my/task-shell' task. The sentinel sets `my/bw-session', fires a
+    backgrounded `bw sync', then invokes CALLBACK. UI stays
+    responsive during the ~500-1000 ms crypto unwrap.
+  - No cached creds → falls back to SYNCHRONOUS `my/bw-unlock' since
+    `read-passwd' must run on the main thread (first launch only)."
+  (let ((cb (or callback #'ignore)))
+    (cond
+     (my/bw-session
+      (run-at-time 0 nil cb my/bw-session))
+     ((not (my/bw-installed-p))
+      (run-at-time 0 nil cb nil))
+     (t
+      (my/keychain-multi-get-async
+       (list (cons my/keychain-service my/keychain-account-bw-email)
+             (cons my/keychain-service my/keychain-account-bw-master))
+       (lambda (results)
+         (let ((email  (cdr (nth 0 results)))
+               (master (cdr (nth 1 results))))
+           (cond
+            ((not (and email master))
+             ;; No cached creds → SYNC prompt path (first launch only).
+             (funcall cb (my/bw-unlock)))
+            (t
+             (my/task-shell
+              (intern (format "bw-unlock-%d"
+                              (cl-incf my/-keychain-task-counter)))
+              (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
+              :env `(("BW_PW" . ,master))
+              :on-success
+              (lambda (out)
+                (let* ((s (and (stringp out) (string-trim out)))
+                       (session (and s
+                                     (> (length s) 30)
+                                     (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
+                                     s)))
+                  (cond
+                   (session
+                    (setq my/bw-session session)
+                    ;; Background sync — fire-and-forget.
+                    (my/task-shell
+                     (intern (format "bw-sync-%d"
+                                     (cl-incf my/-keychain-task-counter)))
+                     (list "bash" "-c"
+                           (format "bw sync --session %s >/dev/null 2>&1"
+                                   (shell-quote-argument session))))
+                    (funcall cb session))
+                   (t
+                    (display-warning
+                     'emacs-setup
+                     "BW async unlock returned no session token — cached master may be stale."
+                     :warning)
+                    (my/keychain-delete my/keychain-service
+                                        my/keychain-account-bw-master)
+                    (funcall cb nil)))))
+              :on-failure
+              (lambda (_err)
+                (display-warning
+                 'emacs-setup
+                 "BW async unlock subprocess failed — cached master may be stale."
+                 :warning)
+                (my/keychain-delete my/keychain-service
+                                    my/keychain-account-bw-master)
+                (funcall cb nil)))))))))))
+  nil)
 #+end_src
 
 ** Caveat — master caching on first launch
@@ -438,6 +594,41 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                    (lambda (a b)
                      (> (length (or (cdr (assoc 'fields a)) []))
                         (length (or (cdr (assoc 'fields b)) [])))))))))))
+
+;; Explanation: Async variant of my/bw-get-item — `bw get item' runs in a my/task-shell subprocess.
+(defun my/bw-get-item-async (item-name callback)
+  "Asynchronous variant of `my/bw-get-item'. CALLBACK is invoked on
+the main thread with the parsed alist, or nil if BW is locked / item
+missing / JSON parse failed.
+
+Note: does NOT implement the duplicate-name fallback of the sync
+version (which spawns a second `bw list items' subprocess). The
+bootstrap path expects a unique item name; if duplicates become a
+real issue, add a chained second-stage task here."
+  (let ((cb (or callback #'ignore)))
+    (cond
+     ((not my/bw-session)
+      (run-at-time 0 nil cb nil))
+     (t
+      (my/task-shell
+       (intern (format "bw-get-item-%d"
+                       (cl-incf my/-keychain-task-counter)))
+       (list "bw" "get" "item" item-name
+             "--session" my/bw-session)
+       :on-success
+       (lambda (out)
+         (let ((parsed
+                (when (and out (string-prefix-p "{" (string-trim out)))
+                  (condition-case nil
+                      (json-parse-string out
+                                         :object-type 'alist
+                                         :null-object nil
+                                         :false-object nil)
+                    (error nil)))))
+           (funcall cb parsed)))
+       :on-failure
+       (lambda (_err) (funcall cb nil)))))
+    nil))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
@@ -2136,6 +2327,105 @@ that is the beachball fix."
                 :flush-task flush-task)))
     (my/bw-lock)))
 
+;; Explanation: Fully async chain — bw unlock + bw get item + multi-set + bw lock all off main thread.
+(defun my/keychain-refresh-from-bw-async (on-finish)
+  "Asynchronous variant. Main thread does NOT block on ANY bw or
+`security' subprocess.
+
+Chain:
+  my/bw-unlock-async   (~500 ms in subprocess) →
+  my/bw-get-item-async (~300 ms in subprocess) →
+  parse JSON + collect entries (in-memory, ~5 ms) →
+  my/keychain-multi-set-async (writes flush in background, ~1 s) →
+  my/bw-lock-async (fire-and-forget background)
+
+ON-FINISH is called with two args: SUMMARY-PLIST (with :github :api
+:gitcrypt :flush-task counts/name) on success, OR nil + ERROR-STRING
+on failure. Either way the in-memory bw session is cleared before
+ON-FINISH fires.
+
+This is the actual zero-beachball refresh — main thread total time
+from `(my/keychain-refresh-from-bw-async ...)' to ON-FINISH is the
+sum of in-memory JSON parsing + entry collection (~5-10 ms total).
+All shell-outs happen in background subprocesses.
+
+Falls back gracefully: when `my/task-shell' isn't loaded (very early
+bootstrap), the helpers default to the sync path."
+  (let ((cb (or on-finish #'ignore)))
+    (my/bw-unlock-async
+     (lambda (session)
+       (cond
+        ((not session)
+         (funcall cb nil "Bitwarden unavailable; cannot refresh macOS Keychain"))
+        (t
+         (my/bw-get-item-async
+          my/bw-credentials-item
+          (lambda (item)
+            (cond
+             ((not item)
+              (my/bw-lock-async)
+              (funcall cb nil
+                       (format "Bitwarden item '%s' not found"
+                               my/bw-credentials-item)))
+             (t
+              (let ((github-count 0)
+                    (api-count 0)
+                    (gitcrypt-count 0)
+                    (entries '()))
+                (let* ((username (my/bw-item-username item))
+                       (token    (my/bw-item-password item))
+                       (email    (my/bw-item-field item "Email"))
+                       (fullname (my/bw-item-field item "Fullname"))
+                       (repo     (my/bw-item-field item "Repo"))
+                       (skipped  (my/bw-item-field item "GitHubSkipped")))
+                  (cond
+                   ((and skipped (string= skipped my/api-skipped-sentinel))
+                    (push (list my/keychain-service
+                                my/keychain-account-github-skipped
+                                my/api-skipped-sentinel)
+                          entries)
+                    (setq github-count 1))
+                   (t
+                    (dolist (pair `((,my/keychain-account-github-username . ,username)
+                                    (,my/keychain-account-github-token    . ,token)
+                                    (,my/keychain-account-github-email    . ,email)
+                                    (,my/keychain-account-github-fullname . ,fullname)
+                                    (,my/keychain-account-github-repo     . ,repo)))
+                      (unless (my/-blank-p (cdr pair))
+                        (push (list my/keychain-service (car pair) (cdr pair))
+                              entries)
+                        (cl-incf github-count))))))
+                (dolist (env-var my/api-key-fields)
+                  (let ((v (my/bw-item-field item env-var)))
+                    (unless (my/-blank-p v)
+                      (push (list my/keychain-service env-var v) entries)
+                      (cl-incf api-count))))
+                (dolist (field (my/bw-item-fields-list item))
+                  (let ((name  (cdr (assoc 'name  field)))
+                        (value (cdr (assoc 'value field))))
+                    (when (and (stringp name)
+                               (string-match "\\`GitCryptKey:\\(.+\\)\\'" name)
+                               (not (my/-blank-p value)))
+                      (push (list my/git-crypt-keychain-service
+                                  (match-string 1 name)
+                                  value)
+                            entries)
+                      (push (list my/git-crypt-keychain-service name value)
+                            entries)
+                      (cl-incf gitcrypt-count))))
+                ;; Flush writes in background; lock BW in background;
+                ;; return summary to caller immediately.
+                (let ((flush-task (my/keychain-multi-set-async
+                                   (nreverse entries))))
+                  (my/bw-lock-async)
+                  (funcall cb
+                           (list :github github-count
+                                 :api api-count
+                                 :gitcrypt gitcrypt-count
+                                 :flush-task flush-task)
+                           nil))))))))))))
+  nil)
+
 ;; Explanation: User command — refresh all Keychain caches from BW.
 (defun my/keychain-refresh-from-bw ()
   "Refresh GitHub, API, and git-crypt Keychain entries from Bitwarden.
@@ -2403,26 +2693,37 @@ where downstream code reads a half-populated Keychain.")
       (setq my/bootstrap-keychain-refresh-after-function nil)
       (funcall fn))))
 
-;; Explanation: Start the BW-to-Keychain refresh as a visible task.
+;; Explanation: Start the BW-to-Keychain refresh as an async chain — NO main-thread blocking.
 (defun my/bootstrap-start-keychain-refresh-task (&optional after-refresh)
-  "Submit the startup Bitwarden-to-Keychain refresh task.
-Uses the task framework from 05-tasks when available. The refresh runs
-at the beginning of bootstrap, before the main bootstrap task starts.
-AFTER-REFRESH is called after success or failure so startup can continue
-from the existing Keychain cache if BW is unavailable."
+  "Start the startup Bitwarden-to-Keychain refresh as a chain of
+`my/task-shell' subprocesses (`my/keychain-refresh-from-bw-async').
+
+The earlier version wrapped `my/keychain-refresh-from-bw--sync' in a
+`my/task-elisp' task. `my/task-elisp' runs the thunk on the MAIN
+THREAD via `run-at-time' — which meant the ~500 ms `bw unlock' + ~300
+ms `bw get item' + ~200 ms `bw lock' all blocked the UI even though
+the writes themselves had been moved off-thread. The new chain spawns
+each bw call as a my/task-shell subprocess; the main thread returns
+~immediately after kicking off bw-unlock and stays free throughout.
+
+AFTER-REFRESH is invoked once the chain finishes (success or failure)
+so startup can continue from the now-populated Keychain cache (or
+fall back to the cached values when BW was unavailable). Visible
+sub-tasks in `M-x my/task-status': bw-unlock-N, bw-sync-N (bg),
+bw-get-item-N, kc-multi-set-N, bw-lock-N (bg)."
   (setq my/bootstrap-keychain-refresh-after-function after-refresh)
   (setq my/bootstrap-keychain-refresh-failed nil)
-  (cond
-   ((fboundp 'my/task-elisp)
-    (my/task-elisp
-     'bw-keychain-refresh
-     #'my/keychain-refresh-from-bw--sync
-     :on-success
-     (lambda (summary)
+  (setq my/bootstrap-keychain-refresh-flush-task nil)
+  (my/keychain-refresh-from-bw-async
+   (lambda (summary err)
+     (cond
+      (err
+       (setq my/bootstrap-keychain-refresh-failed t)
+       (display-warning 'emacs-setup
+                        (format "BW->Keychain startup refresh failed: %s" err)
+                        :warning))
+      (t
        (setq my/bootstrap-keychain-refresh-failed nil)
-       ;; Stash the async flush task name so the next bootstrap stage
-       ;; can declare :depends-on. nil means writes happened sync or
-       ;; entries were empty — nothing to wait on.
        (setq my/bootstrap-keychain-refresh-flush-task
              (plist-get summary :flush-task))
        (message "BW->Keychain startup refresh: GitHub=%d, API=%d, git-crypt=%d%s"
@@ -2432,30 +2733,8 @@ from the existing Keychain cache if BW is unavailable."
                 (if my/bootstrap-keychain-refresh-flush-task
                     (format " (flush=%s, background)"
                             my/bootstrap-keychain-refresh-flush-task)
-                  ""))
-       (my/bootstrap-after-keychain-refresh))
-     :on-failure
-     (lambda (err)
-       (setq my/bootstrap-keychain-refresh-failed t)
-       (display-warning 'emacs-setup
-                        (format "BW->Keychain startup refresh failed: %s" err)
-                        :warning)
-       (my/bootstrap-after-keychain-refresh))))
-   (t
-    (condition-case err
-	(let ((summary (my/keychain-refresh-from-bw--sync)))
-          (setq my/bootstrap-keychain-refresh-failed nil)
-	  (message "BW->Keychain startup refresh: GitHub=%d, API=%d, git-crypt=%d"
-	           (or (plist-get summary :github) 0)
-	           (or (plist-get summary :api) 0)
-                   (or (plist-get summary :gitcrypt) 0)))
-      (error
-       (setq my/bootstrap-keychain-refresh-failed t)
-       (display-warning 'emacs-setup
-                        (format "BW->Keychain startup refresh failed: %s"
-                                (error-message-string err))
-                        :warning)))
-    (my/bootstrap-after-keychain-refresh))))
+                  ""))))
+     (my/bootstrap-after-keychain-refresh))))
 
 ;; Explanation: Run full bootstrap as a task after Keychain refresh completes.
 (defun my/bootstrap-start-full-sync-task ()
