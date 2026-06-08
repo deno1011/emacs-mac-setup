@@ -331,6 +331,50 @@ else
   echo "==> Seeded $DATA_DIR/config/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
 fi
 
+# 6b. Repair broken elpa state --------------------------------------------
+#
+# Symptom this fixes: packages whose <pkg>-autoloads.el file is missing
+# from ~/.emacs.d/elpa/<pkg>-VERSION/. When that file is absent,
+# package-initialize silently skips the package — its sources are on
+# disk but its directory is NOT added to load-path. Result:
+#
+#     Error (use-package): Cannot load <pkg>
+#     Error (use-package): X/:catch: Cannot open load file: No such file or directory, <pkg>
+#
+# Cause: any previous install where autoload generation didn't complete
+# (network-induced extract failure, the symlink collapse we recently
+# recovered from, manual elpa manipulation, ...). The package looks
+# half-installed but is broken in a way `package-installed-p' returns t
+# for — so config self-heal can't detect it.
+#
+# Repair: call `package-generate-autoloads' for every elpa/ subdir that
+# has source .el files but no autoloads file. Cheap — no network.
+# Skips dirs that already have autoloads. Idempotent.
+EMACS_BIN="$(command -v emacs)"
+if [ -n "$EMACS_BIN" ] && [ -d "$EMACS_D/elpa" ]; then
+  echo "==> Scanning $EMACS_D/elpa for missing autoloads..."
+  "$EMACS_BIN" --batch \
+    --eval "(require 'package)" \
+    --eval "(setq package-user-dir \"$EMACS_D/elpa\")" \
+    --eval "(let ((fixed 0))
+              (dolist (dir (directory-files package-user-dir t \"^[a-zA-Z]\"))
+                (when (file-directory-p dir)
+                  (let* ((dirname (file-name-nondirectory dir))
+                         (pkg-name (replace-regexp-in-string \"-[0-9].*\\\\\\\\'\" \"\" dirname))
+                         (autoloads (expand-file-name (concat pkg-name \"-autoloads.el\") dir)))
+                    (unless (or (string= dirname \"archives\")
+                                (file-exists-p autoloads)
+                                (not (directory-files dir nil \"\\\\\\\\.el\\\\\\\\'\" t)))
+                      (condition-case err
+                          (progn
+                            (package-generate-autoloads pkg-name dir)
+                            (setq fixed (1+ fixed))
+                            (message \"    repaired %s\" dirname))
+                        (error (message \"    skipped %s (%s)\" dirname err)))))))
+              (message \"==> Regenerated autoloads for %d package(s)\" fixed))" 2>&1 \
+    | grep -E "^(==>|    )" || true
+fi
+
 # 7. Daemon-aware launchers ------------------------------------------------
 #
 # Subsequent Emacs starts go through the daemon (~/Library/LaunchAgents/
