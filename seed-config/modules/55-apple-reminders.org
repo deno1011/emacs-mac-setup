@@ -9,8 +9,6 @@ macOS only (JXA/osascript required).
 #+begin_src emacs-lisp :tangle yes
 ;;; 55-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
 
-(require 'package)
-
 (defvar my/data-dir)
 (defvar org-apple-reminders-sync-file)
 (defvar org-apple-reminders-auto-sync-interval)

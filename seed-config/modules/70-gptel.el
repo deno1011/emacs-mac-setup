@@ -1,10 +1,3 @@
-#+TITLE: gptel Agent Runtime Loader
-#+STARTUP: overview
-#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
-
-Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
-
-#+begin_src emacs-lisp :tangle yes
 ;;; 70-gptel.el --- gptel agent runtime loader -*- lexical-binding: t; -*-
 
 (defvar my/gptel-backends nil)
@@ -25,56 +18,12 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (declare-function gptel-agent-runtime-start-ollama-if-needed "gptel-agent-runtime")
 (declare-function gptel-agent-runtime-sync-directive-for-current-runtime "gptel-agent-runtime")
 (declare-function gptel-agent-runtime-sync-tools "gptel-agent-runtime")
-#+end_src
 
-This file intentionally stays small. The AI implementation now lives in the
-separate package repository:
-
-[[https://github.com/deno1011/gptel-agent-runtime][deno1011/gptel-agent-runtime]]
-
-The package was split out so it can later be cleaned up for MELPA. Runtime
-configuration still loads from the private Emacs repo, but the implementation
-is installed and updated from Git.
-
-* Repository Roles
-
-- =~/emacs= is the private live Emacs-plus runtime repo.
-- =~/emacs/config/modules/70-gptel.org= is only the loader for the AI package.
-- =~/gptel-agent-runtime= is the standalone package development repo.
-- =~/emacs-mac-setup= is the installer/bootstrap/template repo.
-
-* Installation and Auto-Update
-
-Installs =gptel-agent-runtime= from GitHub via =package-vc-install= (Emacs 29+).
-After installation, schedules a silent background update check 10 seconds after
-Emacs becomes idle. Updated package code is active from the next Emacs session.
-
-For day-to-day development use the =main= branch. The =stable= branch currently
-points to the same version and can later become the slower-moving install target.
-
-Installation is handled by elpaca via the recipe in the use-package form
-below. Updates: =M-x elpaca-fetch gptel-agent-runtime= or =M-x elpaca-fetch-all=.
-
-#+begin_src emacs-lisp :tangle yes
 ;; Elpaca handles install. The use-package form's `:ensure (RECIPE)' below
 ;; tells elpaca to clone from deno1011/gptel-agent-runtime. Updates are
 ;; user-triggered (M-x elpaca-fetch-all) rather than silent background
 ;; pulls — keeps the install reproducible with the rest of the lockfile.
-#+end_src
 
-* Configuration
-
-The package expects the main Emacs config to have already defined runtime paths
-such as =my/data-dir=, which happens in =~/.emacs.d/init.el= before
-=config.org= loads this file.
-
-After 2026-05-26 the package is provider-neutral: it only carries the
-runtime layer (agents, tools, memory, router, mission control) and forward-
-declares =my/gptel-backends= and =my/gptel-ollama-backend=. Backend
-registration (Anthropic, OpenAI, LM Studio, MLX, Ollama) and the default
-model selection live in the next section of this file.
-
-#+begin_src emacs-lisp :tangle yes
 (use-package gptel-agent-runtime
   :ensure (gptel-agent-runtime
            :host github
@@ -84,31 +33,7 @@ model selection live in the next section of this file.
   :demand t
   :config
   (message "gptel-agent-runtime loaded from package"))
-#+end_src
 
-* Backends Setup (Multi-Provider)
-
-This block runs after =gptel-agent-runtime= has loaded. It:
-
-1. Ensures =gptel= itself is installed and configured for Org mode.
-2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
-   =gptel-ollama=, =gptel-gemini=) lazily; missing modules are tolerated.
-3. Registers Anthropic, OpenAI, Gemini, Groq, GitHub Models, LM Studio,
-   MLX, and Ollama backends with their respective model lists.
-4. Sets the standard gptel default to Gemini 2.0 Flash. If
-   =GEMINI_API_KEY= is in the Keychain runtime cache, requests work
-   immediately; if missing, the default remains Gemini and Emacs tells
-   the user to add the key. Ollama remains an optional local backend.
-
-All backend =:key= lambdas read via =(my/api-key-fetch "ENV_VAR")=,
-which reads the runtime cache in macOS Keychain (service
-=emacs-credentials=) directly. No API key string is ever held in
-=process-environment=, in a =defvar=, or in any in-Emacs global state
-between requests; the value is held only in the lambda's local binding
-for the duration of the HTTP request. See =modules/10-bootstrap.org=
-Step 8 for the storage model.
-
-#+begin_src emacs-lisp :tangle yes
 (use-package gptel
   :ensure t
   :demand t
@@ -297,15 +222,3 @@ Step 8 for the storage model.
            (if (my/api-key-fetch "GEMINI_API_KEY")
                ""
              " (M-x my/api-key-set GEMINI_API_KEY before sending requests)")))
-#+end_src
-
-* Architecture Reference
-
-For the implementation map, read:
-
-- =~/emacs/notes/gptel-agent-architecture.md=
-- the package repository README
-
-The package is still a first extraction. The next cleanup should split the
-monolithic package file into modules for core, backends, prompts, executor,
-tools, context, and planner behavior.

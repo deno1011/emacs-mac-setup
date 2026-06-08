@@ -1,9 +1,3 @@
-#+TITLE: Core Emacs Configuration
-#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
-
-Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
-
-#+begin_src emacs-lisp :tangle yes
 ;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
 
 (require 'org)
@@ -19,15 +13,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 (declare-function benchmark-init/deactivate "benchmark-init")
 (declare-function pixel-scroll-precision "pixel-scroll")
-#+end_src
 
-* Visible repo binding
-
-The selected private config/data repo should be visible all the time so
-repo switches are obvious after restart. This is intentionally in core
-config, not in =05-tasks=: tasks only contributes task status.
-
-#+begin_src emacs-lisp
 (defun my/data-dir-repo-name ()
   "Return the basename of `my/data-dir' for display."
   (if (and (boundp 'my/data-dir) (stringp my/data-dir))
@@ -56,26 +42,7 @@ config, not in =05-tasks=: tasks only contributes task status.
   (setq global-mode-string
         (append (or global-mode-string '(""))
                 '((:eval (my/data-dir-mode-line))))))
-#+end_src
 
-* Startup measurement (diagnostic)
-
-[[https://github.com/dholm/benchmark-init-el][benchmark-init]] activates as the first thing this module does so it
-captures every subsequent =require= and =load=. Reports include
-=10-bootstrap.org=-deferred work that fires after init too. Inspect
-with:
-
-- =M-x benchmark-init/show-durations-tree= — sortable tree by total time
-- =M-x benchmark-init/show-durations-tabulated= — flat sortable table
-
-Init time is also printed to =*Messages*= at the very end via
-=emacs-startup-hook=, formatted to be greppable.
-
-When you're done measuring, set the block below to =:tangle no= or
-delete it; the package itself adds ~5ms to startup, the
-activation hooks add ~1µs per measured load.
-
-#+begin_src emacs-lisp
 (use-package benchmark-init
   :ensure t
   :demand t
@@ -91,113 +58,13 @@ activation hooks add ~1µs per measured load.
           (lambda ()
             (message "==> Emacs startup: init-time=%s, GCs=%d"
                      (emacs-init-time) gcs-done)))
-#+end_src
 
-* Garbage collection (linked to [[file:~/.emacs.d/early-init.el][~/.emacs.d/early-init.el]])
-
-The GC threshold is bumped early so package loading and use-package
-expansion don't stall on the default 800 KB threshold. That's the
-single biggest cause of the "Emacs gets slower after staying up for a
-long time" behaviour — every interactive command was triggering a GC
-on a heap that grew progressively more fragmented.
-
-The init-phase tuning has to run *before* =package.el= initializes,
-which means it can't live in this file (=20-core.org= is loaded by
-=config.org=, which is loaded by =init.el=, which already finished by
-the time tangled lisp here runs). Emacs 27+ supports
-[[https://www.gnu.org/software/emacs/manual/html_node/elisp/Early-Init-File.html][=early-init.el=]] specifically for this purpose, and that's where the
-init-phase block lives. The bootstrap script copies =early-init.el=
-into =~/.emacs.d/= alongside =init.el=.
-
-For reference, here's what =early-init.el= contains (NOT tangled —
-this block is documentation only; the actual file lives at
-=~/.emacs.d/early-init.el=):
-
-#+begin_src emacs-lisp :tangle no
-(setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
-      gc-cons-percentage 0.6)
-(setq package-enable-at-startup nil)
-#+end_src
-
-** Runtime + idle GC (tangled here)
-
-After init has settled, drop the threshold to a sane runtime value and
-let an idle-timer reclaim memory at moments the user isn't waiting on
-Emacs. Tunable here without re-bootstrapping each Mac because this
-file is iCloud-synced.
-
-#+begin_src emacs-lisp
 (add-hook 'emacs-startup-hook
           (lambda ()
             (setq gc-cons-threshold  (* 32 1024 1024)  ; 32 MB at runtime
                   gc-cons-percentage 0.1)
             (run-with-idle-timer 60 t #'garbage-collect)))
-#+end_src
 
-* System Package Auto-Install (currently macOS-only — extend here for other OSes)
-
-This config auto-installs external binaries it depends on (ripgrep,
-aspell, gnuplot, plantuml, texlive, python, ...) in the background on
-first use. The dispatcher today is =my/brew-install-and-log= below,
-which knows only Homebrew. *The configuration is otherwise
-OS-agnostic*: package archives, key bindings, org-mode setup, gptel,
-the wiki — all of that works on Linux and (mostly) Windows out of the
-box. The auto-install is the only macOS-only piece.
-
-** Adding support for another OS
-
-To use this config on Debian/Ubuntu, Fedora, Arch, Windows, etc., port
-the auto-install dispatcher. There are exactly two helpers to
-extend; everything else routes through them.
-
-1. *=my/brew-install-and-log=* — called by aspell, texlive, gnuplot/R/
-   graphviz/plantuml/mermaid-cli, python. Currently invokes ~brew~
-   only. To extend, wrap the body in a ~cond~ on ~system-type~ and add
-   per-OS branches. See [[*Install ripgrep automatically][Install ripgrep automatically]] further down for a
-   complete worked example (macOS / Debian / Fedora / Arch / fallback).
-2. *=my/pip-install-and-log=* — already cross-platform; uses ~pip3~
-   which is universal. No changes needed.
-
-The =my/brew-install-and-log= call sites are intentionally simple
-(pass a brew formula name). When extending, you'll need a per-OS
-package-name lookup table or per-call-site additions because formula
-names differ across distros (e.g. macOS ~texlive~ vs Debian
-~texlive-full~ vs Fedora ~texlive-scheme-basic~).
-
-A worked-out shape for the dispatcher's =cond= block — *not* tangled,
-just documentation:
-
-#+begin_src emacs-lisp :tangle no
-(cond
- ;; macOS — current behaviour
- ((and (eq system-type 'darwin) (executable-find "brew"))
-  (apply #'start-process ... "brew" brew-args))
- ;; Debian / Ubuntu — add `:debian "<apt-package>"' to each call site
- ((and (eq system-type 'gnu/linux) (executable-find "apt"))
-  (start-process ... "sudo" "apt" "install" "-y" debian-package))
- ;; Fedora
- ((and (eq system-type 'gnu/linux) (executable-find "dnf"))
-  (start-process ... "sudo" "dnf" "install" "-y" fedora-package))
- ;; Arch
- ((and (eq system-type 'gnu/linux) (executable-find "pacman"))
-  (start-process ... "sudo" "pacman" "-S" "--noconfirm" arch-package))
- ;; Windows (winget / scoop / choco — pick one)
- ((eq system-type 'windows-nt)
-  (start-process ... "winget" "install" winget-id))
- ;; Unknown
- (t
-  (message "Cannot auto-install %s on this OS — install manually." package)))
-#+end_src
-
-When you implement one of these, the corresponding call sites
-(=my/brew-install-and-log "formula" "texlive" "install" "texlive"=
-etc.) keep working unchanged; they just gain a new branch under the
-hood. The user-facing semantics ("install if missing, log it for clean
-uninstall later") stay the same.
-
-** Helpers (tangled)
-
-#+begin_src emacs-lisp :tangle yes
 ;;; -*- lexical-binding: t -*-
 (message "Loading config... (first start may take a few minutes while packages install)")
 
@@ -260,18 +127,12 @@ uninstall later") stay the same.
                             (search-forward entry nil t)))
                (append-to-file entry nil log-file))))))
     (message "pip3 not found — cannot auto-install Python package %s" package)))
-#+end_src
 
-* PATH
-#+begin_src elisp :tangle yes
 (use-package exec-path-from-shell
   :if (eq system-type 'darwin)
   :config
   (exec-path-from-shell-initialize))
-#+end_src
 
-* UI & Appearance
-#+begin_src emacs-lisp
 (add-to-list 'default-frame-alist
              `(inhibit-double-buffering . ,(eq system-type 'gnu/linux)))
 (tool-bar-mode -1)
@@ -286,11 +147,7 @@ uninstall later") stay the same.
 (column-number-mode 1)
 (global-auto-revert-mode t)
 (setq save-abbrevs 'silently)
-#+end_src
 
-
-* Font
-#+begin_src emacs-lisp
 (unless (find-font (font-spec :name "JetBrains Mono"))
   (when (executable-find "brew")
     (my/brew-install-and-log "cask" "font-jetbrains-mono"
@@ -300,40 +157,7 @@ uninstall later") stay the same.
 (when (find-font (font-spec :name "JetBrains Mono"))
   (set-face-attribute 'default nil :font "JetBrains Mono-13")
   (add-to-list 'default-frame-alist '(font . "JetBrains Mono-13")))
-#+end_src
 
-* Theme & Modeline
-
-Active theme is =cyberpunk= (MELPA package =cyberpunk-theme= by n3mo) —
-dark background, neon pink / yellow / cyan accents. The doom-themes
-and modus-vivendi blocks are kept for reference with =:tangle no= so
-neither is loaded; flip the cookies to swap themes without deleting
-code.
-
-Same conflict-resolution pattern in every block: disable whatever
-theme may have been loaded earlier in the init chain BEFORE stacking
-ours. Without this, the inheritance cycle (e.g. modus-vivendi under
-doom-one) can hang Emacs while resolving face inheritance.
-
-#+begin_src emacs-lisp :tangle no
-(use-package doom-themes
-  :demand t
-  :config
-  ;; Avoid theme-inheritance cycle (e.g. modus-vivendi + doom-one): disable any already-loaded themes first.
-  (mapc #'disable-theme custom-enabled-themes)
-  (load-theme 'doom-one t)
-  (doom-themes-org-config))
-#+end_src
-
-#+begin_src emacs-lisp :tangle no
-;; modus-vivendi (built-in) — accessibility-grade contrast, kept as a
-;; fallback option. Flip this block's :tangle to yes (and the cyberpunk
-;; block below to :tangle no) to switch back without losing the config.
-(mapc #'disable-theme custom-enabled-themes)
-(load-theme 'modus-vivendi t)
-#+end_src
-
-#+begin_src emacs-lisp
 (use-package cyberpunk-theme
   :demand t
   :config
@@ -348,11 +172,7 @@ doom-one) can hang Emacs while resolving face inheritance.
   :custom
   (doom-modeline-height 28)
   (doom-modeline-icon nil))
-#+end_src
-* Visual Enhancements
-** Nyan Mode
-Animated Nyan Cat progress indicator for the mode line.
-#+begin_src emacs-lisp
+
 (use-package nyan-mode
   :ensure t
   :config
@@ -364,23 +184,14 @@ Animated Nyan Cat progress indicator for the mode line.
   ;; (setq nyan-animation-frame-interval 0.2)
   ;; Activate globally
   (nyan-mode 1))
-#+end_src
-** Visual Line Mode
-Wrap long lines at word boundaries (instead of truncating or hard-wrapping)
-in text-oriented buffers. =visual-line-mode= also remaps movement commands
-(=C-a=, =C-e=, =C-k=, =C-n=, =C-p=) so they operate on visual lines, which is
-what you usually want for prose, Org, Markdown and chat buffers.
-#+begin_src emacs-lisp
+
 ;; Enable globally for text-derived modes (org, markdown, text, ...).
 (add-hook 'text-mode-hook #'visual-line-mode)
 ;; Org explicitly, in case org-mode is not yet derived from text-mode at load time.
 (add-hook 'org-mode-hook  #'visual-line-mode)
 ;; Soft-wrap indicator in the fringe is distracting; rely on visual-line-mode alone.
 (setq visual-line-fringe-indicators '(nil nil))
-#+end_src
 
-* Scrolling
-#+begin_src emacs-lisp
 (setq scroll-conservatively 101
       scroll-margin 3
       maximum-scroll-margin 0.25
@@ -409,17 +220,10 @@ what you usually want for prose, Org, Markdown and chat buffers.
   (with-eval-after-load 'pixel-scroll
     (advice-add 'pixel-scroll-precision
                 :around #'my/pixel-scroll-precision-no-boundary-bounce)))
-#+end_src
 
-* Version Control
-#+begin_src emacs-lisp
 (use-package magit
   :bind ("C-x g" . magit-status))
-#+end_src
 
-* Protected Files
-
-#+begin_src emacs-lisp :tangle yes
 ;; Runtime loader files live in user-emacs-directory, while config lives
 ;; under the selected private repo. gptel may freely touch the user's data
 ;; under my/data-dir but must never overwrite config, init.el, or
@@ -437,11 +241,7 @@ what you usually want for prose, Org, Markdown and chat buffers.
   "Return t if PATH is a protected config file."
   (member (file-truename path)
           (mapcar #'file-truename my/gptel-protected-files)))
-#+end_src
 
-* Config.org Write Guard
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/config-org-write-guard ()
   "Abort any save that would overwrite a protected config file."
   (when (and buffer-file-name
@@ -463,10 +263,7 @@ what you usually want for prose, Org, Markdown and chat buffers.
              (not (string-empty-p filename))
              (my/gptel-protected-p (expand-file-name filename)))
     (error "set-visited-file-name blocked: %s is a protected config file" filename)))
-#+end_src
 
-* Auto-commit Org files
-#+begin_src emacs-lisp
 (use-package git-auto-commit-mode
   :config
   (setq gac-automatically-push-p nil
@@ -486,21 +283,7 @@ what you usually want for prose, Org, Markdown and chat buffers.
                         (file-name-as-directory (file-truename my/data-dir))
                         (file-truename buffer-file-name)))
               (git-auto-commit-mode 1))))
-#+end_src
 
-* Startup Sync — beorg only
-
-The legacy startup-sync did =git pull= on =my/data-dir=, =git-crypt
-unlock=, and an rsync to =~/.emacs.d/config-readonly/=. In the distro
-model none of that is needed: bootstrap owns repo sync/update checks and
-config-readonly is dead. The
-beorg mirror is the only piece worth keeping — it pushes
-=data/org/= to the iCloud folder beorg reads on iPhone.
-
-If you don't use beorg, this is a no-op (the iCloud directory just
-doesn't exist) — safe to leave in place.
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/beorg-sync ()
   "Mirror my/data-dir/data/org/ to beorg's iCloud folder."
   (let ((org-d (file-name-as-directory
@@ -515,10 +298,7 @@ doesn't exist) — safe to leave in place.
                      org-d (file-name-as-directory beorg)))))
 
 (add-hook 'after-init-hook #'my/beorg-sync)
-#+end_src
 
-* Editing Utilities
-#+begin_src emacs-lisp
 (use-package which-key
   :ensure t
   :config (which-key-mode))
@@ -547,10 +327,7 @@ doesn't exist) — safe to leave in place.
   :bind ("C-=" . er/expand-region))
 
 (global-set-key (kbd "C-x C-b") 'buffer-menu)
-#+end_src
 
-* Completion Old Stack (deactivated as the Modern Completion Stack is now active)
-#+begin_src emacs-lisp :eval never
 (use-package smex :ensure t)
 
 (use-package ivy
@@ -568,38 +345,7 @@ doesn't exist) — safe to leave in place.
 (use-package swiper
   :ensure t
   :bind (("M-s" . swiper)))
-#+end_src
 
-
-* Modern Completion Stack
-
-Modern replacement for:
-- Ivy
-- Counsel
-- Swiper
-
-Uses:
-- Vertico
-- Consult
-- Embark
-- Marginalia
-- Orderless
-
-** Package system
-
-Package management is delegated to [[https://github.com/progfolio/elpaca][elpaca]]. The bootstrap snippet lives
-in =~/.emacs.d/init.el= and is loaded before any module. Under
-=elpaca-use-package-mode=, every =(use-package X :ensure t)= form in the
-modules below is automatically routed through elpaca's async build
-queue — no per-module install code needed.
-
-To update individual packages: =M-x elpaca-fetch <name>= followed by
-=M-x elpaca-merge <name>=. =M-x elpaca-status= shows every package's
-build state.
-
-** Install ripgrep automatically
-
-#+begin_src emacs-lisp
 (defun my/install-ripgrep ()
   "Install ripgrep automatically if possible."
   (unless (executable-find "rg")
@@ -646,39 +392,23 @@ build state.
       (message "Please install ripgrep manually.")))))
 
 (my/install-ripgrep)
-#+end_src
 
-** Vertico
-
-#+begin_src emacs-lisp
 (use-package vertico
   :init
   (vertico-mode 1)
 
   :custom
   (vertico-cycle t))
-#+end_src
 
-** Save minibuffer history
-
-#+begin_src emacs-lisp
 (use-package savehist
   :init
   (savehist-mode 1))
-#+end_src
 
-** Marginalia
-
-#+begin_src emacs-lisp
 (use-package marginalia
   :after vertico
   :init
   (marginalia-mode 1))
-#+end_src
 
-** Orderless matching
-
-#+begin_src emacs-lisp
 (use-package orderless
 
   :custom
@@ -687,11 +417,7 @@ build state.
 
   (completion-category-overrides
    '((file (styles basic partial-completion)))))
-#+end_src
 
-** Consult
-
-#+begin_src emacs-lisp
 (use-package consult
 
   :bind
@@ -724,11 +450,7 @@ build state.
 
    ;; Errors
    ("C-c e"   . consult-flymake)))
-#+end_src
 
-** Embark
-
-#+begin_src emacs-lisp
 ;; Embark warns when Consult is later loaded and `embark-consult' cannot be
 ;; required. Install the integration package via use-package so elpaca picks
 ;; it up; `:after (embark consult)' defers loading until both prerequisites
@@ -746,25 +468,14 @@ build state.
 
   :init
   (setq prefix-help-command #'embark-prefix-help-command))
-#+end_src
 
-#+results:
-: embark-bindings
-
-** Embark + Consult integration
-
-#+begin_src emacs-lisp
 (use-package embark-consult
   :ensure t
   :after (embark consult)
 
   :hook
   (embark-collect-mode . consult-preview-at-point-mode))
-#+end_src
 
-** General completion settings
-
-#+begin_src emacs-lisp
 (setq enable-recursive-minibuffers t)
 
 (setq completion-ignore-case t
@@ -778,59 +489,13 @@ build state.
 
 (add-hook 'minibuffer-setup-hook
           #'cursor-intangible-mode)
-#+end_src
 
-** Helpful notes
-
-Main keys:
-
-C-s
-  Search current buffer
-
-C-c s
-  Search project with ripgrep
-
-C-x b
-  Switch buffers/files
-
-C-.
-  Embark actions
-
-C-c h
-  Search org headings
-
-C-c m
-  Search symbols/imenu
-
-M-y
-  Browse yank history
-
-M-g g
-  Goto line
-
-Embark (`C-.`) is extremely powerful:
-- act on files
-- grep results
-- org headings
-- buffers
-- symbols
-- search candidates
-- magit items
-- etc.
-* Org Capture
-#+begin_src emacs-lisp
 (global-set-key (kbd "C-c c") 'org-capture)
 (global-set-key (kbd "C-c a") 'org-agenda)
 (global-set-key (kbd "C-c l") 'org-store-link)
-#+end_src
 
-* Terminal
-#+begin_src emacs-lisp
 (global-set-key (kbd "C-c t") 'eshell)
-#+end_src
 
-* Miscellaneous Settings
-#+begin_src emacs-lisp
 (setq org-enforce-todo-dependencies t)
 (setq org-cycle-separator-lines 0)
 (setq org-blank-before-new-entry '((heading) (plain-list-item . auto)))
@@ -913,10 +578,7 @@ Embark (`C-.`) is extremely powerful:
           'append)
 
 (run-at-time "00:59" 3600 'org-save-all-org-buffers)
-#+end_src
 
-* Spelling
-#+begin_src emacs-lisp
 (use-package ispell
   :ensure nil
   :init
@@ -933,4 +595,3 @@ Embark (`C-.`) is extremely powerful:
     (message "Flyspell skipped: %s not found yet; restart after brew install finishes."
              ispell-program-name)))
 (add-hook 'org-mode-hook #'my/turn-on-flyspell-if-aspell-available 'append)
-#+end_src
