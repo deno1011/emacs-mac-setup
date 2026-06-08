@@ -77,7 +77,12 @@ Doesn't touch files. Safe to call interactively."
         (make-directory d t)
         (message "wiki: created %s" d)))))
 
-(my/wiki-ensure-tree)
+;; Only auto-create at module-load time if bootstrap has already
+;; finalized the data-dir (see same guard in 50-org.org). On a fresh
+;; install `my/wiki-base-dir' is built from the default `~/emacs/'
+;; root, not the BW.Repo-derived path bootstrap writes later.
+(when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+  (my/wiki-ensure-tree))
 #+end_src
 
 * Wiki Maintainer Directive

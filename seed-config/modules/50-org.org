@@ -677,7 +677,7 @@ just makes sure the directory tree exists.
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/gtd-ensure-tree ()
-  "Create ~/emacs/data/org/{gtd,archive}/ if missing. Doesn't touch files."
+  "Create $my/data-dir/data/org/{gtd,archive}/ if missing. Doesn't touch files."
   (interactive)
   (let ((org-root (expand-file-name "data/org/" my/data-dir)))
     (dolist (sub '("" "gtd" "archive"))
@@ -686,7 +686,16 @@ just makes sure the directory tree exists.
           (make-directory d t)
           (message "gtd: created %s" d))))))
 
-(my/gtd-ensure-tree)
+;; Only auto-create at module-load time if bootstrap has already
+;; finalized the data-dir (=`~/.emacs.d/data-dir.el' exists). On a
+;; FRESH install, that file isn't there yet — `my/data-dir' is still
+;; the default `~/emacs/' from init.el's `defvar', not the BW.Repo-
+;; derived path bootstrap will write. Creating dirs now would scatter
+;; starter directories under the wrong root. Bootstrap writes
+;; data-dir.el after reading BW.Repo; user restarts; second run takes
+;; the `(my/gtd-ensure-tree)' branch with the correct path.
+(when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+  (my/gtd-ensure-tree))
 #+end_src
 
 * Clocking
