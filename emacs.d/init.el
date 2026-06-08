@@ -68,18 +68,19 @@ folder is missing locally, this temporarily points at
 ;; (test/script strip, packages.lock, validation) we previously built on
 ;; top of package.el.
 ;;
-;; The bootstrap snippet below is the exact upstream recommended form
-;; (per elpaca's README); we keep it close to upstream so updates from
-;; the elpaca repo apply cleanly.
-(defvar elpaca-installer-version 0.8)
+;; The bootstrap snippet below is COPIED VERBATIM from elpaca's
+;; doc/installer.el (upstream README), so updates from elpaca apply
+;; cleanly. If you see "Init installer version does not match" warnings,
+;; bump `elpaca-installer-version' here to match upstream's `doc/installer.el'.
+(defvar elpaca-installer-version 0.12)
 (defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
 (defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
-(defvar elpaca-repos-directory (expand-file-name "repos/" elpaca-directory))
+(defvar elpaca-sources-directory (expand-file-name "sources/" elpaca-directory))
 (defvar elpaca-order '(elpaca :repo "https://github.com/progfolio/elpaca.git"
                               :ref nil :depth 1 :inherit ignore
                               :files (:defaults "elpaca-test.el" (:exclude "extensions"))
-                              :build (:not elpaca--activate-package)))
-(let* ((repo  (expand-file-name "elpaca/" elpaca-repos-directory))
+                              :build (:not elpaca-activate)))
+(let* ((repo  (expand-file-name "elpaca/" elpaca-sources-directory))
        (build (expand-file-name "elpaca/" elpaca-builds-directory))
        (order (cdr elpaca-order))
        (default-directory repo))
@@ -106,7 +107,7 @@ folder is missing locally, this temporarily points at
   (unless (require 'elpaca-autoloads nil t)
     (require 'elpaca)
     (elpaca-generate-autoloads "elpaca" repo)
-    (load "./elpaca-autoloads")))
+    (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
 (add-hook 'after-init-hook #'elpaca-process-queues)
 (elpaca `(,@elpaca-order))
 
