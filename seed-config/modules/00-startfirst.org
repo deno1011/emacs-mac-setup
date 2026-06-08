@@ -24,6 +24,8 @@ matches modus-vivendi's background, so the modus-vivendi load itself
 is visually seamless from the very first frame paint.
 
 #+begin_src emacs-lisp :tangle yes
+;;; 00-startfirst.el --- Earliest module: theme + frame setup -*- lexical-binding: t; -*-
+
 ;; Built-in dark theme — no install required.
 (load-theme 'modus-vivendi t)
 #+end_src
