@@ -220,12 +220,11 @@ returns ~immediately after BW reads complete."
           (cb (or on-finish #'ignore)))
       (my/task-shell
        task-name
-       (list "bash" "-c" (my/-keychain-multi-set-script entries))
-       ;; The script contains shell-quoted secret VALUES on its argv
-       ;; (passed as the `bash -c' string). Redact wipes the task
-       ;; buffer + result slot after completion. The script's argv
-       ;; itself is still briefly visible to `ps -ef' during execution
-       ;; — that's a deeper leak addressed separately (move to stdin).
+       ;; `bash -s' reads the script from stdin instead of from argv.
+       ;; That keeps the shell-quoted secret VALUES out of `ps -ef'
+       ;; entirely — the only thing visible is `bash -s'.
+       (list "bash" "-s")
+       :stdin (my/-keychain-multi-set-script entries)
        :redact t
        :on-success (lambda (_) (funcall cb t))
        :on-failure (lambda (_) (funcall cb nil)))
@@ -458,13 +457,17 @@ of the vault is dispatched to the background."
         (my/task-shell
          (intern (format "bw-lock-%d"
                          (cl-incf my/-keychain-task-counter)))
-         (list "bash" "-c"
-               (format "bw lock --session %s >/dev/null 2>&1"
-                       (shell-quote-argument session)))
-         ;; Argv contains the session token inside the `bash -c'
-         ;; string. Stdout is empty (redirected) but redact for
-         ;; consistency in case `bw' starts writing diagnostics.
-         :redact t)))))
+         ;; `bw' reads BW_SESSION from the env when --session is absent
+         ;; — passing it via :env keeps the token OUT of argv (which
+         ;; `ps -ef' otherwise exposes).
+         (list "bw" "lock")
+         :env `(("BW_SESSION" . ,session))
+         :redact t)
+        ;; Active hygiene: zero our local copy of the session token
+        ;; now that `make-process' has the value baked into the child's
+        ;; env block. (The framework also clears the :env value, but
+        ;; we hold a second reference via the let-bound `session'.)
+        (clear-string session)))))
 
 ;; Explanation: Async variant of my/bw-unlock — bw subprocess wait happens off main thread.
 (cl-defun my/bw-unlock-async (callback)
@@ -506,12 +509,13 @@ Behaviour:
              (my/task-shell
               (intern (format "bw-unlock-%d"
                               (cl-incf my/-keychain-task-counter)))
+              ;; `--passwordenv BW_PW' makes bw read the master from the
+              ;; env (NOT argv), so `ps -ef' sees only the flag name.
               (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
               :env `(("BW_PW" . ,master))
-              ;; Stdout IS the BW session token. Redact the buffer +
-              ;; result so neither the *task: bw-unlock-N* buffer nor
-              ;; `(my/task-result-of 'bw-unlock-N)' holds the secret
-              ;; after on-success has stashed it in `my/bw-session'.
+              ;; Stdout IS the BW session token. Pattern masking wipes
+              ;; it from the buffer + result slot after on-success
+              ;; stashed it in `my/bw-session'.
               :redact t
               :on-success
               (lambda (out)
@@ -523,15 +527,13 @@ Behaviour:
                   (cond
                    (session
                     (setq my/bw-session session)
-                    ;; Background sync — fire-and-forget. Argv contains
-                    ;; the session token (via shell-quote-argument inside
-                    ;; the bash -c string) so we redact the buffer too.
+                    ;; Background sync — fire-and-forget. Token goes via
+                    ;; BW_SESSION env var, NOT argv.
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
-                     (list "bash" "-c"
-                           (format "bw sync --session %s >/dev/null 2>&1"
-                                   (shell-quote-argument session)))
+                     (list "bw" "sync")
+                     :env `(("BW_SESSION" . ,session))
                      :redact t)
                     (funcall cb session))
                    (t
@@ -635,13 +637,14 @@ real issue, add a chained second-stage task here."
       (my/task-shell
        (intern (format "bw-get-item-%d"
                        (cl-incf my/-keychain-task-counter)))
-       (list "bw" "get" "item" item-name
-             "--session" my/bw-session)
+       ;; Session token goes via BW_SESSION env, NOT --session argv,
+       ;; so `ps -ef' on this Mac sees only `bw get item NAME'.
+       (list "bw" "get" "item" item-name)
+       :env `(("BW_SESSION" . ,my/bw-session))
        ;; Stdout is the full BW item JSON: PAT, every API key, every
-       ;; GitCryptKey field. Redact aggressively — the on-success
-       ;; callback parses it in-memory and the buffer/result get wiped.
-       ;; Argv contains the session token as well; same separate fix
-       ;; needed for argv leak.
+       ;; GitCryptKey field. Pattern masking replaces values; the
+       ;; structure stays visible. `clear-string' wipes the captured
+       ;; stdout in the framework's finished handler.
        :redact t
        :on-success
        (lambda (out)

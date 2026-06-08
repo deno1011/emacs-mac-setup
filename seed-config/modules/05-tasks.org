@@ -143,7 +143,14 @@ to a terminal state (success, failure, cancelled).")
   ;; specific task has known secret shapes that the global list doesn't
   ;; catch (e.g. an unusual API response format).
   redact
-  secret-patterns)
+  secret-patterns
+  ;; `stdin' is an optional string written to the subprocess's standard
+  ;; input AT START and then closed. Use when a shell script contains
+  ;; secrets — passing it as `stdin' instead of inside `bash -c "..."'
+  ;; keeps the secret OUT of the subprocess argv, which `ps -ef'
+  ;; otherwise exposes to any local user. After the data is written
+  ;; the framework calls `clear-string' on this slot and then nils it.
+  stdin)
 #+end_src
 
 * Session marker + orphan cleanup
@@ -305,7 +312,7 @@ our own about-to-be-spawned subprocesses)."
 (cl-defun my/task-shell (name command
                               &key env cwd depends-on
                               on-success on-failure on-progress
-                              detach redact secret-patterns)
+                              detach redact secret-patterns stdin)
   "Submit a shell task NAME running COMMAND.
 
 COMMAND is either a list of strings (executed directly) or a zero-arg
@@ -341,6 +348,15 @@ SECRET-PATTERNS is an optional list of regexps APPENDED to the global
 patterns. Use when a task has a known secret shape the global list
 doesn't catch.
 
+STDIN is an optional string written to the subprocess's standard
+input at start. Use to pass scripts that contain secrets WITHOUT
+exposing them on the subprocess argv (which is readable by anyone
+on the system via `ps -ef'). Typical pattern:
+  COMMAND = (list \"bash\" \"-s\")
+  STDIN   = \"<shell script with secrets>\"
+The framework calls `clear-string' on STDIN as soon as the bytes
+have been written to the pipe, then drops the reference.
+
 Returns the task struct immediately."
   (let ((task (make-my/task
                :name name :kind 'shell :command command
@@ -350,6 +366,7 @@ Returns the task struct immediately."
                :on-progress on-progress
                :redact redact
                :secret-patterns secret-patterns
+               :stdin stdin
                :state 'pending)))
     (puthash name task my/tasks)
     (my/-task-try-start name)
@@ -492,6 +509,9 @@ not-yet-started tasks)."
                  :command wrapped
                  :buffer buf
                  :noquery t
+                 ;; `connection-type pipe' is needed when we want to
+                 ;; reliably send STDIN to the subprocess.
+                 :connection-type 'pipe
                  :filter (lambda (proc chunk)
                            (when (buffer-live-p (process-buffer proc))
                              (with-current-buffer (process-buffer proc)
@@ -505,7 +525,34 @@ not-yet-started tasks)."
                              (when (memq (process-status proc) '(exit signal))
                                (my/-task-shell-finished task)))))
           ;; Record PID for orphan-cleanup on a future Emacs startup.
-          (my/-task-record-pid task))
+          (my/-task-record-pid task)
+          ;; If a stdin payload was supplied (e.g. a shell script that
+          ;; would otherwise expose secrets via argv on `ps -ef'), write
+          ;; it to the subprocess pipe and close stdin so the script
+          ;; runs to completion. Then ACTIVELY ZERO the local copy with
+          ;; `clear-string' before dropping the slot reference — that
+          ;; way the secret bytes don't linger in Emacs's heap waiting
+          ;; for the next GC.
+          (when (and (stringp (my/task-stdin task))
+                     (process-live-p (my/task-process task)))
+            (process-send-string (my/task-process task) (my/task-stdin task))
+            (process-send-eof (my/task-process task))
+            (clear-string (my/task-stdin task))
+            (setf (my/task-stdin task) nil))
+          ;; Same hygiene for env-alist values: `make-process' has
+          ;; already copied them into the child; clear our refs so they
+          ;; aren't sitting in `(my/task-env task)' forever.
+          (dolist (kv (my/task-env task))
+            (when (stringp (cdr kv))
+              (clear-string (cdr kv))))
+          (setf (my/task-env task) nil)
+          ;; The `extra-env' strings we built above (let-bound) were
+          ;; FORMAT-built copies; clear them too. They're already out
+          ;; of let scope at this point of execution, but a reference
+          ;; lives on as the `process-environment' value the child
+          ;; inherited — Emacs holds a copy briefly.
+          (dolist (s extra-env)
+            (when (stringp s) (clear-string s))))
       (error
        ;; Failed to spawn subprocess — treat as immediate failure.
        (setf (my/task-state task) 'failure)
@@ -622,7 +669,14 @@ content matches against most patterns produce no further change."
                 (my/-task-mask-string-secrets (my/task-result task) patterns)))
         (when (eq (my/task-state task) 'failure)
           (setf (my/task-error task)
-                (my/-task-mask-string-secrets (my/task-error task) patterns)))))
+                (my/-task-mask-string-secrets (my/task-error task) patterns))))
+      ;; Active hygiene: the captured `output' is a fresh string copy
+      ;; from `(buffer-string)' BEFORE we masked the buffer; it still
+      ;; holds the raw subprocess stdout. Zero the bytes now so the
+      ;; secret doesn't linger in Emacs's heap until the next GC.
+      ;; (Note: this can't guarantee OS-level memory page zeroing —
+      ;; only that the elisp-visible string contents are blanked.)
+      (when (stringp output) (clear-string output)))
     (my/-task-fire-completion task)))
 
 (defun my/-task-start-elisp (task)
