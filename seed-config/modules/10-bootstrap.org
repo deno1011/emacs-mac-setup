@@ -2933,13 +2933,32 @@ required. Safe to invoke directly via M-x for retries."
             (my/gh-login-with-token (plist-get id :token))))
           ;; 6. Repo sync (first-time clone or adopt; pull is opt-in via
           ;; M-x my/repo-sync-now below).
+          ;;
+          ;; Note: pre-43c624b this branch could THROW
+          ;; `my/bootstrap-repo-switch-prepared' when
+          ;; `my/bootstrap-ensure-selected-repo-dir' returned t,
+          ;; bailing out of the whole bootstrap and asking the user
+          ;; to restart Emacs for the new data-dir to take effect.
+          ;; The throw was needed because modules had already baked
+          ;; the OLD data-dir into their derived constants. With
+          ;; `my/bootstrap-resolve-data-dir-now' now resolving
+          ;; data-dir BEFORE modules load, that race no longer
+          ;; exists — we just clone (or no-op if already present)
+          ;; and fall through to git-crypt + starter data +
+          ;; api-keys-load in the SAME launch. A BW.Repo CHANGE
+          ;; mid-session still asks the user to restart via the
+          ;; `message' inside ensure-selected-repo-dir, but the
+          ;; full sync proceeds for THIS run too.
           (cond
            ((and (not (my/-blank-p (plist-get id :username)))
                  (not (my/-blank-p (plist-get id :repo))))
             (cond
              ((my/bootstrap-ensure-selected-repo-dir id)
-              (message "Bootstrap: repo switch prepared; restart Emacs to load the selected repo.")
-              (throw 'my/bootstrap-repo-switch-prepared t))
+              ;; Data-dir change is queued for next launch; this
+              ;; run continues with the current `my/data-dir' so
+              ;; api-keys-load + git-crypt + starter-data still run.
+              (message "Bootstrap: repo switch queued for next restart (this run continues against %s)."
+                       my/data-dir))
              (t
               (my/repo-sync id)
               (my/bootstrap-ensure-seed-config-files))))
