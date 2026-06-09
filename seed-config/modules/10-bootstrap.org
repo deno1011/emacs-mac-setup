@@ -38,6 +38,10 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 ;; default value lives in Step 7.5 (line ~1998) where the rest of the
 ;; git-crypt machinery is defined.
 (defvar my/git-crypt-keychain-service)
+;; Forward-declare the setup form's result variable so byte-compiler
+;; sees it in `my/bootstrap--first-launch-blocking-form' (Step 9)
+;; before its real defvar is hit in Step 12.
+(defvar my/-config-form-result)
 
 (declare-function my/task-shell "05-tasks")
 #+end_src
@@ -3063,7 +3067,7 @@ until the user has chosen a data folder."
       (my/bootstrap-start-keychain-refresh-task
        #'my/bootstrap-start-full-sync-task)))))
 
-(defun my/bootstrap--first-launch-blocking-form (data-dir-el)
+(defun my/bootstrap--first-launch-blocking-form (_data-dir-el)
   "Open the setup form and block bootstrap until the user submits it.
 
 Runs from `my/bootstrap' on `emacs-startup-hook' — by then the
@@ -3072,7 +3076,7 @@ display correctly (unlike at module-load time, when the frame is
 still hidden).
 
 After Save: BW is unlocked + emacs-credentials populated. Read the
-Repo field, derive `my/data-dir', write DATA-DIR-EL, and tell the
+Repo field, derive `my/data-dir', write data-dir.el, and tell the
 user to restart so modules load with the correct paths. Modules in
 this session captured paths against the init.el default `~/emacs/'
 and are not re-resolvable in-place.
@@ -3253,10 +3257,11 @@ gating + replacement of inline prompts) lands in subsequent commits.
   "Buffer-local alist of (KEY . CHECKBOX-WIDGET) for the skip toggles.")
 
 (defvar my/-config-form-result nil
-  "Set by `my/-config-form-save' (`saved') or `-cancel' (`cancelled')
-before exiting `recursive-edit'. Used by callers wrapping the form in
-a blocking flow (e.g. `my/bootstrap-resolve-data-dir-now') to tell
-which button the user pressed.")
+  "Set by `my/-config-form-save' or `my/-config-form-cancel' before
+exiting `recursive-edit'.  Symbol values: `saved', `unchanged',
+`cancelled'.  Used by callers wrapping the form in a blocking flow
+\(e.g. `my/bootstrap--first-launch-blocking-form') to tell which
+button the user pressed.")
 
 (defun my/-config-form-status (cur-value)
   "Return a short status string describing CUR-VALUE."
@@ -3293,11 +3298,17 @@ HELP     optional one-line help string printed under the input."
    (format "  %-22s %s\n  %-22s "
            label (my/-config-form-status current-value)
            ""))
-  (let ((field (widget-create 'editable-field
-                              :size 40
-                              :secret (and secret ?●)
-                              :format "%v"
-                              "")))
+  ;; Build the widget-create arg list dynamically: include `:secret'
+  ;; ONLY when SECRET is non-nil. Passing `:secret nil' triggers a
+  ;; `Wrong type argument: characterp, nil' inside the widget value-
+  ;; create code, which crashed the whole form render. Using `?*'
+  ;; as the masking char rather than `?●' so it renders consistently
+  ;; even on terminal Emacs / minimal fonts.
+  (let* ((args (append
+                (list :size 40 :format "%v")
+                (when secret (list :secret ?*))
+                (list "")))
+         (field (apply #'widget-create 'editable-field args)))
     (push (cons key field) my/-config-form-rows))
   (when skip-eligible
     (widget-insert "  ")
