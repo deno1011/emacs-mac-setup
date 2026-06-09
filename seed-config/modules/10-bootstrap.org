@@ -625,9 +625,13 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 
 ;; Explanation: Async variant of my/bw-get-item — `bw get item' runs in a my/task-shell subprocess.
 (defun my/bw-get-item-async (item-name callback)
-  "Asynchronous variant of `my/bw-get-item'. CALLBACK is invoked on
-the main thread with the parsed alist, or nil if BW is locked / item
-missing / JSON parse failed.
+  "Asynchronous variant of `my/bw-get-item'. CALLBACK is called as
+\(funcall CALLBACK ITEM ERR) on the main thread, where:
+  - ITEM is the parsed alist on success, nil otherwise.
+  - ERR is nil on success or a short string describing why the
+    item could not be returned (\"BW not unlocked\", the bw CLI's
+    stderr, or a JSON-parse explanation). Lets callers distinguish
+    a session/credential failure from a genuine missing item.
 
 Note: does NOT implement the duplicate-name fallback of the sync
 version (which spawns a second `bw list items' subprocess). The
@@ -636,7 +640,7 @@ real issue, add a chained second-stage task here."
   (let ((cb (or callback #'ignore)))
     (cond
      ((not my/bw-session)
-      (run-at-time 0 nil cb nil))
+      (run-at-time 0 nil cb nil "BW not unlocked"))
      (t
       (my/task-shell
        (intern (format "bw-get-item-%d"
@@ -664,9 +668,17 @@ real issue, add a chained second-stage task here."
                                          :null-object nil
                                          :false-object nil)
                     (error nil)))))
-           (funcall cb parsed)))
+           (cond
+            (parsed (funcall cb parsed nil))
+            ((or (null out) (string-empty-p (string-trim (or out ""))))
+             (funcall cb nil "bw returned empty output"))
+            (t
+             (funcall cb nil
+                      (format "bw output not JSON: %s"
+                              (string-trim (substring out 0 (min 120 (length out))))))))))
        :on-failure
-       (lambda (_err) (funcall cb nil)))))
+       (lambda (err)
+         (funcall cb nil (or err "bw exited non-zero"))))))
     nil))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
@@ -2453,13 +2465,14 @@ bootstrap), the helpers default to the sync path."
         (t
          (my/bw-get-item-async
           my/bw-credentials-item
-          (lambda (item)
+          (lambda (item err)
             (cond
              ((not item)
               (my/bw-lock-async)
               (funcall cb nil
-                       (format "Bitwarden item '%s' not found"
-                               my/bw-credentials-item)))
+                       (format "Bitwarden item '%s' could not be read: %s"
+                               my/bw-credentials-item
+                               (or err "unknown"))))
              (t
               (let ((github-count 0)
                     (api-count 0)
