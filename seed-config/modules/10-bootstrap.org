@@ -532,12 +532,20 @@ Behaviour:
                    (session
                     (setq my/bw-session session)
                     ;; Background sync — fire-and-forget. Token goes via
-                    ;; BW_SESSION env var, NOT argv.
+                    ;; BW_SESSION env var, NOT argv. CRITICAL: pass a
+                    ;; `copy-sequence' of the session string. The task
+                    ;; framework calls `clear-string' on every :env value
+                    ;; after `make-process' (secret hygiene, see
+                    ;; 05-tasks.org's `clear-string' on (cdr kv)). If we
+                    ;; passed the original `session', that mutation would
+                    ;; also zero `my/bw-session' (same string object),
+                    ;; making every subsequent bw call fail with
+                    ;; "Vault is locked".
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
                      (list "bw" "--nointeraction" "sync")
-                     :env `(("BW_SESSION" . ,session))
+                     :env `(("BW_SESSION" . ,(copy-sequence session)))
                      :redact t)
                     (funcall cb session))
                    (t
@@ -651,8 +659,12 @@ real issue, add a chained second-stage task here."
        ;; when the session is invalid/expired — without it the subprocess
        ;; would silently wait for a master-password prompt forever
        ;; (stdin is a closed pipe, so the prompt never returns).
+       ;; CRITICAL: `copy-sequence' the session — the task framework
+       ;; calls `clear-string' on each :env value after `make-process'
+       ;; (secret hygiene). Passing `my/bw-session' directly would
+       ;; zero the global, locking out every subsequent bw call.
        (list "bw" "--nointeraction" "get" "item" item-name)
-       :env `(("BW_SESSION" . ,my/bw-session))
+       :env `(("BW_SESSION" . ,(copy-sequence my/bw-session)))
        ;; Stdout is the full BW item JSON: PAT, every API key, every
        ;; GitCryptKey field. Pattern masking replaces values; the
        ;; structure stays visible. `clear-string' wipes the captured
