@@ -648,23 +648,39 @@ Behaviour:
                   (cond
                    (session
                     (setq my/bw-session session)
-                    ;; Background sync — fire-and-forget. Token goes via
-                    ;; BW_SESSION env var, NOT argv. CRITICAL: pass a
-                    ;; `copy-sequence' of the session string. The task
-                    ;; framework calls `clear-string' on every :env value
-                    ;; after `make-process' (secret hygiene, see
-                    ;; 05-tasks.org's `clear-string' on (cdr kv)). If we
-                    ;; passed the original `session', that mutation would
-                    ;; also zero `my/bw-session' (same string object),
-                    ;; making every subsequent bw call fail with
-                    ;; "Vault is locked".
+                    ;; AWAITED sync: every refresh needs the local bw
+                    ;; data.json to reflect the current server state
+                    ;; BEFORE bw-get-item runs. Without this wait the
+                    ;; CLI happily returns the stale cached item — so a
+                    ;; user renaming `emacs-credentials' server-side
+                    ;; and restarting Emacs would still see bootstrap
+                    ;; proceed with the old name (cache lag). The cost
+                    ;; is a one-time ~500ms-2s wait per launch; the gain
+                    ;; is that BW becomes the actual source of truth.
+                    ;;
+                    ;; CRITICAL: pass `copy-sequence' of session. The
+                    ;; task framework calls `clear-string' on every :env
+                    ;; value after `make-process' (05-tasks.org L545-547).
+                    ;; Without copy, the framework would zero the SAME
+                    ;; string `my/bw-session' references — every later
+                    ;; bw call would then fail with "Vault is locked".
+                    ;;
+                    ;; on-failure (network down, server unreachable):
+                    ;; proceed with the cached data.json anyway — better
+                    ;; than blocking bootstrap on offline machines. The
+                    ;; pre-clear chain still wiped Keychain, so a stale
+                    ;; read here can't masquerade as fresh downstream:
+                    ;; either bw-get-item finds the item (we write it
+                    ;; into Keychain) or it doesn't (Keychain stays
+                    ;; empty, predicate detects "needs work").
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
                      (list "bw" "--nointeraction" "sync")
                      :env `(("BW_SESSION" . ,(copy-sequence session)))
-                     :redact t)
-                    (funcall cb session))
+                     :redact t
+                     :on-success (lambda (_out) (funcall cb session))
+                     :on-failure (lambda (_err) (funcall cb session))))
                    (t
                     (display-warning
                      'emacs-setup
