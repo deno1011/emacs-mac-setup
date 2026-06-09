@@ -3272,8 +3272,9 @@ button the user pressed.")
    (t                                                 "[set]")))
 
 (defun my/-config-form-current-gh-field (item field)
-  "Read FIELD ('username 'password 'Email 'Fullname 'Repo) from
-ITEM (parsed alist or nil). Returns string or nil."
+  "Read FIELD from ITEM (parsed alist or nil), return string or nil.
+FIELD is one of the symbols `username', `password', `Email',
+`Fullname', `Repo'."
   (when item
     (cond
      ((eq field 'username) (my/bw-item-username item))
