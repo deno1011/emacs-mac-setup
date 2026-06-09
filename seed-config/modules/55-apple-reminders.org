@@ -54,7 +54,34 @@ The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r p= /
 delete, …), so no manual =global-set-key= calls are needed.
 
 #+begin_src emacs-lisp :tangle yes
-(when (eq system-type 'darwin)
+;; HARD GATE on data-dir.el — wrap the ENTIRE use-package, not just setup.
+;;
+;; Race condition this guards against: on a fresh install bootstrap hasn't
+;; written `data-dir.el' yet when this module loads. `my/data-dir' is still
+;; init.el's `~/emacs/' fallback (NOT the BW.Repo-derived path). If we let
+;; use-package run:
+;;   1. :ensure installs the package via elpaca.
+;;   2. :config's `(setq org-apple-reminders-sync-file ...)' BAKES the path
+;;      to `~/emacs/data/org/reminders.org' (wrong root) — that variable is
+;;      now permanently misconfigured for this Emacs session.
+;;   3. Even if we gate `(org-apple-reminders-setup)' itself, the baked
+;;      sync-file is what any subsequent sync command, idle timer, or
+;;      hook will write to — and writes there will trip
+;;      `git-auto-commit-mode' with "Schwerwiegend: Kein Git-Repository".
+;;   4. The bootstrap THEN writes data-dir.el → ~/emacs14/ later in the
+;;      same session, but org-apple-reminders-sync-file is already wrong.
+;;
+;; Gating the whole use-package means: on first install nothing loads, no
+;; setq runs, no sync-file is baked at the wrong path. After bootstrap
+;; writes data-dir.el and the user restarts, elpaca installs the package
+;; on that second start (modest one-time delay) with `my/data-dir' already
+;; pointing at the correct folder. GTD works without this gate only
+;; because the bootstrap's own `generate-starter-data' uses a let-bound
+;; `target' rather than the captured `my/data-dir' — the asymmetry that
+;; made reminders end up in ~/emacs/ while inbox.org landed in ~/emacs14/.
+(when (and (eq system-type 'darwin)
+           (file-exists-p
+            (expand-file-name "data-dir.el" user-emacs-directory)))
   (use-package org-apple-reminders
     :ensure (org-apple-reminders
              :host github
@@ -72,17 +99,5 @@ delete, …), so no manual =global-set-key= calls are needed.
     ;; heading as the Apple list name. TODOs outside a list section use the
     ;; configured/default Apple Reminders list.
 
-    ;; org-apple-reminders-setup installs the C-c r command map and runs
-    ;; an initial sync from Apple Reminders, writing to
-    ;; `org-apple-reminders-sync-file' (under my/data-dir). On a FIRST
-    ;; install, bootstrap hasn't finalized my/data-dir yet — the default
-    ;; is init.el's `~/emacs/' fallback, not the BW.Repo-derived path.
-    ;; Running setup now would create `~/emacs/data/org/reminders.org'
-    ;; (wrong root) and then trip `git-auto-commit-mode' with
-    ;; "Schwerwiegend: Kein Git-Repository" because `~/emacs/' isn't a
-    ;; git repo. Same gate as `my/gtd-ensure-tree' / `my/wiki-ensure-tree':
-    ;; defer until data-dir.el is in place, then the next launch picks
-    ;; up the correct path.
-    (when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
-      (org-apple-reminders-setup))))
+    (org-apple-reminders-setup)))
 #+end_src
