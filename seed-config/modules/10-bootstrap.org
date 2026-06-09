@@ -3263,31 +3263,43 @@ ITEM (parsed alist or nil). Returns string or nil."
      ((eq field 'password) (my/bw-item-password item))
      (t                    (my/bw-item-field item (symbol-name field))))))
 
-(defun my/-config-form-insert-row (key label current-value &optional secret skip-eligible)
+(defun my/-config-form-insert-row (key label current-value &optional secret skip-eligible help)
   "Insert one labelled input row.
-KEY is the symbol used in `my/-config-form-rows' (alist key).
-LABEL is the displayed label.
-CURRENT-VALUE is the currently-stored value (string or nil), shown
-  as a status indicator next to the field — we never echo the actual
-  value back to the buffer.
-SECRET non-nil masks the editable field with bullets.
-SKIP-ELIGIBLE non-nil adds a [ ] Skip checkbox to the right; it
-  drives whether the row writes `my/api-skipped-sentinel' on save."
-  (widget-insert (format "  %-22s " label))
+KEY      symbol used in `my/-config-form-rows' (alist key).
+LABEL    displayed label.
+CURRENT  current stored value (string or nil). Used only to print
+         a status indicator on a line ABOVE the input — never
+         echoed back into the editable field.
+SECRET   non-nil masks the editable field with bullets.
+SKIP-ELIGIBLE non-nil adds a checkbox to the right; checked = write
+              `my/api-skipped-sentinel' on save. ALWAYS defaults to
+              unchecked regardless of stored value — the visible
+              `[skipped]' status indicator is enough for the user to
+              see the current opt-out state.
+HELP     optional one-line help string printed under the input."
+  (widget-insert
+   (format "  %-22s %s\n  %-22s "
+           label (my/-config-form-status current-value)
+           ""))
   (let ((field (widget-create 'editable-field
-                              :size 36
+                              :size 40
                               :secret (and secret ?●)
                               :format "%v"
                               "")))
     (push (cons key field) my/-config-form-rows))
-  (widget-insert "  ")
   (when skip-eligible
-    (let ((cb (widget-create 'checkbox
-                             (and current-value
-                                  (string= current-value my/api-skipped-sentinel)))))
+    (widget-insert "  ")
+    ;; Checkbox initial value is hard-coded nil. Even when the stored
+    ;; value already equals `my/api-skipped-sentinel' we DON'T pre-tick:
+    ;; the status indicator already shows `[skipped]', and pre-ticking
+    ;; led to surprising "I clicked Save and now everything's skipped"
+    ;; behaviour after a single accidental Save.
+    (let ((cb (widget-create 'checkbox nil)))
       (push (cons key cb) my/-config-form-skip-checkboxes))
-    (widget-insert " Skip  "))
-  (widget-insert (my/-config-form-status current-value))
+    (widget-insert " Skip permanently"))
+  (widget-insert "\n")
+  (when help
+    (widget-insert (format "    %s\n" help)))
   (widget-insert "\n"))
 
 (defun my/-config-form-row-value (key)
@@ -3324,103 +3336,112 @@ Otherwise :value is the typed string."
 
 (defun my/-config-form-save (&rest _ignore)
   "Save form contents: dual-write changed rows to BW + Keychain.
-Bound to the [Save] button. Caches the form's BW email + master into
-Keychain FIRST so `my/bw-unlock' uses those instead of re-prompting,
-then unlocks (if needed), then dual-writes the rest.
 
-On success exits `recursive-edit' (if any) and kills the form buffer
-so the caller (`my/bootstrap-resolve-data-dir-now') can continue."
+Single `condition-case' around the whole body — any error
+(BW unlock declined, BW API failure, Keychain write blocked, …) is
+caught and surfaced as a clear `display-warning' + `message' so the
+user sees what went wrong instead of an opaque \"nil\" in the
+echo area. The form buffer stays open on error so the user can
+retry without re-typing everything; on success it is killed and
+`recursive-edit' is exited."
   (interactive)
-  (let ((changes (my/-config-form-collect))
-        (saved-anything nil))
-    (cond
-     ((cl-every (lambda (kv) (eq (plist-get (cdr kv) :value) :unchanged)) changes)
-      (message "Setup form: nothing to save (all rows unchanged)."))
-     (t
-      ;; Step 1: cache form-entered BW email + master to Keychain
-      ;; BEFORE attempting unlock, so `my/bw-unlock' takes the
-      ;; Keychain-cached path instead of opening its own minibuffer
-      ;; prompts. This lets the form act as the single point of entry
-      ;; for first-launch credentials.
-      (let* ((bw-email-row  (alist-get 'bw-email  changes))
-             (bw-master-row (alist-get 'bw-master changes))
-             (new-email     (and bw-email-row  (stringp (plist-get bw-email-row  :value))
-                                 (plist-get bw-email-row  :value)))
-             (new-master    (and bw-master-row (stringp (plist-get bw-master-row :value))
-                                 (plist-get bw-master-row :value))))
-        (when (and new-email (not (string-empty-p new-email)))
-          (my/keychain-set my/keychain-service new-email
-                           my/keychain-account-bw-email))
-        (when (and new-master (not (string-empty-p new-master)))
-          (my/keychain-set my/keychain-service new-master
-                           my/keychain-account-bw-master)))
-      ;; Step 2: ensure BW is unlocked. Now uses cached Keychain values
-      ;; (just written in step 1) when present, else prompts.
-      (unless my/bw-session
-        (unless (my/bw-unlock)
-          (setq my/-config-form-result 'cancelled)
+  (let ((form-buf (current-buffer)))
+    (condition-case err
+        (let ((changes (my/-config-form-collect))
+              (saved-anything nil)
+              (written 0)
+              (skipped 0))
+          (cond
+           ;; Fast no-op: every row is :unchanged.
+           ((cl-every (lambda (kv) (eq (plist-get (cdr kv) :value) :unchanged))
+                      changes)
+            (message "Setup form: nothing to save (all rows unchanged)."))
+           (t
+            ;; Step 1: cache form-entered BW email + master to Keychain
+            ;; BEFORE unlock, so `my/bw-unlock' takes the cached path.
+            (let* ((bw-email-row  (alist-get 'bw-email  changes))
+                   (bw-master-row (alist-get 'bw-master changes))
+                   (new-email
+                    (and (consp bw-email-row)
+                         (stringp (plist-get bw-email-row :value))
+                         (plist-get bw-email-row :value)))
+                   (new-master
+                    (and (consp bw-master-row)
+                         (stringp (plist-get bw-master-row :value))
+                         (plist-get bw-master-row :value))))
+              (when (and new-email (not (string-empty-p new-email)))
+                (my/keychain-set my/keychain-service new-email
+                                 my/keychain-account-bw-email))
+              (when (and new-master (not (string-empty-p new-master)))
+                (my/keychain-set my/keychain-service new-master
+                                 my/keychain-account-bw-master)))
+            ;; Step 2: ensure BW is unlocked. Uses Keychain creds we
+            ;; just wrote in step 1.
+            (unless my/bw-session
+              (unless (my/bw-unlock)
+                (error "BW unlock declined or failed (master password? bw CLI installed?)")))
+            ;; Step 3a: API key rows — dual-write each.
+            (dolist (kv changes)
+              (let* ((key (car kv))
+                     (val (plist-get (cdr kv) :value))
+                     (kn  (symbol-name key))
+                     (env-key (and (string-prefix-p "api/" kn)
+                                   (substring kn 4))))
+                (when (and env-key (not (eq val :unchanged)))
+                  (let ((write-val (if (eq val :skip)
+                                       my/api-skipped-sentinel
+                                     val)))
+                    (my/keychain-set my/keychain-service write-val env-key)
+                    (my/bw-api-key-set env-key write-val)
+                    (if (eq val :skip) (cl-incf skipped) (cl-incf written))))))
+            ;; Step 3b: GH identity rows — accumulate, write as one
+            ;; update/create.
+            (let ((gh-fields '()) gh-user gh-token any-gh)
+              (dolist (kv changes)
+                (let ((key (car kv))
+                      (val (plist-get (cdr kv) :value)))
+                  (when (and (not (eq val :unchanged))
+                             (not (eq val :skip))
+                             (memq key '(gh-username gh-token gh-email
+                                         gh-fullname gh-repo)))
+                    (setq any-gh t)
+                    (pcase key
+                      ('gh-username (setq gh-user val))
+                      ('gh-token    (setq gh-token val))
+                      ('gh-email    (push (cons "Email"    val) gh-fields))
+                      ('gh-fullname (push (cons "Fullname" val) gh-fields))
+                      ('gh-repo     (push (cons "Repo"     val) gh-fields))))))
+              (when any-gh
+                (let ((item (my/bw-get-item my/bw-credentials-item)))
+                  (cond
+                   (item
+                    (my/bw-update-item my/bw-credentials-item
+                                       :username gh-user
+                                       :password gh-token
+                                       :fields   gh-fields))
+                   (t
+                    (my/bw-create-item my/bw-credentials-item
+                                       :username (or gh-user "")
+                                       :password (or gh-token "")
+                                       :fields   gh-fields)))
+                  (cl-incf written))))
+            (setq saved-anything (or (> written 0) (> skipped 0)))
+            (message "Setup form: saved %d / skipped %d row(s) to BW + Keychain."
+                     written skipped)))
+          ;; Bookkeeping on success (no error raised inside the
+          ;; condition-case body).
+          (setq my/-config-form-result
+                (if saved-anything 'saved 'unchanged))
           (when (> (recursion-depth) 0) (exit-recursive-edit))
-          (user-error "Setup form: BW unlock declined or failed — save aborted")))
-      (let ((written 0)
-            (skipped 0))
-        (dolist (kv changes)
-          (let* ((key (car kv))
-                 (val (plist-get (cdr kv) :value))
-                 (env-key (and (stringp (symbol-name key))
-                               (string-prefix-p "api/" (symbol-name key))
-                               (substring (symbol-name key) 4))))
-            (cond
-             ((eq val :unchanged) nil)
-             (env-key
-              ;; API-key row: dual-write Keychain + BW.
-              (let ((write-val (if (eq val :skip)
-                                   my/api-skipped-sentinel
-                                 val)))
-                (my/keychain-set my/keychain-service write-val env-key)
-                (my/bw-api-key-set env-key write-val)
-                (if (eq val :skip) (cl-incf skipped) (cl-incf written))))
-             ;; GH-identity rows handled in batch below.
-             (t nil))))
-        ;; GH identity rows write as one update.
-        (let ((gh-fields '()) gh-user gh-token any-gh)
-          (dolist (kv changes)
-            (let ((key (car kv))
-                  (val (plist-get (cdr kv) :value)))
-              (when (and (not (eq val :unchanged))
-                         (not (eq val :skip))
-                         (memq key '(gh-username gh-token gh-email gh-fullname gh-repo)))
-                (setq any-gh t)
-                (cond
-                 ((eq key 'gh-username) (setq gh-user val))
-                 ((eq key 'gh-token)    (setq gh-token val))
-                 (t                     (push (cons (pcase key
-                                                      ('gh-email    "Email")
-                                                      ('gh-fullname "Fullname")
-                                                      ('gh-repo     "Repo"))
-                                                    val)
-                                              gh-fields))))))
-          (when any-gh
-            (let ((item (my/bw-get-item my/bw-credentials-item)))
-              (cond
-               (item
-                (my/bw-update-item my/bw-credentials-item
-                                   :username gh-user
-                                   :password gh-token
-                                   :fields   gh-fields))
-               (t
-                (my/bw-create-item my/bw-credentials-item
-                                   :username (or gh-user "")
-                                   :password (or gh-token "")
-                                   :fields   gh-fields)))
-              (cl-incf written))))
-        (setq saved-anything (or (> written 0) (> skipped 0)))
-        (message "Setup form: saved %d / skipped %d row(s) to BW + Keychain."
-                 written skipped))))
-    ;; Step 4: bookkeeping. Signal success to the caller (so a wrapping
-    ;; `recursive-edit' returns), then close the form buffer.
-    (setq my/-config-form-result (if saved-anything 'saved 'unchanged))
-    (when (> (recursion-depth) 0) (exit-recursive-edit))
-    (kill-buffer (current-buffer))))
+          (when (buffer-live-p form-buf) (kill-buffer form-buf)))
+      ;; ERROR HANDLER: surface what went wrong, keep the form open.
+      (error
+       (let ((msg (error-message-string err)))
+         (display-warning 'emacs-setup
+                          (format "Setup form save failed: %s" msg)
+                          :warning)
+         (message "Setup form save failed: %s — form stays open; fix + retry Save."
+                  msg))))))
 
 (defun my/-config-form-cancel (&rest _ignore)
   "Cancel the setup form without saving.
@@ -3447,68 +3468,85 @@ fields are missing."
   (let* ((buf (get-buffer-create "*Emacs Setup*"))
          (item (and my/bw-session
                     (my/bw-get-item my/bw-credentials-item))))
-    (with-current-buffer buf
-      (kill-all-local-variables)
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (remove-overlays))
-      (setq my/-config-form-rows nil
-            my/-config-form-skip-checkboxes nil)
-      (widget-insert "Emacs Distro Setup\n")
-      (widget-insert "==================\n\n")
-      (widget-insert "Each row's typed value is written to BOTH macOS Keychain (runtime\n")
-      (widget-insert "cache) AND your Bitwarden 'emacs-credentials' item (cross-Mac source).\n")
-      (widget-insert "Leave blank to keep the current value. Tick [Skip] to permanently\n")
-      (widget-insert "opt out of an API key (__SKIPPED__ sentinel, never re-prompted).\n\n")
+    ;; Pop the buffer FIRST so widget-setup runs while it's the active
+    ;; window — `widget-setup' wires keybindings + redisplay that need
+    ;; an actual displayed window to take effect. The previous order
+    ;; (setup inside `with-current-buffer', pop after) led to silent
+    ;; cases where `widget-value' returned empty after the user typed.
+    (pop-to-buffer buf)
+    (kill-all-local-variables)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (remove-overlays))
+    (setq my/-config-form-rows nil
+          my/-config-form-skip-checkboxes nil)
+    (widget-insert "Emacs Distro Setup\n")
+    (widget-insert "==================\n\n")
+    (widget-insert "Each row's typed value is written to BOTH macOS Keychain (runtime\n")
+    (widget-insert "cache) AND your Bitwarden 'emacs-credentials' item (cross-Mac source).\n")
+    (widget-insert "Leave blank to keep the current value. Tick [Skip] under an API key\n")
+    (widget-insert "to permanently opt out of it (__SKIPPED__ sentinel, never re-prompted).\n\n")
 
-      (widget-insert "Bitwarden vault access\n----------------------\n")
-      (my/-config-form-insert-row
-       'bw-email "BW email"
-       (my/keychain-get my/keychain-service my/keychain-account-bw-email)
-       nil nil)
-      (my/-config-form-insert-row
-       'bw-master "BW master password"
-       (my/keychain-get my/keychain-service my/keychain-account-bw-master)
-       t nil)
+    (widget-insert "Bitwarden vault access\n----------------------\n")
+    (my/-config-form-insert-row
+     'bw-email "BW email"
+     (my/keychain-get my/keychain-service my/keychain-account-bw-email)
+     nil nil
+     "Your Bitwarden account email — used by `bw login' / `bw unlock'.")
+    (my/-config-form-insert-row
+     'bw-master "BW master password"
+     (my/keychain-get my/keychain-service my/keychain-account-bw-master)
+     t nil
+     "Master password used to unlock the vault. Cached in macOS Keychain.")
 
-      (widget-insert "\nGitHub identity (in BW.emacs-credentials)\n")
-      (widget-insert     "-----------------------------------------\n")
-      (my/-config-form-insert-row
-       'gh-username "Username"
-       (my/-config-form-current-gh-field item 'username) nil nil)
-      (my/-config-form-insert-row
-       'gh-token "PAT (repo scope)"
-       (my/-config-form-current-gh-field item 'password) t nil)
-      (my/-config-form-insert-row
-       'gh-email "Commit email"
-       (my/-config-form-current-gh-field item 'Email) nil nil)
-      (my/-config-form-insert-row
-       'gh-fullname "Commit name"
-       (my/-config-form-current-gh-field item 'Fullname) nil nil)
-      (my/-config-form-insert-row
-       'gh-repo "Data repo name"
-       (my/-config-form-current-gh-field item 'Repo) nil nil)
+    (widget-insert "\nGitHub identity (in BW.emacs-credentials)\n")
+    (widget-insert     "-----------------------------------------\n")
+    (my/-config-form-insert-row
+     'gh-username "GitHub username"
+     (my/-config-form-current-gh-field item 'username) nil nil
+     "Your GitHub login handle, e.g. 'deno1011'.")
+    (my/-config-form-insert-row
+     'gh-token "GitHub PAT"
+     (my/-config-form-current-gh-field item 'password) t nil
+     "Personal Access Token with `repo' scope. Generate at \
+https://github.com/settings/tokens — classic `ghp_…' or fine-grained \
+`github_pat_…' both work.")
+    (my/-config-form-insert-row
+     'gh-email "Git commit email"
+     (my/-config-form-current-gh-field item 'Email) nil nil
+     "Email used for `git config --global user.email'.")
+    (my/-config-form-insert-row
+     'gh-fullname "Git commit name"
+     (my/-config-form-current-gh-field item 'Fullname) nil nil
+     "Full name used for `git config --global user.name'.")
+    (my/-config-form-insert-row
+     'gh-repo "Data repo name"
+     (my/-config-form-current-gh-field item 'Repo) nil nil
+     "Bare name of your private GitHub data repo. e.g. 'emacs15' → \
+data folder becomes ~/emacs15/, GitHub remote becomes \
+github.com/<username>/emacs15.")
 
-      (widget-insert "\nAPI keys (in BW + Keychain)\n")
-      (widget-insert     "---------------------------\n")
-      (dolist (env-var my/api-key-fields)
-        (my/-config-form-insert-row
-         (intern (concat "api/" env-var))
-         env-var
-         (my/keychain-get my/keychain-service env-var)
-         t t))
+    (widget-insert "\nAPI keys (in BW + Keychain)\n")
+    (widget-insert     "---------------------------\n")
+    (dolist (env-var my/api-key-fields)
+      (my/-config-form-insert-row
+       (intern (concat "api/" env-var))
+       env-var
+       (my/keychain-get my/keychain-service env-var)
+       t t
+       nil))
 
-      (widget-insert "\n")
-      (widget-create 'push-button :notify #'my/-config-form-save  "Save")
-      (widget-insert "    ")
-      (widget-create 'push-button :notify #'my/-config-form-cancel "Cancel")
-      (widget-insert "\n\n")
-      (widget-insert "Tip: TAB moves between fields; RET on a button activates it.\n")
+    (widget-create 'push-button :notify #'my/-config-form-save  "Save")
+    (widget-insert "    ")
+    (widget-create 'push-button :notify #'my/-config-form-cancel "Cancel")
+    (widget-insert "\n\n")
+    (widget-insert "Tip: TAB moves between fields; RET on a button activates it.\n")
+    (widget-insert "    Status indicators ([set] / [not set] / [skipped]) reflect the\n")
+    (widget-insert "    value STORED at the moment the form opened, not what you type.\n")
 
-      (use-local-map widget-keymap)
-      (widget-setup)
-      (goto-char (point-min)))
-    (pop-to-buffer buf)))
+    (use-local-map widget-keymap)
+    (widget-setup)
+    (goto-char (point-min))))
 
 ;; SIDE EFFECT at module-load time: resolve `my/data-dir' NOW so every
 ;; module loading after this one (20-core, 50-org, 55-apple-reminders,
