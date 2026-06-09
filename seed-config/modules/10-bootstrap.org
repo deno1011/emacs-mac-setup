@@ -3196,13 +3196,17 @@ Install bw (brew install bitwarden-cli) and restart Emacs to switch."
                my/data-dir)
        :warning)))))
 
-;; SIDE EFFECT at module-load time: resolve `my/data-dir' NOW so that
-;; every module loading after this one (20-core, 50-org,
-;; 55-apple-reminders, 75-wiki, 80-gtd — all numbered above 10) sees
-;; the correctly-derived value and captures the right derived paths.
-;; The post-startup `my/bootstrap' on `emacs-startup-hook' still runs
-;; for the rest of the work (repo clone, gh auth, api keys, etc.).
-(my/bootstrap-resolve-data-dir-now)
+;; NOTE: the side-effect call `(my/bootstrap-resolve-data-dir-now)' was
+;; previously here. It's been moved to the END of Step 12 below — the
+;; resolver invokes `my/bootstrap-config-form' (defined in Step 12)
+;; on the first-launch path. Calling resolve here meant the form's
+;; defun hadn't been evaluated yet, the side-effect raised
+;; `void-function my/bootstrap-config-form', and the surrounding
+;; `condition-case' in `my/-load-module' caught it — aborting the
+;; rest of 10-bootstrap.el's evaluation and leaving the form
+;; permanently undefined for the remainder of the Emacs session.
+;; Moving the call to AFTER Step 12 means every function it might
+;; call is defined before it runs.
 
 ;; Discoverable global binding for the configuration form. `C-c C-y'
 ;; is "settings/Y/yaml-ish" by convention and not used by anything
@@ -3505,4 +3509,17 @@ fields are missing."
       (widget-setup)
       (goto-char (point-min)))
     (pop-to-buffer buf)))
+
+;; SIDE EFFECT at module-load time: resolve `my/data-dir' NOW so every
+;; module loading after this one (20-core, 50-org, 55-apple-reminders,
+;; 75-wiki, 80-gtd — all numbered above 10) sees the correctly-
+;; derived value and captures the right derived paths.
+;;
+;; MUST be the LAST top-level form in this file. On the first-launch
+;; path the resolver calls `my/bootstrap-config-form' (defined right
+;; above) — if this call ran before that defun, it would raise
+;; `void-function' and the surrounding `condition-case' in
+;; `my/-load-module' would catch the error, aborting the rest of this
+;; file's evaluation and leaving the form permanently unavailable.
+(my/bootstrap-resolve-data-dir-now)
 #+end_src
