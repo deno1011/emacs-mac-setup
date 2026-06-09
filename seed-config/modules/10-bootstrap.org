@@ -725,7 +725,17 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 #+begin_src emacs-lisp :tangle yes
 ;; Explanation: Fetch one Bitwarden item by name, recovering from duplicate names with an exact search.
 (defun my/bw-get-item (item-name)
-  "Return parsed alist for ITEM-NAME, or nil if missing / no session."
+  "Return parsed alist for ITEM-NAME, or nil if missing / no session.
+
+IMPORTANT — exact-name check on `direct': the bw CLI's `bw get item NAME'
+does SUBSTRING matching, not exact. If the vault contains
+`old_emacs-credentials' but not `emacs-credentials', then `bw get
+item emacs-credentials' will substring-match and return
+`old_emacs-credentials' silently. Without the `string=' guard below,
+this function would return the wrong item and downstream code would
+treat it as if the originally-named entry still existed. The check
+forces us into the duplicate-fallback path, which also exact-name
+filters and so correctly returns nil for the rename case."
   (when my/bw-session
     (let* ((out (with-output-to-string
                   (with-current-buffer standard-output
@@ -740,10 +750,14 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
                                             :object-type 'alist
                                             :null-object nil
                                             :false-object nil)
-                       (error nil)))))
-      (or direct
-          ;; Duplicate item names make `bw get item NAME' ambiguous. Fall back
-          ;; to exact-name search and choose the candidate with most fields.
+                       (error nil))))
+           (direct-name-matches
+            (and direct
+                 (string= (cdr (assoc 'name direct)) item-name))))
+      (or (and direct-name-matches direct)
+          ;; Either direct returned a substring match (reject) or duplicate
+          ;; item names made `bw get item NAME' ambiguous. Fall back to an
+          ;; exact-name list search.
           (let* ((list-out (with-output-to-string
                              (with-current-buffer standard-output
                                (call-process-shell-command
@@ -811,15 +825,29 @@ real issue, add a chained second-stage task here."
        :redact t
        :on-success
        (lambda (out)
-         (let ((parsed
-                (when (and out (string-prefix-p "{" (string-trim out)))
-                  (condition-case nil
-                      (json-parse-string out
-                                         :object-type 'alist
-                                         :null-object nil
-                                         :false-object nil)
-                    (error nil)))))
+         (let* ((parsed
+                 (when (and out (string-prefix-p "{" (string-trim out)))
+                   (condition-case nil
+                       (json-parse-string out
+                                          :object-type 'alist
+                                          :null-object nil
+                                          :false-object nil)
+                     (error nil))))
+                (parsed-name (and parsed (cdr (assoc 'name parsed)))))
            (cond
+            ;; Substring-match guard: `bw get item NAME' fuzzy-matches
+            ;; on substrings. If the user renames `emacs-credentials'
+            ;; to `old_emacs-credentials' server-side, bw still returns
+            ;; the renamed item (substring hit). Compare the parsed
+            ;; item's actual `name' field to the requested ITEM-NAME
+            ;; and reject any non-exact match — otherwise the bootstrap
+            ;; downstream silently uses the renamed-away record as if
+            ;; the original still existed.
+            ((and parsed (stringp parsed-name)
+                  (not (string= parsed-name item-name)))
+             (funcall cb nil
+                      (format "bw returned a substring match '%s' (asked for '%s'); item not present"
+                              parsed-name item-name)))
             (parsed (funcall cb parsed nil))
             ((or (null out) (string-empty-p (string-trim (or out ""))))
              (funcall cb nil "bw returned empty output"))
