@@ -1059,11 +1059,13 @@ load from the newly selected repo."
           (my/generate-starter-data my/data-dir identity)
           (my/git-crypt-step identity)))
       (my/bootstrap-write-data-dir-selection target)
-      (display-warning
-       'emacs-setup
-       (format "Selected repo '%s' now lives at %s. Restart Emacs to load that config."
-               repo target)
-       :warning)
+      ;; Plain message, not a warning — this is the expected first-launch
+      ;; (or repo-switch) handoff, not an error. The literate config still
+      ;; lives at ~/.emacs.d/config/ (distro-managed, independent of the
+      ;; data dir); only `my/data-dir' is changing, which is what `data-
+      ;; dir.el' pins on the next launch.
+      (message "Bootstrap: data folder set to %s (from BW.Repo='%s'). Restart Emacs to use it."
+               target repo)
       t)))
 
 ;; Explanation: Detect when the cached selected repo no longer matches this launch folder.
