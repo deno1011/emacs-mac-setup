@@ -32,6 +32,12 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 (defvar my/data-dir)
 ;; (`my/private-config-dir' is gone — config lives at `my/config-dir' = ~/.emacs.d/config/.)
 (defvar my/seed-config-dir)
+;; Forward-declare `my/git-crypt-keychain-service' so the byte-compiler
+;; can see it when it walks `my/keychain-bw-derived-entries' (which
+;; needs the value to build its delete list). The real defvar with the
+;; default value lives in Step 7.5 (line ~1998) where the rest of the
+;; git-crypt machinery is defined.
+(defvar my/git-crypt-keychain-service)
 
 (declare-function my/task-shell "05-tasks")
 #+end_src
