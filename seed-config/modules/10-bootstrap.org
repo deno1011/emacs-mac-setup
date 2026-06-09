@@ -2891,7 +2891,7 @@ required. Safe to invoke directly via M-x for retries."
               (my/repo-sync id)
               (my/bootstrap-ensure-seed-config-files))))
            (t
-            (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/github-identity-reset to re-prompt)."
+            (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/bootstrap-config-form to set)."
                      my/bw-credentials-item))))
         ;; 7. git-crypt unlock (no-op if repo doesn't use it).
         (my/git-crypt-step id)
@@ -2911,7 +2911,7 @@ required. Safe to invoke directly via M-x for retries."
         (unless (file-directory-p my/data-dir)
           (make-directory my/data-dir t))
         (my/generate-starter-data my/data-dir '())
-        (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
+        (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s. M-x my/bootstrap-config-form to set up BW + GH identity."
                  my/data-dir))))
 
     ;; 9. API keys
@@ -3193,6 +3193,12 @@ Install bw (brew install bitwarden-cli) and restart Emacs to switch."
 ;; The post-startup `my/bootstrap' on `emacs-startup-hook' still runs
 ;; for the rest of the work (repo clone, gh auth, api keys, etc.).
 (my/bootstrap-resolve-data-dir-now)
+
+;; Discoverable global binding for the configuration form. `C-c C-y'
+;; is "settings/Y/yaml-ish" by convention and not used by anything
+;; in this distro. Override by `(global-set-key (kbd "...") ...)' in
+;; your `secrets.el' if it clashes with something on your Mac.
+(global-set-key (kbd "C-c C-y") #'my/bootstrap-config-form)
 #+end_src
 
 * Step 12 — Interactive configuration form
