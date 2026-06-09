@@ -1061,10 +1061,23 @@ Otherwise prompts only for fields that are missing or invalid."
               :repo repo :git-crypt-key git-crypt-key))
        ;; First-launch or fully-blank state → single upfront opt-in.
        ;; Empty input on any required field = decline = persist sentinel.
+       ;;
+       ;; Branch the prompt wording on whether the BW item is genuinely
+       ;; absent versus present-but-incomplete. The "absent" path can
+       ;; happen because the user renamed/deleted the item out-of-band —
+       ;; making the prompt say "Create a NEW BW item …" instead of the
+       ;; generic "Set up GitHub sync?" prevents the user from
+       ;; reflexively answering yes thinking it's about reusing whatever
+       ;; was there. Yes here ALWAYS creates a fresh `emacs-credentials'
+       ;; via `my/bw-create-item' (line 992); any renamed-away item
+       ;; sitting under a different name is left untouched.
        ((and (or (not item)
                  (and need-token need-username need-repo))
              (not (y-or-n-p
-                   "Set up GitHub sync? (creates a private repo to sync your Emacs data across Macs) ")))
+                   (if item
+                       "Set up GitHub sync? (creates a private repo to sync your Emacs data across Macs) "
+                     (format "BW item '%s' not found — create a NEW one (you'll be prompted for token, email, repo)? "
+                             my/bw-credentials-item)))))
         (my/github--write-opt-out)
         (message "Bootstrap: GitHub sync skipped — won't ask again. M-x my/github-identity-reset to revive.")
         nil)
