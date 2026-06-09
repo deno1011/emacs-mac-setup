@@ -3150,6 +3150,16 @@ See the section banner for the full design rationale."
       (message "Bootstrap: opening setup form (data-dir.el not yet written)…")
       (setq my/-config-form-result nil)
       (my/bootstrap-config-form)
+      ;; CRITICAL during early init: the initial frame may exist but not
+      ;; be displayed yet (`window-setup-hook' hasn't fired since
+      ;; init.el is still running). Without forcing visibility +
+      ;; redisplay, `pop-to-buffer' above puts the form in a window the
+      ;; user can't see, and `recursive-edit' below blocks the event
+      ;; loop indefinitely — Emacs appears frozen on a blank screen.
+      (when (frame-live-p (selected-frame))
+        (make-frame-visible (selected-frame))
+        (raise-frame      (selected-frame)))
+      (redisplay t)
       (recursive-edit)  ; blocks until Save / Cancel
       (cond
        ((eq my/-config-form-result 'saved)
