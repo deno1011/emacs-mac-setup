@@ -2745,11 +2745,30 @@ required. Safe to invoke directly via M-x for retries."
           (my/generate-starter-data my/data-dir id)
           (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
        (t
-        (unless (file-directory-p my/data-dir)
-          (make-directory my/data-dir t))
-        (my/generate-starter-data my/data-dir '())
-        (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
-                 my/data-dir))))
+        ;; GitHub identity unavailable. Only create / populate my/data-dir
+        ;; if the user has EXPLICITLY confirmed the target via data-dir.el
+        ;; (written by a prior bootstrap from BW.Repo, or by install.sh
+        ;; from EMACS_DATA_DIR). Without that confirmation, `my/data-dir'
+        ;; is still init.el's `~/emacs/' fallback — creating it here would
+        ;; scatter starter content under a path that BW.Repo says should
+        ;; have been a different folder (e.g. `~/emacs12/'). The cost of
+        ;; not creating is a clear retry message; the cost of creating
+        ;; wrong is `~/emacs/' next to the real `~/emacs12/' forever.
+        (cond
+         ((file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+          (unless (file-directory-p my/data-dir)
+            (make-directory my/data-dir t))
+          (my/generate-starter-data my/data-dir '())
+          (message "Bootstrap: GitHub identity unavailable; starter content generated locally at %s."
+                   my/data-dir))
+         (t
+          (display-warning
+           'emacs-setup
+           (format "Bootstrap: GitHub identity unavailable and no data-dir.el yet — \
+refusing to auto-create the default %s. Unlock Bitwarden (M-x my/bw-unlock) \
+and re-run M-x my/bootstrap, or set EMACS_DATA_DIR before launching Emacs."
+                   my/data-dir)
+           :warning))))))
 
     ;; 9. API keys
     (my/api-keys-load))
