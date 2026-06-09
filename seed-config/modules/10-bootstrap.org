@@ -234,18 +234,24 @@ returns ~immediately after BW reads complete."
 (defun my/keychain-bw-derived-entries ()
   "Return list of (SERVICE . ACCOUNT) pairs that the BW->Keychain
 refresh writes to. Used by `my/keychain-refresh-from-bw-async' as
-the pre-clear set: every refresh wipes these entries first so that
-a BW-side rename/deletion produces an empty Keychain (predicate sees
-\"needs work\") instead of leaving stale values masquerading as fresh
-ones.
+the pre-clear set: every refresh wipes these entries first so the
+Keychain mirrors the canonical BW state. If BW reports the item as
+renamed/deleted, the kc-multi-set write never fires; Keychain stays
+empty; downstream predicate sees \"needs work\" and bootstrap prompts
+instead of silently coasting on a stale cache.
 
-Includes: github metadata accounts + every `my/api-key-fields' entry.
+Cleared:
+  - github metadata accounts + every `my/api-key-fields' entry (under
+    `my/keychain-service'), enumerated explicitly.
+  - the ENTIRE `my/git-crypt-keychain-service' (per-repo git-crypt
+    keys; account names are dynamic so we pass `t' = wildcard,
+    interpreted by `my/keychain-multi-delete-async' as a loop-delete
+    across all accounts under that service).
 
-Excludes: bw-email + bw-master (the BW unlock cache — clearing those
-would force the user to re-enter the master password every launch),
-and the entire git-crypt service (those keys are per-repo and a user
-may legitimately keep keys for repos not named in the current BW
-credentials item)."
+Preserved (deliberately):
+  - bw-email + bw-master, both under `my/keychain-service' with
+    specific accounts. Clearing those would force the user to retype
+    the BW master password on every launch (no other route to unlock)."
   (append
    (mapcar (lambda (acct) (cons my/keychain-service acct))
            (list my/keychain-account-github-username
@@ -255,21 +261,34 @@ credentials item)."
                  my/keychain-account-github-repo
                  my/keychain-account-github-skipped))
    (mapcar (lambda (env-var) (cons my/keychain-service env-var))
-           my/api-key-fields)))
+           my/api-key-fields)
+   ;; (SERVICE . t) = wildcard, delete every account under SERVICE.
+   ;; Sourced live from BW.emacs-credentials' GitCryptKey:<repo> fields
+   ;; on every refresh, so wiping is safe — current repos' keys come
+   ;; right back from the kc-multi-set step further down the chain.
+   (list (cons my/git-crypt-keychain-service t))))
 
 ;; Explanation: Async batched Keychain DELETES — N entries removed in ONE bash subprocess.
 (defun my/keychain-multi-delete-async (svc-acc-pairs &optional on-finish)
   "Remove multiple Keychain entries asynchronously in ONE subprocess.
-SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT) cons cells; ACCOUNT
-may be nil (defaults to `user-login-name'). ON-FINISH is invoked on
-the main thread with t (always — individual missing entries are NOT
-errors here, just no-ops in `security').
+SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT) cons cells. ACCOUNT
+encoding:
+  - string  → delete that one (SERVICE, ACCOUNT) entry
+  - nil     → delete the (SERVICE, `user-login-name') entry
+  - t       → wildcard: loop-delete EVERY entry whose service matches
+              SERVICE, regardless of account (used for per-repo stores
+              like `my/git-crypt-keychain-service' where account names
+              are dynamic and can't be enumerated up front).
+
+ON-FINISH is invoked on the main thread with t (always — individual
+missing entries are NOT errors here, just no-ops in `security').
 
 Returns the task name (symbol) so callers can wire `:depends-on'.
-Used by the BW->Keychain refresh to wipe stale GitHub + API values
-BEFORE the bw chain runs — if BW now reports the credentials item
-as missing, Keychain stays empty and the predicate downstream sees
-\"needs work\" instead of trusting a stale cache."
+Used by the BW->Keychain refresh to wipe ALL the entries the refresh
+owns BEFORE the bw chain runs. If BW now reports the credentials
+item as missing, the downstream kc-multi-set never fires; Keychain
+stays empty; the bootstrap predicate sees \"needs work\" instead of
+silently trusting a stale cache."
   (let ((cb (or on-finish #'ignore)))
     (cond
      ((null svc-acc-pairs)
@@ -278,7 +297,17 @@ as missing, Keychain stays empty and the predicate downstream sees
      ((not (fboundp 'my/task-shell))
       ;; Sync fallback for very early bootstrap.
       (dolist (sa svc-acc-pairs)
-        (my/keychain-delete (car sa) (cdr sa)))
+        (let ((service (car sa))
+              (account (cdr sa)))
+          (cond
+           ((eq account t)
+            ;; Wildcard: loop-delete every entry under this service.
+            (while (zerop (call-process-shell-command
+                           (format "security delete-generic-password -s %s >/dev/null 2>&1"
+                                   (shell-quote-argument service))
+                           nil nil))))
+           (t
+            (my/keychain-delete service account)))))
       (funcall cb t)
       nil)
      (t
@@ -291,10 +320,22 @@ as missing, Keychain stays empty and the predicate downstream sees
               (concat
                (mapconcat
                 (lambda (sa)
-                  (format "security delete-generic-password -a %s -s %s >/dev/null 2>&1 || true"
-                          (shell-quote-argument
-                           (or (cdr sa) (user-login-name)))
-                          (shell-quote-argument (car sa))))
+                  (let ((service (car sa))
+                        (account (cdr sa)))
+                    (cond
+                     ((eq account t)
+                      ;; Wildcard: drain all entries under SERVICE.
+                      ;; `security delete-generic-password -s SERVICE'
+                      ;; deletes one matching entry per call and exits 44
+                      ;; when nothing remains — loop until exit nonzero.
+                      (format
+                       "while security delete-generic-password -s %s >/dev/null 2>&1; do :; done"
+                       (shell-quote-argument service)))
+                     (t
+                      (format
+                       "security delete-generic-password -a %s -s %s >/dev/null 2>&1 || true"
+                       (shell-quote-argument (or account (user-login-name)))
+                       (shell-quote-argument service))))))
                 svc-acc-pairs
                 "\n")
                "\nexit 0\n")))
