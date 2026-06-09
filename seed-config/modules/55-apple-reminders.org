@@ -72,6 +72,17 @@ delete, …), so no manual =global-set-key= calls are needed.
     ;; heading as the Apple list name. TODOs outside a list section use the
     ;; configured/default Apple Reminders list.
 
-    ;; org-apple-reminders-setup installs the C-c r command map itself.
-    (org-apple-reminders-setup)))
+    ;; org-apple-reminders-setup installs the C-c r command map and runs
+    ;; an initial sync from Apple Reminders, writing to
+    ;; `org-apple-reminders-sync-file' (under my/data-dir). On a FIRST
+    ;; install, bootstrap hasn't finalized my/data-dir yet — the default
+    ;; is init.el's `~/emacs/' fallback, not the BW.Repo-derived path.
+    ;; Running setup now would create `~/emacs/data/org/reminders.org'
+    ;; (wrong root) and then trip `git-auto-commit-mode' with
+    ;; "Schwerwiegend: Kein Git-Repository" because `~/emacs/' isn't a
+    ;; git repo. Same gate as `my/gtd-ensure-tree' / `my/wiki-ensure-tree':
+    ;; defer until data-dir.el is in place, then the next launch picks
+    ;; up the correct path.
+    (when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+      (org-apple-reminders-setup))))
 #+end_src
