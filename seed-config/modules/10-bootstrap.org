@@ -230,6 +230,82 @@ returns ~immediately after BW reads complete."
        :on-failure (lambda (_) (funcall cb nil)))
       task-name))))
 
+;; Explanation: List the Keychain (service . account) pairs that the BW refresh OWNS.
+(defun my/keychain-bw-derived-entries ()
+  "Return list of (SERVICE . ACCOUNT) pairs that the BW->Keychain
+refresh writes to. Used by `my/keychain-refresh-from-bw-async' as
+the pre-clear set: every refresh wipes these entries first so that
+a BW-side rename/deletion produces an empty Keychain (predicate sees
+\"needs work\") instead of leaving stale values masquerading as fresh
+ones.
+
+Includes: github metadata accounts + every `my/api-key-fields' entry.
+
+Excludes: bw-email + bw-master (the BW unlock cache — clearing those
+would force the user to re-enter the master password every launch),
+and the entire git-crypt service (those keys are per-repo and a user
+may legitimately keep keys for repos not named in the current BW
+credentials item)."
+  (append
+   (mapcar (lambda (acct) (cons my/keychain-service acct))
+           (list my/keychain-account-github-username
+                 my/keychain-account-github-token
+                 my/keychain-account-github-email
+                 my/keychain-account-github-fullname
+                 my/keychain-account-github-repo
+                 my/keychain-account-github-skipped))
+   (mapcar (lambda (env-var) (cons my/keychain-service env-var))
+           my/api-key-fields)))
+
+;; Explanation: Async batched Keychain DELETES — N entries removed in ONE bash subprocess.
+(defun my/keychain-multi-delete-async (svc-acc-pairs &optional on-finish)
+  "Remove multiple Keychain entries asynchronously in ONE subprocess.
+SVC-ACC-PAIRS is a list of (SERVICE . ACCOUNT) cons cells; ACCOUNT
+may be nil (defaults to `user-login-name'). ON-FINISH is invoked on
+the main thread with t (always — individual missing entries are NOT
+errors here, just no-ops in `security').
+
+Returns the task name (symbol) so callers can wire `:depends-on'.
+Used by the BW->Keychain refresh to wipe stale GitHub + API values
+BEFORE the bw chain runs — if BW now reports the credentials item
+as missing, Keychain stays empty and the predicate downstream sees
+\"needs work\" instead of trusting a stale cache."
+  (let ((cb (or on-finish #'ignore)))
+    (cond
+     ((null svc-acc-pairs)
+      (run-at-time 0 nil cb t)
+      nil)
+     ((not (fboundp 'my/task-shell))
+      ;; Sync fallback for very early bootstrap.
+      (dolist (sa svc-acc-pairs)
+        (my/keychain-delete (car sa) (cdr sa)))
+      (funcall cb t)
+      nil)
+     (t
+      (let* ((task-name (intern (format "kc-multi-delete-%d"
+                                        (cl-incf my/-keychain-task-counter))))
+             ;; `|| true' so a missing entry (security exits 44) doesn't
+             ;; abort the whole batch. Final `exit 0' makes the bash
+             ;; subprocess succeed regardless of which entries existed.
+             (script
+              (concat
+               (mapconcat
+                (lambda (sa)
+                  (format "security delete-generic-password -a %s -s %s >/dev/null 2>&1 || true"
+                          (shell-quote-argument
+                           (or (cdr sa) (user-login-name)))
+                          (shell-quote-argument (car sa))))
+                svc-acc-pairs
+                "\n")
+               "\nexit 0\n")))
+        (my/task-shell
+         task-name
+         (list "bash" "-s")
+         :stdin script
+         :on-success (lambda (_) (funcall cb t))
+         :on-failure (lambda (_) (funcall cb t)))
+        task-name)))))
+
 ;; Explanation: Async batched Keychain READS — N values fetched in ONE bash subprocess (base64-safe).
 (defun my/keychain-multi-get-async (svc-acc-pairs callback)
   "Read multiple Keychain VALUES asynchronously in ONE subprocess.
@@ -2469,16 +2545,30 @@ sum of in-memory JSON parsing + entry collection (~5-10 ms total).
 All shell-outs happen in background subprocesses.
 
 Falls back gracefully: when `my/task-shell' isn't loaded (very early
-bootstrap), the helpers default to the sync path."
+bootstrap), the helpers default to the sync path.
+
+Pre-step (NEW): every refresh starts with `my/keychain-multi-delete-async'
+clearing the github + API entries. Reason: if the BW credentials item
+has been renamed / deleted / wiped server-side, the bw chain below
+fails to read it, the kc-multi-set write never fires, and WITHOUT the
+pre-clear the bootstrap predicate downstream would still see all the
+old Keychain values and conclude `nothing to do' — silently using
+stale credentials. Clearing first means BW failure = empty Keychain =
+predicate sees `needs work' = bootstrap prompts the user. Git-crypt
+entries are NOT cleared (other repos may legitimately rely on cached
+keys not present in the current BW item)."
   (let ((cb (or on-finish #'ignore)))
-    (my/bw-unlock-async
-     (lambda (session)
-       (cond
-        ((not session)
-         (funcall cb nil "Bitwarden unavailable; cannot refresh macOS Keychain"))
-        (t
-         (my/bw-get-item-async
-          my/bw-credentials-item
+    (my/keychain-multi-delete-async
+     (my/keychain-bw-derived-entries)
+     (lambda (_)
+       (my/bw-unlock-async
+        (lambda (session)
+          (cond
+           ((not session)
+            (funcall cb nil "Bitwarden unavailable; cannot refresh macOS Keychain"))
+           (t
+            (my/bw-get-item-async
+             my/bw-credentials-item
           (lambda (item err)
             (cond
              ((not item)
@@ -2543,7 +2633,7 @@ bootstrap), the helpers default to the sync path."
                                  :api api-count
                                  :gitcrypt gitcrypt-count
                                  :flush-task flush-task)
-                           nil))))))))))))
+                           nil))))))))))))))
   nil)
 
 ;; Explanation: User command — refresh all Keychain caches from BW.
