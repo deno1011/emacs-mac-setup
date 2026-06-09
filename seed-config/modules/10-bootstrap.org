@@ -3146,3 +3146,104 @@ for progress; see *task: repo-pull* for full output."
        (lambda (err)
          (display-warning 'repo-sync (format "git pull failed — %s" err))))))))
 #+end_src
+
+* Step 11 — Synchronous data-dir resolution at module-load time
+
+The root cause of every "first install needs a restart" symptom we
+chased over the previous fixes is one of /sequence/: `my/data-dir' was
+set by `init.el' to the `~/emacs/' default, then modules (20-core,
+50-org, 55-apple-reminders, 75-wiki, 80-gtd) tangled and BAKED that
+default into their derived constants (`org-agenda-files',
+`org-apple-reminders-sync-file', `my/wiki-base-dir', ...). Only AFTER
+all modules had captured the wrong path did the post-startup
+`emacs-startup-hook' bootstrap run and decide the right `my/data-dir'
+— too late for this session. The "Restart Emacs" message was the
+band-aid; the bug was that the decision had to happen FIRST.
+
+The function below moves that decision to module-load time. It runs
+at the END of =10-bootstrap.org=, AFTER every helper it needs is
+defined and BEFORE any consumer module loads (=20-= and up sort
+after =10-=). Modules then capture the correctly-resolved path on
+their very first load, no restart required.
+
+Branches:
+- =data-dir.el= present → load it (the cached choice from BW.Repo
+  or =EMACS_DATA_DIR=); fast steady-state path.
+- =data-dir.el= missing AND bw CLI installed → synchronous BW unlock
+  + `my/github-load-identity' (which handles all the prompt flows we
+  already shipped: "BW item not found — create a NEW one", master
+  password, etc.); set `my/data-dir' and write data-dir.el.
+- =data-dir.el= missing AND bw unavailable → warning, leave
+  `my/data-dir' at the init.el default. No data-dir.el written, so
+  the user can install bw + restart to retry.
+
+Note on prompts: yes, this means BW master / first-launch identity
+prompts now fire during module load instead of during the
+`emacs-startup-hook'. The minibuffer is fully functional at this
+point — Emacs has loaded enough of itself for `read-passwd' and
+`y-or-n-p' to work — and the alternative is the multi-restart dance
+we just spent two days unwinding.
+
+#+begin_src emacs-lisp :tangle yes
+;; Explanation: Sync resolve `my/data-dir' so modules loading after this capture the right path.
+(defun my/bootstrap-resolve-data-dir-now ()
+  "Resolve `my/data-dir' synchronously at module-load time.
+
+Sets `my/data-dir' to the BW.Repo-derived value and writes
+`~/.emacs.d/data-dir.el' so subsequent launches fast-path. Idempotent:
+calling again after success is a no-op via the data-dir.el branch.
+
+See the section banner for the full design rationale."
+  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
+    (cond
+     ;; Fast path: data-dir.el already on disk (written by a previous
+     ;; install.sh from $EMACS_DATA_DIR, by a previous run of this
+     ;; function, or by `my/bootstrap-ensure-selected-repo-dir' on a
+     ;; repo-switch launch). `init.el' already loaded it earlier in
+     ;; this Emacs run, so `my/data-dir' is already correct — nothing
+     ;; to do.
+     ((file-exists-p data-dir-el)
+      (message "Bootstrap: data folder = %s (cached in %s)."
+               my/data-dir data-dir-el))
+     ;; data-dir.el missing AND bw CLI present → ask BW.
+     ((my/bw-installed-p)
+      (message "Bootstrap: resolving data folder from Bitwarden…")
+      (cond
+       ((my/bw-unlock)
+        (let* ((id (my/github-load-identity))
+               (repo (and id (plist-get id :repo)))
+               (target (and (not (my/-blank-p repo))
+                            (my/bootstrap-data-dir-for-repo repo))))
+          (cond
+           (target
+            (setq my/data-dir target)
+            (my/bootstrap-write-data-dir-selection target)
+            (message "Bootstrap: data folder set to %s (from BW.Repo='%s')."
+                     target repo))
+           (t
+            ;; User declined or left repo blank. Per the agreed
+            ;; behaviour we fall back to init.el's default; we do NOT
+            ;; write data-dir.el so a later launch (with BW.Repo
+            ;; filled in) re-runs this resolve.
+            (message "Bootstrap: data folder = %s (BW.Repo blank or declined; install.sh fallback)."
+                     my/data-dir)))))
+       (t
+        (message "Bootstrap: data folder = %s (BW skipped or unreachable; install.sh fallback)."
+                 my/data-dir))))
+     ;; bw not installed at all → can't resolve from BW this launch.
+     (t
+      (display-warning
+       'emacs-setup
+       (format "Bootstrap: bw CLI not installed; data folder stays at %s. \
+Install bw (brew install bitwarden-cli) and restart Emacs to switch."
+               my/data-dir)
+       :warning)))))
+
+;; SIDE EFFECT at module-load time: resolve `my/data-dir' NOW so that
+;; every module loading after this one (20-core, 50-org,
+;; 55-apple-reminders, 75-wiki, 80-gtd — all numbered above 10) sees
+;; the correctly-derived value and captures the right derived paths.
+;; The post-startup `my/bootstrap' on `emacs-startup-hook' still runs
+;; for the rest of the work (repo clone, gh auth, api keys, etc.).
+(my/bootstrap-resolve-data-dir-now)
+#+end_src
