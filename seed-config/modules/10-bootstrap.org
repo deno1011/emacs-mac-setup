@@ -346,7 +346,7 @@ Master is wiped from memory in the caller."
       (let ((login-out (with-output-to-string
                          (with-current-buffer standard-output
                            (call-process-shell-command
-                            (format "bw login %s --passwordenv BW_PW --raw 2>&1"
+                            (format "bw --nointeraction login %s --passwordenv BW_PW --raw 2>&1"
                                     (shell-quote-argument email))
                             nil t)))))
         (let ((tok (string-trim login-out)))
@@ -357,7 +357,7 @@ Master is wiped from memory in the caller."
                   (with-output-to-string
                     (with-current-buffer standard-output
                       (call-process-shell-command
-                       "bw unlock --passwordenv BW_PW --raw 2>/dev/null"
+                       "bw --nointeraction unlock --passwordenv BW_PW --raw 2>/dev/null"
                        nil t))))))
         (if (and tok (> (length tok) 30)) tok nil))))))
 
@@ -413,7 +413,7 @@ Returns the session token or nil if the user declined / unlock failed."
               (my/keychain-set my/keychain-service master my/keychain-account-bw-master)))
           (clear-string master)
           (call-process-shell-command
-           (format "bw sync --session %s >/dev/null 2>&1" (shell-quote-argument session))
+           (format "bw --nointeraction sync --session %s >/dev/null 2>&1" (shell-quote-argument session))
            nil nil)
           (message "Bitwarden unlocked.")
           session)
@@ -434,7 +434,7 @@ Returns the session token or nil if the user declined / unlock failed."
   (interactive)
   (when my/bw-session
     (call-process-shell-command
-     (format "bw lock --session %s >/dev/null 2>&1"
+     (format "bw --nointeraction lock --session %s >/dev/null 2>&1"
              (shell-quote-argument my/bw-session))
      nil nil)
     (setq my/bw-session nil)
@@ -459,8 +459,9 @@ of the vault is dispatched to the background."
                          (cl-incf my/-keychain-task-counter)))
          ;; `bw' reads BW_SESSION from the env when --session is absent
          ;; — passing it via :env keeps the token OUT of argv (which
-         ;; `ps -ef' otherwise exposes).
-         (list "bw" "lock")
+         ;; `ps -ef' otherwise exposes). `--nointeraction' makes bw
+         ;; exit instead of prompting if the session is stale.
+         (list "bw" "--nointeraction" "lock")
          :env `(("BW_SESSION" . ,session))
          :redact t)
         ;; Active hygiene: zero our local copy of the session token
@@ -511,7 +512,10 @@ Behaviour:
                               (cl-incf my/-keychain-task-counter)))
               ;; `--passwordenv BW_PW' makes bw read the master from the
               ;; env (NOT argv), so `ps -ef' sees only the flag name.
-              (list "bw" "unlock" "--passwordenv" "BW_PW" "--raw")
+              ;; `--nointeraction' makes bw exit non-zero instead of
+              ;; falling back to a stdin prompt when BW_PW is wrong /
+              ;; stale (closed pipe → infinite hang otherwise).
+              (list "bw" "--nointeraction" "unlock" "--passwordenv" "BW_PW" "--raw")
               :env `(("BW_PW" . ,master))
               ;; Stdout IS the BW session token. Pattern masking wipes
               ;; it from the buffer + result slot after on-success
@@ -532,7 +536,7 @@ Behaviour:
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
-                     (list "bw" "sync")
+                     (list "bw" "--nointeraction" "sync")
                      :env `(("BW_SESSION" . ,session))
                      :redact t)
                     (funcall cb session))
@@ -579,7 +583,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
     (let* ((out (with-output-to-string
                   (with-current-buffer standard-output
                     (call-process-shell-command
-                     (format "bw get item %s --session %s 2>/dev/null"
+                     (format "bw --nointeraction get item %s --session %s 2>/dev/null"
                              (shell-quote-argument item-name)
                              (shell-quote-argument my/bw-session))
                      nil t))))
@@ -596,7 +600,7 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
           (let* ((list-out (with-output-to-string
                              (with-current-buffer standard-output
                                (call-process-shell-command
-                                (format "bw list items --search %s --session %s 2>/dev/null"
+                                (format "bw --nointeraction list items --search %s --session %s 2>/dev/null"
                                         (shell-quote-argument item-name)
                                         (shell-quote-argument my/bw-session))
                                 nil t))))
@@ -712,7 +716,7 @@ real issue, add a chained second-stage task here."
 (defun my/bw--call (&rest args)
   "Run `bw' with ARGS, returning trimmed stdout or raising an error."
   (with-temp-buffer
-    (let ((status (apply #'call-process "bw" nil t nil args))
+    (let ((status (apply #'call-process "bw" nil t nil "--nointeraction" args))
           (cmd (mapconcat #'identity (cl-subseq args 0 (min 2 (length args))) " ")))
       (unless (zerop status)
         (error "BW command failed: bw %s (details redacted)\n%s"
