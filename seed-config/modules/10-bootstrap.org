@@ -994,14 +994,9 @@ cached token."
                       nil t))))))
       (not (string= code "401")))))
 
-;; Explanation: Collect the GitHub identity bundle needed for private repo setup.
-(defun my/github-prompt-identity ()
-  "Prompt for GitHub handle / token / email / fullname / repo. Returns plist."
-  (list :username (read-string "GitHub login (handle): ")
-        :password (read-passwd "GitHub personal access token (repo scope): ")
-        :fields `(("Email"    . ,(read-string "Git commit email: "))
-                  ("Fullname" . ,(read-string "Git commit name: "))
-                  ("Repo"     . ,(read-string "Private data repo name (e.g. emacs-data): ")))))
+;; (`my/github-prompt-identity', the legacy 5-prompt collector, was
+;; removed when `my/bootstrap-config-form' (Step 12) became the single
+;; point of input.)
 
 ;; Explanation: Check whether the GitHub identity flow has been explicitly skipped.
 (defun my/github--opted-out-p (item)
@@ -1050,16 +1045,22 @@ Run as `M-x my/github-identity-reset'; then restart Emacs or
                                  ("GitHubSkipped" . "")))
     (message "Reset GitHub identity in BW '%s'. Run M-x my/bootstrap (or restart Emacs) to re-prompt."
              my/bw-credentials-item))))
-;; Explanation: Load or complete the GitHub identity bundle stored in Bitwarden.
+;; Explanation: Read the GitHub identity bundle stored in Bitwarden.
 (cl-defun my/github-load-identity ()
   "Read GitHub bundle from `my/bw-credentials-item'.
 Returns plist (:username :token :email :fullname :repo :git-crypt-key)
-when a usable identity is available, nil otherwise. Three skip paths:
-  - BW locked → nil.
-  - Item carries GitHubSkipped sentinel → nil (no prompts).
-  - Item missing AND user declines the upfront opt-in → writes sentinel,
-    returns nil (no re-prompt on subsequent launches).
-Otherwise prompts only for fields that are missing or invalid."
+when the BW item is present AND every required field is non-blank;
+returns nil otherwise. NO prompts — empty / missing values are
+signalled by returning nil so the caller can route to
+`my/bootstrap-config-form' (the single point of input in this distro).
+
+Skip paths returning nil:
+  - BW locked.
+  - Item carries the GitHubSkipped sentinel (`M-x my/github-identity-reset'
+    to revive).
+  - Item missing.
+  - Item present but token / username / repo blank (form should be
+    opened to fill them in)."
   (unless my/bw-session
     (cl-return-from my/github-load-identity nil))
   (let ((item (my/bw-get-item my/bw-credentials-item)))
@@ -1082,87 +1083,24 @@ Otherwise prompts only for fields that are missing or invalid."
            (need-token (or (my/-blank-p token)
                            (not (my/github-token-valid-p token))))
            (need-username (my/-blank-p username))
-           (need-email    (my/-blank-p email))
-           (need-fullname (my/-blank-p fullname))
            (need-repo     (my/-blank-p repo))
-           (any-missing (or need-token need-username need-email need-fullname need-repo)))
+           (any-required-missing (or need-token need-username need-repo)))
       (cond
-       ;; Item present and complete — nothing to ask.
-       ((and item (not any-missing))
+       ;; Required fields present → return identity. (Email and Fullname
+       ;; are not required — git commit author falls back to environment
+       ;; if they're blank.)
+       ((and item (not any-required-missing))
         (message "Bootstrap: BW '%s' complete (username=%s, repo=%s)."
                  my/bw-credentials-item username repo)
         (list :username username :token token :email email :fullname fullname
               :repo repo :git-crypt-key git-crypt-key))
-       ;; First-launch or fully-blank state → single upfront opt-in.
-       ;; Empty input on any required field = decline = persist sentinel.
-       ;;
-       ;; Branch the prompt wording on whether the BW item is genuinely
-       ;; absent versus present-but-incomplete. The "absent" path can
-       ;; happen because the user renamed/deleted the item out-of-band —
-       ;; making the prompt say "Create a NEW BW item …" instead of the
-       ;; generic "Set up GitHub sync?" prevents the user from
-       ;; reflexively answering yes thinking it's about reusing whatever
-       ;; was there. Yes here ALWAYS creates a fresh `emacs-credentials'
-       ;; via `my/bw-create-item' (line 992); any renamed-away item
-       ;; sitting under a different name is left untouched.
-       ((and (or (not item)
-                 (and need-token need-username need-repo))
-             (not (y-or-n-p
-                   (if item
-                       "Set up GitHub sync? (creates a private repo to sync your Emacs data across Macs) "
-                     (format "BW item '%s' not found — create a NEW one (you'll be prompted for token, email, repo)? "
-                             my/bw-credentials-item)))))
-        (my/github--write-opt-out)
-        (message "Bootstrap: GitHub sync skipped — won't ask again. M-x my/github-identity-reset to revive.")
-        nil)
-       ;; Either item missing (and user said yes), or item present with gaps.
        (t
-        (when need-token
-          (display-warning 'emacs-setup
-                           (if item
-                               "GitHub token in BW missing or invalid — re-prompting."
-                             (format "Creating BW item '%s'." my/bw-credentials-item))
-                           :warning))
-        (let* ((new-username (if need-username (read-string "GitHub login (handle): ")    username))
-               (new-token    (if need-token    (read-passwd "GitHub personal access token (repo scope): ") token))
-               (new-email    (if need-email    (read-string "Git commit email: ")         email))
-               (new-fullname (if need-fullname (read-string "Git commit name: ")          fullname))
-               (new-repo     (if need-repo     (read-string "Private data repo name (e.g. emacs-data): ") repo))
-               (fields       `(("Email"    . ,new-email)
-                               ("Fullname" . ,new-fullname)
-                               ("Repo"     . ,new-repo))))
-          ;; Empty input on a required field after the upfront yes = opt out.
-          (cond
-           ((or (my/-blank-p new-token)
-                (my/-blank-p new-username)
-                (my/-blank-p new-repo))
-            (my/github--write-opt-out)
-            (message "Bootstrap: GitHub sync skipped (empty required field) — won't ask again. M-x my/github-identity-reset to revive.")
-            nil)
-           (t
-            (if item
-                (progn
-                  (my/bw-update-item my/bw-credentials-item
-                                     :username new-username
-                                     :password new-token
-                                     :fields   fields)
-                  (message "Bootstrap: BW '%s' updated (filled %s)."
-                           my/bw-credentials-item
-                           (mapconcat #'symbol-name
-                                      (delq nil (list (and need-token    :token)
-                                                      (and need-username :username)
-                                                      (and need-email    :email)
-                                                      (and need-fullname :fullname)
-                                                      (and need-repo     :repo)))
-                                      ", ")))
-              (my/bw-create-item my/bw-credentials-item
-                                 :username new-username
-                                 :password new-token
-                                 :fields   fields)
-              (message "Bootstrap: BW '%s' created." my/bw-credentials-item))
-            (list :username new-username :token new-token
-                  :email new-email :fullname new-fullname :repo new-repo
-                  :git-crypt-key git-crypt-key)))))))))
+        ;; Missing or incomplete — the caller should open
+        ;; `my/bootstrap-config-form' to collect values. We do NOT
+        ;; prompt inline; that was the old multi-prompt flow.
+        (message "Bootstrap: BW '%s' missing or incomplete — run M-x my/bootstrap-config-form to set it up."
+                 my/bw-credentials-item)
+        nil)))))
 
 ;; Explanation: Read a global git config key without treating absence as an error.
 (defun my/-git-global-config-get (key)
@@ -2808,58 +2746,48 @@ Next `my/api-keys-load' will re-prompt and dual-write a fresh value."
 
 ;; Explanation: Bootstrap step — populate Keychain if empty; prompt for any missing keys.
 (defun my/api-keys-load ()
-  "Ensure the Keychain runtime cache is populated.
+  "Ensure the Keychain runtime cache reflects what BW has, and report.
 
 On first launch (no Keychain entries exist for any `my/api-key-fields'
 entry), pull from Bitwarden with one unlock cycle. On subsequent
-launches, this is a no-op — the cache is already populated and
-`my/api-key-fetch' reads it directly.
+launches, this is a no-op for the cache — `my/api-key-fetch' reads
+the Keychain directly.
 
-For any field still missing after the pull (BW field was blank, or BW
-was unavailable), prompt the user; dual-write the entered value or the
-`__SKIPPED__' sentinel to BOTH stores. Empty input = opt out, never
-re-prompts.
+NO prompts. Missing fields after the pull are reported in the
+summary message; the user fills them in via
+`M-x my/bootstrap-config-form' (which dual-writes BW + Keychain in
+one pass). This replaces the legacy per-field `read-passwd' loop.
 
 Consumers (gptel etc.) never call this function. They read from the
 cache via `my/api-key-fetch'."
-  (let* ((missing (cl-remove-if
-                   (lambda (env-var)
-                     (my/keychain-get my/keychain-service env-var))
-                   my/api-key-fields))
-         (first-launch (= (length missing) (length my/api-key-fields))))
-    (when first-launch
+  (let ((missing (cl-remove-if
+                  (lambda (env-var)
+                    (my/keychain-get my/keychain-service env-var))
+                  my/api-key-fields)))
+    (when (= (length missing) (length my/api-key-fields))
       ;; All fields missing in Keychain — one-shot pull from BW.
       (my/api-keys-pull-to-keychain)
       (setq missing (cl-remove-if
                      (lambda (env-var)
                        (my/keychain-get my/keychain-service env-var))
                      my/api-key-fields)))
-    ;; Prompt for any keys still missing. Empty input persists sentinel.
-    (dolist (env-var missing)
+    ;; Summary — counts + names, no values; points at the form for edits.
+    (let* ((stored    (cl-count-if
+                       (lambda (e) (my/api-key-fetch e))
+                       my/api-key-fields))
+           (opted-out (cl-count-if
+                       (lambda (e)
+                         (let ((v (my/keychain-get my/keychain-service e)))
+                           (and v (string= v my/api-skipped-sentinel))))
+                       my/api-key-fields))
+           (missing-names (mapconcat #'identity missing ", ")))
       (cond
-       (noninteractive
-        (message "Bootstrap: skipped (noninteractive): %s" env-var))
+       (missing
+        (message "Bootstrap: API keys — %d active, %d opted-out, %d missing (%s). M-x my/bootstrap-config-form to set."
+                 stored opted-out (length missing) missing-names))
        (t
-        (let* ((new (read-passwd
-                     (format "%s (empty = skip permanently, won't ask again): "
-                             env-var)))
-               (value (if (my/-blank-p new) my/api-skipped-sentinel new)))
-          (my/keychain-set my/keychain-service value env-var)
-          (when (my/bw-unlock)
-            (unwind-protect
-                (my/bw-api-key-set env-var value)
-              (my/bw-lock)))))))
-    ;; Summary — counts, no values.
-    (let ((stored    (cl-count-if
-                      (lambda (e) (my/api-key-fetch e))
-                      my/api-key-fields))
-          (opted-out (cl-count-if
-                      (lambda (e)
-                        (let ((v (my/keychain-get my/keychain-service e)))
-                          (and v (string= v my/api-skipped-sentinel))))
-                      my/api-key-fields)))
-      (message "Bootstrap: API keys ready (%d active, %d opted-out) in Keychain '%s'"
-               stored opted-out my/keychain-service))))
+        (message "Bootstrap: API keys — %d active, %d opted-out (all configured) in Keychain '%s'."
+                 stored opted-out my/keychain-service))))))
 #+end_src
 
 * Step 9 — Orchestration
