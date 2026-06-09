@@ -639,7 +639,11 @@ real issue, add a chained second-stage task here."
                        (cl-incf my/-keychain-task-counter)))
        ;; Session token goes via BW_SESSION env, NOT --session argv,
        ;; so `ps -ef' on this Mac sees only `bw get item NAME'.
-       (list "bw" "get" "item" item-name)
+       ;; `--nointeraction' makes bw EXIT instead of prompting on stdin
+       ;; when the session is invalid/expired — without it the subprocess
+       ;; would silently wait for a master-password prompt forever
+       ;; (stdin is a closed pipe, so the prompt never returns).
+       (list "bw" "--nointeraction" "get" "item" item-name)
        :env `(("BW_SESSION" . ,my/bw-session))
        ;; Stdout is the full BW item JSON: PAT, every API key, every
        ;; GitCryptKey field. Pattern masking replaces values; the
