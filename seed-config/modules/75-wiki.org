@@ -77,12 +77,11 @@ Doesn't touch files. Safe to call interactively."
         (make-directory d t)
         (message "wiki: created %s" d)))))
 
-;; Only auto-create at module-load time if bootstrap has already
-;; finalized the data-dir (see same guard in 50-org.org). On a fresh
-;; install `my/wiki-base-dir' is built from the default `~/emacs/'
-;; root, not the BW.Repo-derived path bootstrap writes later.
-(when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
-  (my/wiki-ensure-tree))
+;; Data-dir.el gate removed: 43c624b's `my/bootstrap-resolve-data-dir-now'
+;; runs at the end of 10-bootstrap.org tangle, so `my/wiki-base-dir' is
+;; built from the BW.Repo-derived `my/data-dir' (not the init.el default)
+;; by the time THIS file (75-) loads.
+(my/wiki-ensure-tree)
 #+end_src
 
 * Wiki Maintainer Directive
