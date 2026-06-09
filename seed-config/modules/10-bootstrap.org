@@ -3382,6 +3382,8 @@ retry without re-typing everything; on success it is killed and
            (t
             ;; Step 1: cache form-entered BW email + master to Keychain
             ;; BEFORE unlock, so `my/bw-unlock' takes the cached path.
+            (message "Setup form: caching BW credentials to Keychain…")
+            (redisplay t)
             (let* ((bw-email-row  (alist-get 'bw-email  changes))
                    (bw-master-row (alist-get 'bw-master changes))
                    (new-email
@@ -3401,6 +3403,8 @@ retry without re-typing everything; on success it is killed and
             ;; Step 2: ensure BW is unlocked. Uses Keychain creds we
             ;; just wrote in step 1.
             (unless my/bw-session
+              (message "Setup form: unlocking Bitwarden vault (this may take 1–2 seconds)…")
+              (redisplay t)
               (unless (my/bw-unlock)
                 (error "BW unlock declined or failed (master password? bw CLI installed?)")))
             ;; Step 3a: API key rows — dual-write each.
@@ -3411,6 +3415,8 @@ retry without re-typing everything; on success it is killed and
                      (env-key (and (string-prefix-p "api/" kn)
                                    (substring kn 4))))
                 (when (and env-key (not (eq val :unchanged)))
+                  (message "Setup form: writing %s to BW + Keychain…" env-key)
+                  (redisplay t)
                   (let ((write-val (if (eq val :skip)
                                        my/api-skipped-sentinel
                                      val)))
@@ -3435,6 +3441,8 @@ retry without re-typing everything; on success it is killed and
                       ('gh-fullname (push (cons "Fullname" val) gh-fields))
                       ('gh-repo     (push (cons "Repo"     val) gh-fields))))))
               (when any-gh
+                (message "Setup form: writing GitHub identity bundle to BW…")
+                (redisplay t)
                 (let ((item (my/bw-get-item my/bw-credentials-item)))
                   (cond
                    (item
@@ -3448,9 +3456,9 @@ retry without re-typing everything; on success it is killed and
                                        :password (or gh-token "")
                                        :fields   gh-fields)))
                   (cl-incf written))))
-            (setq saved-anything (or (> written 0) (> skipped 0)))
             (message "Setup form: saved %d / skipped %d row(s) to BW + Keychain."
-                     written skipped)))
+                     written skipped)
+            (setq saved-anything (or (> written 0) (> skipped 0)))))
           ;; Bookkeeping on success (no error raised inside the
           ;; condition-case body).
           (setq my/-config-form-result
