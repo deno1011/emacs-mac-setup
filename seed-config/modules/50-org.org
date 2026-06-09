@@ -686,12 +686,15 @@ just makes sure the directory tree exists.
           (make-directory d t)
           (message "gtd: created %s" d))))))
 
-;; The data-dir.el gate that used to wrap this call (052dd15) is gone:
-;; 43c624b's `my/bootstrap-resolve-data-dir-now' runs at the end of
-;; 10-bootstrap.org tangle, so `my/data-dir' is the BW.Repo-derived
-;; path by the time THIS file (50-) loads. Creating dirs now lands
-;; them under the correct root.
-(my/gtd-ensure-tree)
+;; Data-dir.el gate (RESTORED): on a first-launch the form (which
+;; runs from `my/bootstrap' on `emacs-startup-hook') hasn't been
+;; submitted yet, so `my/data-dir' is init.el's `~/emacs/' default.
+;; Skip the ensure-tree call until data-dir.el exists — otherwise
+;; we'd create a stray `~/emacs/data/org/' tree the user never
+;; chose. After form Save + restart, data-dir.el is on disk,
+;; `my/data-dir' points at the right folder, and the gate passes.
+(when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+  (my/gtd-ensure-tree))
 #+end_src
 
 * Clocking

@@ -3040,12 +3040,66 @@ Keychain and conclude that work is needed when it isn't."
 (defun my/bootstrap ()
   "Run bootstrap if any precondition is missing; no-op otherwise.
 Safe to call interactively (`M-x my/bootstrap') to re-trigger after
-changing state (e.g. after `M-x my/github-identity-reset')."
+changing state (e.g. after `M-x my/github-identity-reset').
+
+First-launch gate: if `~/.emacs.d/data-dir.el' is missing, this
+function REFUSES to proceed past the form. It opens
+`my/bootstrap-config-form' synchronously, blocks on `recursive-edit',
+and on Save writes data-dir.el + tells the user to restart. Cancel
+or any other exit also bails out (the form re-opens on the next
+restart since data-dir.el still doesn't exist). NO other bootstrap
+work (keychain refresh, repo clone, gh auth, api-keys-load) runs
+until the user has chosen a data folder."
   (interactive)
-  (my/bootstrap-start-distro-config-update-task)
-  (my/bootstrap-start-daemon-service-task)
-  (my/bootstrap-start-keychain-refresh-task
-   #'my/bootstrap-start-full-sync-task))
+  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
+    (cond
+     ((not (file-exists-p data-dir-el))
+      ;; First-launch path: form is mandatory.
+      (my/bootstrap--first-launch-blocking-form data-dir-el))
+     (t
+      ;; Steady-state path: data-dir.el present, proceed normally.
+      (my/bootstrap-start-distro-config-update-task)
+      (my/bootstrap-start-daemon-service-task)
+      (my/bootstrap-start-keychain-refresh-task
+       #'my/bootstrap-start-full-sync-task)))))
+
+(defun my/bootstrap--first-launch-blocking-form (data-dir-el)
+  "Open the setup form and block bootstrap until the user submits it.
+
+Runs from `my/bootstrap' on `emacs-startup-hook' — by then the
+initial frame IS on screen, so `pop-to-buffer' + `recursive-edit'
+display correctly (unlike at module-load time, when the frame is
+still hidden).
+
+After Save: BW is unlocked + emacs-credentials populated. Read the
+Repo field, derive `my/data-dir', write DATA-DIR-EL, and tell the
+user to restart so modules load with the correct paths. Modules in
+this session captured paths against the init.el default `~/emacs/'
+and are not re-resolvable in-place.
+
+After Cancel / blank submit: nothing written, the form re-opens on
+the next restart since data-dir.el still doesn't exist."
+  (message "Bootstrap: opening setup form (data-dir.el not yet written; bootstrap is paused)…")
+  (setq my/-config-form-result nil)
+  (my/bootstrap-config-form)
+  (recursive-edit)
+  (cond
+   ((eq my/-config-form-result 'saved)
+    (let* ((id   (and my/bw-session
+                      (my/bw-get-item my/bw-credentials-item)))
+           (repo (and id (my/bw-item-field id "Repo")))
+           (target (and (not (my/-blank-p repo))
+                        (my/bootstrap-data-dir-for-repo repo))))
+      (cond
+       (target
+        (setq my/data-dir target)
+        (my/bootstrap-write-data-dir-selection target)
+        (message "Bootstrap: data folder set to %s (from BW.Repo='%s'). RESTART Emacs to load config with the new data folder."
+                 target repo))
+       (t
+        (message "Bootstrap: Repo field blank — data-dir.el NOT written. Restart and fill in the Data repo name field to continue.")))))
+   (t
+    (message "Bootstrap: setup form cancelled / not submitted — data-dir.el NOT written. Restart to re-open the form."))))
 #+end_src
 
 ** Manual repo pull
@@ -3141,60 +3195,18 @@ See the section banner for the full design rationale."
      ((file-exists-p data-dir-el)
       (message "Bootstrap: data folder = %s (cached in %s)."
                my/data-dir data-dir-el))
-     ;; data-dir.el missing AND bw CLI present → open the setup form
-     ;; (blocking) so the user enters BW creds + GH identity + API keys
-     ;; in one pass, then read the just-written `Repo' field to set
-     ;; `my/data-dir'. The form's Save handler does all the BW unlock
-     ;; + dual-write work; we just consume the result here.
-     ((my/bw-installed-p)
-      (message "Bootstrap: opening setup form (data-dir.el not yet written)…")
-      (setq my/-config-form-result nil)
-      (my/bootstrap-config-form)
-      ;; CRITICAL during early init: the initial frame may exist but not
-      ;; be displayed yet (`window-setup-hook' hasn't fired since
-      ;; init.el is still running). Without forcing visibility +
-      ;; redisplay, `pop-to-buffer' above puts the form in a window the
-      ;; user can't see, and `recursive-edit' below blocks the event
-      ;; loop indefinitely — Emacs appears frozen on a blank screen.
-      (when (frame-live-p (selected-frame))
-        (make-frame-visible (selected-frame))
-        (raise-frame      (selected-frame)))
-      (redisplay t)
-      (recursive-edit)  ; blocks until Save / Cancel
-      (cond
-       ((eq my/-config-form-result 'saved)
-        ;; Form succeeded: BW is now unlocked + emacs-credentials is
-        ;; populated with whatever the user typed. Read the Repo field
-        ;; and derive `my/data-dir'.
-        (let* ((id   (and my/bw-session
-                          (my/bw-get-item my/bw-credentials-item)))
-               (repo (and id (my/bw-item-field id "Repo")))
-               (target (and (not (my/-blank-p repo))
-                            (my/bootstrap-data-dir-for-repo repo))))
-          (cond
-           (target
-            (setq my/data-dir target)
-            (my/bootstrap-write-data-dir-selection target)
-            (message "Bootstrap: data folder set to %s (from BW.Repo='%s')."
-                     target repo))
-           (t
-            ;; User left repo blank on the form — per the agreed
-            ;; behaviour we fall back to init.el's default; we do NOT
-            ;; write data-dir.el so a later launch re-opens the form.
-            (message "Bootstrap: data folder = %s (BW.Repo blank; install.sh fallback)."
-                     my/data-dir)))))
-       (t
-        ;; Cancelled or empty save — same blank-input fallback.
-        (message "Bootstrap: data folder = %s (setup cancelled or no input; install.sh fallback)."
-                 my/data-dir))))
-     ;; bw not installed at all → can't resolve from BW this launch.
+     ;; data-dir.el missing → CANNOT show the form here. We're inside
+     ;; `init.el' execution; the initial frame isn't on screen yet, so
+     ;; `pop-to-buffer' + `recursive-edit' would block the event loop
+     ;; with no displayed window (frozen Emacs). The form invocation
+     ;; was moved to `my/bootstrap' which runs on `emacs-startup-hook'
+     ;; — after the frame is visible. Here we just message and bail.
+     ;; Module-level defensive gates (`(when (file-exists-p data-dir.el)
+     ;; …)' in 50-org.org / 55-apple-reminders.org / 75-wiki.org)
+     ;; ensure no module writes anything under the default `~/emacs/'
+     ;; while we're waiting for the user to fill in the form.
      (t
-      (display-warning
-       'emacs-setup
-       (format "Bootstrap: bw CLI not installed; data folder stays at %s. \
-Install bw (brew install bitwarden-cli) and restart Emacs to switch."
-               my/data-dir)
-       :warning)))))
+      (message "Bootstrap: data-dir.el missing — setup form will open after Emacs is ready (waiting for frame).")))))
 
 ;; NOTE: the side-effect call `(my/bootstrap-resolve-data-dir-now)' was
 ;; previously here. It's been moved to the END of Step 12 below — the

@@ -54,12 +54,19 @@ The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r p= /
 delete, …), so no manual =global-set-key= calls are needed.
 
 #+begin_src emacs-lisp :tangle yes
-;; The earlier data-dir.el gate (dc912f4 / 7d55c96) is gone: with
-;; 43c624b's `my/bootstrap-resolve-data-dir-now' running at the end of
-;; 10-bootstrap.org tangle, `my/data-dir' is the BW.Repo-derived path
-;; by the time THIS file (55-) loads. The `:config' setq below now
-;; bakes the correct sync-file from the start — no `~/emacs/' leakage.
-(when (eq system-type 'darwin)
+;; Data-dir.el gate (RESTORED): on a first-launch the setup form (run
+;; from `my/bootstrap' on `emacs-startup-hook') hasn't been submitted
+;; yet, so `my/data-dir' is init.el's `~/emacs/' default. If we let
+;; use-package run the `:config' setq, `org-apple-reminders-sync-file'
+;; would be baked to ~/emacs/data/org/reminders.org and any subsequent
+;; sync would mkdir ~/emacs/. Skipping the entire `use-package' form
+;; until data-dir.el exists means: first launch — package never
+;; installs, sync-file never written, nothing under ~/emacs/ touched.
+;; After form Save + restart — package installs with `my/data-dir'
+;; already the chosen folder.
+(when (and (eq system-type 'darwin)
+           (file-exists-p
+            (expand-file-name "data-dir.el" user-emacs-directory)))
   (use-package org-apple-reminders
     :ensure (org-apple-reminders
              :host github
