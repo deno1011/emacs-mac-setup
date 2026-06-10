@@ -649,10 +649,22 @@ Behaviour:
               :on-success
               (lambda (out)
                 (let* ((s (and (stringp out) (string-trim out)))
+                       ;; CRITICAL: `copy-sequence' the trimmed token.
+                       ;; `string-trim' returns the SAME string as `out'
+                       ;; when there's nothing to trim. The task
+                       ;; framework calls `(clear-string output)' AFTER
+                       ;; this callback returns (see 05-tasks.org
+                       ;; L679), zeroing every byte of `out'. Without
+                       ;; the copy, `my/bw-session' aliases `out' and
+                       ;; gets zeroed too — every subsequent
+                       ;; `bw … --session my/bw-session' then reports
+                       ;; "Vault is locked." Symptom-perfect match for
+                       ;; the bug the user has been hitting on the
+                       ;; async BW->Keychain refresh chain.
                        (session (and s
                                      (> (length s) 30)
                                      (string-match-p "\\`[A-Za-z0-9+/=]+\\'" s)
-                                     s)))
+                                     (copy-sequence s))))
                   (cond
                    (session
                     (setq my/bw-session session)
