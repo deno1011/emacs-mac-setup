@@ -39,7 +39,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 ;; git-crypt machinery is defined.
 (defvar my/git-crypt-keychain-service)
 ;; Forward-declare the setup form's result variable so byte-compiler
-;; sees it in `my/bootstrap-step--open-config-form-and-restart' (Step 13)
+;; sees it in `my/bootstrap-step--ensure-form-submitted' (Step 13)
 ;; before its real defvar is hit in Step 12.
 (defvar my/-config-form-result)
 
@@ -2525,7 +2525,7 @@ gating + replacement of inline prompts) lands in subsequent commits.
   "Set by `my/-config-form-save' or `my/-config-form-cancel' before
 exiting `recursive-edit'.  Symbol values: `saved', `unchanged',
 `cancelled'.  Used by callers wrapping the form in a blocking flow
-\(e.g. `my/bootstrap-step--open-config-form-and-restart') to tell which
+\(e.g. `my/bootstrap-step--ensure-form-submitted') to tell which
 button the user pressed.")
 
 (defun my/-config-form-status (cur-value)
@@ -2781,8 +2781,8 @@ retry without re-typing everything; on success it is killed and
 (defun my/-config-form-cancel (&rest _ignore)
   "Cancel the setup form without saving.
 Exits any wrapping `recursive-edit' so callers like
-`my/bootstrap-step--open-config-form-and-restart' can fall through to their
-no-input fallback."
+`my/bootstrap-step--ensure-form-submitted' can detect the cancel and
+return `(:error …)' for the orchestrator."
   (interactive)
   (setq my/-config-form-result 'cancelled)
   (message "Setup form: cancelled, no changes written.")
@@ -2918,11 +2918,12 @@ failure modes.
 Each step is a separate function with one named responsibility. Each
 step returns a symbol:
 
-  =:done=        — step completed normally (or was a no-op)
-  =:skip=        — step decided to do nothing for a real reason
-  =:need-input=  — step can't proceed without user input;
-                   orchestrator should open the config form + restart
-  =(:error R)=   — step failed (orchestrator decides how to react)
+  =:done=            — step completed normally (or was a no-op)
+  =:skip=            — step decided to do nothing for a real reason
+  =:restart-needed=  — step ran the user-facing portion successfully but
+                       config has shifted in a way that requires an Emacs
+                       restart (e.g. data-dir.el was just written)
+  =(:error R)=       — step failed (orchestrator decides how to react)
 
 The orchestrator is the only place that knows the OVERALL sequence;
 each step knows only its own job and the primitives it calls.
@@ -2942,8 +2943,9 @@ implement one step at a time.
 
 Reads top-to-bottom. Each line is a single named step; each step
 is implemented as its own function below. The orchestrator's only
-job is sequencing + reacting to `:need-input' (open the form,
-restart) or `:error' (display a warning, stop)."
+job is sequencing + reacting to `:restart-needed' (data-dir.el was
+just written; stop so the user can restart) or `:error' (display a
+warning, stop)."
   (interactive)
   (message "Bootstrap: starting orchestrator (business-logic layer)…")
   (catch 'my/bootstrap-bail
@@ -2952,8 +2954,10 @@ restart) or `:error' (display a warning, stop)."
     ;;    `my/-bootstrap-probe-data' for the next step. Always :done.
     (my/bootstrap--dispatch (my/bootstrap-step--probe-credentials))
 
-    ;; 2. Where does this Mac's data live?
-    (my/bootstrap--dispatch (my/bootstrap-step--resolve-data-dir))
+    ;; 2. Open the setup form unless the probe says every credential
+    ;;    is already settled (silent silent restore of data-dir.el
+    ;;    from probe item happens here too).
+    (my/bootstrap--dispatch (my/bootstrap-step--ensure-form-submitted))
 
     ;; 3. Is the private repo cloned into that folder? Clone if not.
     (my/bootstrap--dispatch (my/bootstrap-step--ensure-data-folder))
@@ -2977,15 +2981,14 @@ restart) or `:error' (display a warning, stop)."
 
 (defun my/bootstrap--dispatch (step-result)
   "React to a step's return symbol.
-:done / :skip   → continue silently
-:need-input     → open the setup form, throw `my/bootstrap-bail'
-(:error REASON) → warn with REASON, throw `my/bootstrap-bail'."
+:done / :skip    → continue silently
+:restart-needed  → step already messaged the user; throw `my/bootstrap-bail'
+(:error REASON)  → warn with REASON, throw `my/bootstrap-bail'."
   (pcase step-result
     (:done nil)
     (:skip nil)
-    (:need-input
-     (my/bootstrap-step--open-config-form-and-restart)
-     (throw 'my/bootstrap-bail :need-input))
+    (:restart-needed
+     (throw 'my/bootstrap-bail :restart-needed))
     (`(:error ,reason)
      (display-warning 'emacs-setup
                       (format "Bootstrap aborted: %s" reason)
@@ -3108,57 +3111,61 @@ Returns t when the form can be skipped; nil otherwise."
                 (funcall settled (funcall bw-f env-var))))
           my/api-key-fields))))
 
-(defun my/bootstrap-step--resolve-data-dir ()
-  "Set `my/data-dir' from one of (priority order):
-  1. ~/.emacs.d/data-dir.el on disk (cached choice)
-  2. BW.Repo via cached Keychain creds (silent unlock)
-  3. nothing → returns :need-input so the form can collect input.
+(defun my/bootstrap-step--ensure-form-submitted ()
+  "Open the setup form unless every credential is already settled.
 
-Returns :done if `my/data-dir' is settled, :need-input otherwise."
-  (message "Bootstrap step 1: resolve data folder location…")
-  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
+Reads `my/-bootstrap-probe-data' (populated by step 1). When
+`data-dir.el' is missing but the probe captured a BW `Repo' field,
+writes data-dir.el silently here — no extra BW round-trip.
+
+Outcome:
+  :skip            — every required credential is settled; form not opened.
+  :done            — form opened, user saved, data-dir.el was already on
+                     disk (subsequent-launch path); bootstrap continues.
+  :restart-needed  — form opened, user saved, data-dir.el was JUST written
+                     (first-launch path); modules tangled with init.el's
+                     default need a restart before the remaining steps run.
+  (:error REASON)  — form cancelled or saved-but-incomplete."
+  (message "Bootstrap step 2: ensuring setup form is complete…")
+  (let* ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory))
+         (existed?    (file-exists-p data-dir-el)))
+    ;; Silent restore: if data-dir.el is missing but probe captured a
+    ;; Repo field, write data-dir.el now using the existing session.
+    (unless existed?
+      (let* ((item   (plist-get my/-bootstrap-probe-data :item))
+             (repo   (and item (my/bw-item-field item "Repo")))
+             (target (and (not (my/-blank-p repo))
+                          (my/bootstrap-data-dir-for-repo repo))))
+        (when target
+          (setq my/data-dir target)
+          (my/bootstrap-write-data-dir-selection target)
+          (message "Bootstrap step 2: data folder = %s (restored from probe BW.Repo='%s')."
+                   target repo))))
     (cond
-     ;; 1. Cached choice on disk.
-     ((file-exists-p data-dir-el)
-      (message "Bootstrap step 1: data folder = %s (cached in %s)."
-               my/data-dir data-dir-el)
-      :done)
-     ;; 2. Silent restore from BW via cached Keychain creds.
-     ((my/bootstrap--restore-data-dir-from-bw)
-      :done)
-     ;; 3. Need user input.
+     ((my/bootstrap--probe-data-complete-p)
+      (message "Bootstrap step 2: all credentials settled — form skipped.")
+      :skip)
      (t
-      (message "Bootstrap step 1: no cached choice, no Keychain creds — form needed.")
-      :need-input))))
-
-(defun my/bootstrap--restore-data-dir-from-bw ()
-  "Try to derive `my/data-dir' from BW using cached Keychain creds.
-ZERO PROMPTS, ZERO UI. Returns t on success, nil on any failure.
-
-Idempotent: failure leaves no partial state (no data-dir.el written,
-`my/data-dir' unchanged). Success writes data-dir.el and sets the
-in-memory `my/data-dir' / `my/bw-session'."
-  (and (my/bw-installed-p)
-       (let ((email  (my/keychain-get my/keychain-service
-                                      my/keychain-account-bw-email))
-             (master (my/keychain-get my/keychain-service
-                                      my/keychain-account-bw-master)))
-         (and (not (my/-blank-p email))
-              (not (my/-blank-p master))
-              (let ((session (my/bw--unlock-internal email master)))
-                (and session
-                     (progn (setq my/bw-session (copy-sequence session)) t)
-                     (let* ((item (my/bw-get-item my/bw-credentials-item))
-                            (repo (and item (my/bw-item-field item "Repo")))
-                            (target (and (not (my/-blank-p repo))
-                                         (my/bootstrap-data-dir-for-repo repo))))
-                       (and target
-                            (progn
-                              (setq my/data-dir target)
-                              (my/bootstrap-write-data-dir-selection target)
-                              (message "Bootstrap step 1: data folder = %s (restored from BW.Repo='%s', no form needed)."
-                                       target repo)
-                              t)))))))))
+      (message "Bootstrap step 2: opening setup form (credentials incomplete; bootstrap paused)…")
+      (setq my/-config-form-result nil)
+      (my/bootstrap-config-form)
+      (recursive-edit)
+      (let ((now? (file-exists-p data-dir-el)))
+        (cond
+         ;; First-launch path: data-dir.el was just written.
+         ((and (not existed?) now?)
+          (message "Bootstrap: data folder set to %s. RESTART Emacs to load config with the new data folder."
+                   my/data-dir)
+          :restart-needed)
+         ;; Form was saved but data-dir.el still missing: Repo blank.
+         ((and (not now?) (eq my/-config-form-result 'saved))
+          '(:error "form saved but data-dir.el not written — fill the 'Data repo name' field and restart"))
+         ;; Cancelled or otherwise unsubmitted with data-dir.el missing.
+         ((not now?)
+          '(:error "setup form cancelled — bootstrap halted; restart to re-open"))
+         ;; Subsequent-launch path: form recorded changes; continue.
+         (t
+          :done)))))))
 
 (defun my/bootstrap-step--ensure-data-folder ()
   "Ensure the private GitHub repo is cloned into `my/data-dir'.
@@ -3537,28 +3544,6 @@ returns :done — there's no failure mode for a status report."
          ((string= raw my/api-skipped-sentinel)    (cl-incf opted-out))
          (t                                         (cl-incf stored)))))
     (list :stored stored :opted-out opted-out :missing missing)))
-
-(defun my/bootstrap-step--open-config-form-and-restart ()
-  "Open `my/bootstrap-config-form' synchronously, block on
-`recursive-edit', then tell the user to restart.
-
-Invoked by the orchestrator's `:need-input' dispatch path. The form
-itself dual-writes BW + Keychain on Save AND writes data-dir.el (see
-the form save handler in Step 12). All we do here is open the form,
-wait, and emit the correct restart message based on what landed."
-  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
-    (message "Bootstrap: opening setup form (data-dir.el not yet written; bootstrap paused)…")
-    (setq my/-config-form-result nil)
-    (my/bootstrap-config-form)
-    (recursive-edit)
-    (cond
-     ((file-exists-p data-dir-el)
-      (message "Bootstrap: data folder set to %s. RESTART Emacs to load config with the new data folder."
-               my/data-dir))
-     ((eq my/-config-form-result 'saved)
-      (message "Bootstrap: form was saved but data-dir.el NOT written (Repo field blank?). Restart and fill in the Data repo name field to continue."))
-     (t
-      (message "Bootstrap: setup form cancelled / not submitted — data-dir.el NOT written. Restart to re-open the form.")))))
 
 ;;; ============================================================
 ;;; LEGACY PATH — keeps the old `my/bootstrap' working for now.
