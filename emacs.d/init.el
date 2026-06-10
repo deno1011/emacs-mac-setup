@@ -7,26 +7,18 @@
 ;;     emacs-mac-setup repo, updated by the bootstrap's
 ;;     `distro-config-update' task. Never lives in the user's data folder.
 ;;
-;;   - WHERE the user's DATA lives (`my/data-dir' = ~/emacs/, overridable via
-;;     EMACS_DATA_DIR env var or by a generated ~/.emacs.d/data-dir.el).
-;;     Data = org files, wiki, agenda, etc. Per-Mac, may differ between
-;;     machines (driven by BW.Repo on first launch). Switching data-dir
-;;     does NOT affect config — config is at ~/.emacs.d/config/ regardless.
+;;   - WHERE the user's DATA lives (`my/data-dir' = ~/emacs/ default,
+;;     overridable via EMACS_DATA_DIR env var or by the bootstrap setting
+;;     `my/data-dir' directly from BW.Repo / Keychain.GitHubRepo before
+;;     the next module loads). Data = org files, wiki, agenda, etc.
+;;     Per-Mac, may differ between machines. Switching data-dir does NOT
+;;     affect config — config is at ~/.emacs.d/config/ regardless.
 ;;
 ;; Nothing else. No rescue mode, no per-feature flags, no module list.
 ;; install.sh places the seed config into ~/.emacs.d/config/ on every run;
 ;; ~/.emacs.d/config/config.org discovers and loads modules.
 
 ;; 1. Where data lives -----------------------------------------------------
-(let ((generated-data-dir (expand-file-name "data-dir.el" user-emacs-directory)))
-  (when (file-exists-p generated-data-dir)
-    (load generated-data-dir nil 'nomessage)))
-
-(when (getenv "EMACS_DATA_DIR")
-  (setq my/data-dir
-        (expand-file-name
-         (file-name-as-directory (getenv "EMACS_DATA_DIR")))))
-
 (defvar my/data-dir
   (expand-file-name
    (file-name-as-directory
@@ -34,8 +26,10 @@
   "Root directory for the user's PERSONAL DATA — org files, wiki content,
 agenda files, GTD content, etc. NOT the literate config (that lives at
 `my/config-dir' = ~/.emacs.d/config/, regardless of which data-dir is
-selected). Override per-Mac via EMACS_DATA_DIR or let bootstrap derive
-it from the BW.Repo field and write data-dir.el.")
+selected). Default is `~/emacs/'; overridden per-Mac by EMACS_DATA_DIR
+or by the bootstrap orchestrator (which runs at the end of the
+10-bootstrap module's tangled load, before subsequent modules touch
+`my/data-dir').")
 
 ;; 2. Where the literate config lives ------------------------------------
 (defvar my/config-dir (expand-file-name "config/" user-emacs-directory)
