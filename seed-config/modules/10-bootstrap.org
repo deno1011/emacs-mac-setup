@@ -13,13 +13,13 @@ Flow (idempotent on every Emacs start; silent after first launch):
 3. Install & authenticate =gh= CLI.
 4. Sync the user's private repo into =my/data-dir= (clone / pull / create).
 5. Generate starter content for any files missing under =my/data-dir=.
-6. Load API keys only from the consolidated =emacs-credentials= BW item.
+6. Load API keys only from the consolidated =emacs_credentials= BW item.
 7. Lock the Bitwarden vault — values stay in Emacs memory; the session
    token is discarded.
 
 Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before this file):
-- =my/bw-credentials-item=   :: BW item name holding ALL Emacs secrets (default "emacs-credentials")
-- =my/keychain-service=      :: macOS Keychain service for cached BW unlock credentials (default "emacs-credentials")
+- =my/bw-credentials-item=   :: BW item name holding ALL Emacs secrets (default "emacs_credentials")
+- =my/keychain-service=      :: macOS Keychain service for cached BW unlock credentials (default "emacs_credentials")
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 10-bootstrap.el --- Bootstrap private Emacs repo -*- lexical-binding: t; -*-
@@ -66,7 +66,7 @@ The same names are used as custom field names in `my/bw-credentials-item'.")
 provide. The loader treats this as opted out: no setenv, no
 prompt. Run `M-x my/api-key-reset' to clear and re-prompt a key.")
 
-(defvar my/keychain-service "emacs-credentials"
+(defvar my/keychain-service "emacs_credentials"
 "Single macOS Keychain service for cached Bitwarden unlock credentials.
 Accounts under this service: `bw-master' and `bw-email'. API keys are not
 stored here; they live only in `my/bw-credentials-item'.")
@@ -274,7 +274,7 @@ Preserved (deliberately):
    (mapcar (lambda (env-var) (cons my/keychain-service env-var))
            my/api-key-fields)
    ;; (SERVICE . t) = wildcard, delete every account under SERVICE.
-   ;; Sourced live from BW.emacs-credentials' GitCryptKey:<repo> fields
+   ;; Sourced live from BW.emacs_credentials' GitCryptKey:<repo> fields
    ;; on every refresh, so wiping is safe — current repos' keys come
    ;; right back from the kc-multi-set step further down the chain.
    (list (cons my/git-crypt-keychain-service t))))
@@ -673,7 +673,7 @@ Behaviour:
                     ;; data.json to reflect the current server state
                     ;; BEFORE bw-get-item runs. Without this wait the
                     ;; CLI happily returns the stale cached item — so a
-                    ;; user renaming `emacs-credentials' server-side
+                    ;; user renaming `emacs_credentials' server-side
                     ;; and restarting Emacs would still see bootstrap
                     ;; proceed with the old name (cache lag). The cost
                     ;; is a one-time ~500ms-2s wait per launch; the gain
@@ -832,8 +832,8 @@ real issue, add a chained second-stage task here."
                 (parsed-name (and parsed (cdr (assoc 'name parsed)))))
            (cond
             ;; Substring-match guard: `bw get item NAME' fuzzy-matches
-            ;; on substrings. If the user renames `emacs-credentials'
-            ;; to `old_emacs-credentials' server-side, bw still returns
+            ;; on substrings. If the user renames `emacs_credentials'
+            ;; to `old_emacs_credentials' server-side, bw still returns
             ;; the renamed item (substring hit). Compare the parsed
             ;; item's actual `name' field to the requested ITEM-NAME
             ;; and reject any non-exact match — otherwise the bootstrap
@@ -984,7 +984,7 @@ PLIST: same keys as my/bw-create-item. Only the keys present are touched."
 
 * Step 4 — GitHub identity bundle (token + email + fullname + repo)
 
-The =emacs-credentials= BW item carries everything we need to clone
+The =emacs_credentials= BW item carries everything we need to clone
 the user's private data repo:
 - =login.username=  → GitHub handle (e.g. "alice")
 - =login.password=  → PAT (=ghp_...= classic or =github_pat_...= fine-grained)
@@ -1995,7 +1995,7 @@ repo uses `my/-git-crypt-read'; writing uses `my/-git-crypt-write'.")
 ;; Storage scheme for git-crypt keys, designed to support multiple
 ;; repositories (one key per repo):
 ;;
-;;   Bitwarden `emacs-credentials' item:
+;;   Bitwarden `emacs_credentials' item:
 ;;     custom field name = "GitCryptKey:<repo-name>"
 ;;     custom field value = base64-encoded key (or `__SKIPPED__' sentinel)
 ;;
@@ -2391,10 +2391,10 @@ Not creating a new key for an existing encrypted clone. Add BW field GitCryptKey
 
 API keys flow through three storage tiers:
 
-1. *Bitwarden =emacs-credentials= item* — canonical, cross-Mac source of
+1. *Bitwarden =emacs_credentials= item* — canonical, cross-Mac source of
    truth. Each provider's key lives as a custom field whose name matches
    the env-var name (=GEMINI_API_KEY=, =ANTHROPIC_API_KEY=, ...).
-2. *macOS Keychain =emacs-credentials= service* — active runtime cache.
+2. *macOS Keychain =emacs_credentials= service* — active runtime cache.
    Each provider key is stored as an account under this service. =security
    find-generic-password= reads it in ~10-20 ms, ~20-50× faster than
    =bw unlock= cycles.
@@ -3103,7 +3103,7 @@ initial frame IS on screen, so `pop-to-buffer' + `recursive-edit'
 display correctly (unlike at module-load time, when the frame is
 still hidden).
 
-After Save: BW is unlocked + emacs-credentials populated. Read the
+After Save: BW is unlocked + emacs_credentials populated. Read the
 Repo field, derive `my/data-dir', write data-dir.el, and tell the
 user to restart so modules load with the correct paths. Modules in
 this session captured paths against the init.el default `~/emacs/'
@@ -3615,7 +3615,7 @@ fields are missing."
     (widget-insert "Emacs Distro Setup\n")
     (widget-insert "==================\n\n")
     (widget-insert "Each row's typed value is written to BOTH macOS Keychain (runtime\n")
-    (widget-insert "cache) AND your Bitwarden 'emacs-credentials' item (cross-Mac source).\n")
+    (widget-insert "cache) AND your Bitwarden 'emacs_credentials' item (cross-Mac source).\n")
     (widget-insert "Leave blank to keep the current value. Tick [Skip] under an API key\n")
     (widget-insert "to permanently opt out of it (__SKIPPED__ sentinel, never re-prompted).\n\n")
 
@@ -3631,7 +3631,7 @@ fields are missing."
      t nil
      "Master password used to unlock the vault. Cached in macOS Keychain.")
 
-    (widget-insert "\nGitHub identity (in BW.emacs-credentials, also cached in Keychain)\n")
+    (widget-insert "\nGitHub identity (in BW.emacs_credentials, also cached in Keychain)\n")
     (widget-insert     "----------------------------------------------------------------\n")
     ;; Pre-fill from Keychain first (always available — no BW unlock
     ;; needed) and fall back to BW if Keychain is empty AND BW is

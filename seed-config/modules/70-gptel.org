@@ -115,7 +115,7 @@ This block runs after =gptel-agent-runtime= has loaded. It:
 
 All backend =:key= lambdas read via =(my/api-key-fetch "ENV_VAR")=,
 which reads the runtime cache in macOS Keychain (service
-=emacs-credentials=) directly. No API key string is ever held in
+=emacs_credentials=) directly. No API key string is ever held in
 =process-environment=, in a =defvar=, or in any in-Emacs global state
 between requests; the value is held only in the lambda's local binding
 for the duration of the HTTP request. See =modules/10-bootstrap.org=
@@ -146,8 +146,8 @@ Step 8 for the storage model.
 (require 'gptel-gemini nil t)
 
 ;; -- Anthropic / Claude -----------------------------------------------
-;; Key stored in BW item `emacs-credentials' (custom field ANTHROPIC_API_KEY)
-;; and cached in macOS Keychain service `emacs-credentials' (account ANTHROPIC_API_KEY).
+;; Key stored in BW item `emacs_credentials' (custom field ANTHROPIC_API_KEY)
+;; and cached in macOS Keychain service `emacs_credentials' (account ANTHROPIC_API_KEY).
 ;; Rotate via `M-x my/api-key-set' → ANTHROPIC_API_KEY.
 (let ((backend (gptel-make-anthropic "Claude"
                   :stream t
@@ -159,7 +159,7 @@ Step 8 for the storage model.
   nil)
 
 ;; -- OpenAI / ChatGPT -------------------------------------------------
-;; Key in BW + Keychain `emacs-credentials' (field/account OPENAI_API_KEY).
+;; Key in BW + Keychain `emacs_credentials' (field/account OPENAI_API_KEY).
 ;; Rotate via `M-x my/api-key-set'.
 ;; Force Chat Completions via an explicit endpoint to avoid the Responses API.
 (let ((backend (gptel-make-openai "ChatGPT"
@@ -175,7 +175,7 @@ Step 8 for the storage model.
                   ("o4-mini"      ,backend . o4-mini)))))
 
 ;; -- Google Gemini (free tier: https://aistudio.google.com/apikey) --
-;; Key in BW + Keychain `emacs-credentials' (field/account GEMINI_API_KEY).
+;; Key in BW + Keychain `emacs_credentials' (field/account GEMINI_API_KEY).
 ;; Rotate via `M-x my/api-key-set'.
 ;; Free tier quotas vary per model (2.0 Flash has the most generous limits).
 (let ((backend (gptel-make-gemini "Gemini"
@@ -188,7 +188,7 @@ Step 8 for the storage model.
                   ("Gemini 2.0 Flash"   ,backend . gemini-2.0-flash)))))
 
 ;; -- Groq (free tier: https://console.groq.com/keys) ----------------
-;; OpenAI-compatible. Key in BW + Keychain `emacs-credentials'
+;; OpenAI-compatible. Key in BW + Keychain `emacs_credentials'
 ;; (field/account GROQ_API_KEY). Rotate via `M-x my/api-key-set'.
 ;; Very fast inference (~500 tok/s on Llama 70B).
 (let ((backend (gptel-make-openai "Groq"
