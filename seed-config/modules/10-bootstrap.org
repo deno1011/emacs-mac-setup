@@ -3060,40 +3060,20 @@ Keychain and conclude that work is needed when it isn't."
    (t
     (my/bootstrap-run-if-needed))))
 
-;; Explanation: bootstrap entry point. Decides sync (work pending) vs no-op (cached).
+;; Explanation: bootstrap entry point — thin wrapper around the orchestrator.
 (defun my/bootstrap ()
-  "Run bootstrap if any precondition is missing; no-op otherwise.
-Safe to call interactively (`M-x my/bootstrap') to re-trigger after
-changing state (e.g. after `M-x my/github-identity-reset').
+  "Bootstrap entry point.
 
-First-launch gate: if `~/.emacs.d/data-dir.el' is missing, this
-function REFUSES to proceed past the form. It opens
-`my/bootstrap-config-form' synchronously, blocks on `recursive-edit',
-and on Save writes data-dir.el + tells the user to restart. Cancel
-or any other exit also bails out (the form re-opens on the next
-restart since data-dir.el still doesn't exist). NO other bootstrap
-work (keychain refresh, repo clone, gh auth, api-keys-load) runs
-until the user has chosen a data folder."
+Fires two fire-and-forget background tasks (distro config refresh,
+daemon-service install) and then runs the synchronous orchestrator
+(`my/bootstrap-orchestrate'), which owns the full bootstrap recipe.
+
+Safe to call interactively from `M-x my/bootstrap' to re-trigger
+after changing state."
   (interactive)
-  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
-    ;; Diagnostic: log the decision path explicitly so a misfiring form
-    ;; gate becomes debuggable without filesystem access. Paste this
-    ;; from *Messages* if the form opens unexpectedly.
-    (message "Bootstrap: gate check — data-dir.el=%s exists=%s my/data-dir=%s user-emacs-directory=%s"
-             data-dir-el
-             (if (file-exists-p data-dir-el) "YES" "NO")
-             (if (boundp 'my/data-dir) my/data-dir "<unbound>")
-             user-emacs-directory)
-    (cond
-     ((not (file-exists-p data-dir-el))
-      ;; First-launch path: form is mandatory.
-      (my/bootstrap--first-launch-blocking-form data-dir-el))
-     (t
-      ;; Steady-state path: data-dir.el present, proceed normally.
-      (my/bootstrap-start-distro-config-update-task)
-      (my/bootstrap-start-daemon-service-task)
-      (my/bootstrap-start-keychain-refresh-task
-       #'my/bootstrap-start-full-sync-task)))))
+  (my/bootstrap-start-distro-config-update-task)
+  (my/bootstrap-start-daemon-service-task)
+  (my/bootstrap-orchestrate))
 
 (defun my/bootstrap--first-launch-blocking-form (data-dir-el)
   "Open the setup form and block bootstrap until the user submits it.
