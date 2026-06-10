@@ -7,12 +7,12 @@
 ;;     emacs-mac-setup repo, updated by the bootstrap's
 ;;     `distro-config-update' task. Never lives in the user's data folder.
 ;;
-;;   - WHERE the user's DATA lives (`my/data-dir' = ~/emacs/ default,
-;;     overridable via EMACS_DATA_DIR env var or by the bootstrap setting
-;;     `my/data-dir' directly from BW.Repo / Keychain.GitHubRepo before
-;;     the next module loads). Data = org files, wiki, agenda, etc.
-;;     Per-Mac, may differ between machines. Switching data-dir does NOT
-;;     affect config — config is at ~/.emacs.d/config/ regardless.
+;;   - WHERE the user's DATA lives (`my/data-dir', settled at runtime by
+;;     the bootstrap orchestrator from Keychain.GitHubRepo / BW.Repo /
+;;     setup-form Save; overridable per-Mac via the EMACS_DATA_DIR env
+;;     var). Data = org files, wiki, agenda, etc. Per-Mac, may differ
+;;     between machines. Switching data-dir does NOT affect config —
+;;     config is at ~/.emacs.d/config/ regardless.
 ;;
 ;; Nothing else. No rescue mode, no per-feature flags, no module list.
 ;; install.sh places the seed config into ~/.emacs.d/config/ on every run;
@@ -20,16 +20,16 @@
 
 ;; 1. Where data lives -----------------------------------------------------
 (defvar my/data-dir
-  (expand-file-name
-   (file-name-as-directory
-    (or (getenv "EMACS_DATA_DIR") "~/emacs/")))
+  (let ((env (getenv "EMACS_DATA_DIR")))
+    (and env (expand-file-name (file-name-as-directory env))))
   "Root directory for the user's PERSONAL DATA — org files, wiki content,
 agenda files, GTD content, etc. NOT the literate config (that lives at
 `my/config-dir' = ~/.emacs.d/config/, regardless of which data-dir is
-selected). Default is `~/emacs/'; overridden per-Mac by EMACS_DATA_DIR
-or by the bootstrap orchestrator (which runs at the end of the
-10-bootstrap module's tangled load, before subsequent modules touch
-`my/data-dir').")
+selected). nil during the brief window between init.el and the
+10-bootstrap module load; the bootstrap orchestrator settles it from
+Keychain.GitHubRepo / BW.Repo / setup-form Save before any other module
+tangles. Set explicitly only when EMACS_DATA_DIR is in the environment
+(escape hatch for testing / scripted installs).")
 
 ;; 2. Where the literate config lives ------------------------------------
 (defvar my/config-dir (expand-file-name "config/" user-emacs-directory)
