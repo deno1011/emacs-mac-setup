@@ -1532,20 +1532,37 @@ folder disappeared."
     (delete-directory dir t)))
 
 ;; Explanation: Clone the private repo or create it on GitHub when it does not exist.
+;;
+;; Return value:
+;;   t                 → cloned or freshly created+pushed successfully
+;;   nil               → benign no-op (e.g. blank user/repo, warning emitted)
+;;   (:error REASON)   → BAILED OUT — the caller MUST surface this and
+;;                       MUST NOT continue as if the data folder is
+;;                       healthy. Currently used for the network-error
+;;                       case where we refuse to wipe `my/data-dir'.
 (defun my/-repo-fetch-or-create (identity)
   "Clone the user's private repo into my/data-dir, or create+push if it
 doesn't exist on GitHub. Assumes my/data-dir is absent or empty.
-Used by both the empty-dir branch and the override-existing branch."
+Used by both the empty-dir branch and the override-existing branch.
+
+If the existence probe is inconclusive (network down, DNS failure,
+etc.) return `(:error REASON)' WITHOUT touching the local folder.
+NEVER deletes `my/data-dir' on the inconclusive path."
   (let* ((user (plist-get identity :username))
          (repo (plist-get identity :repo))
          (dir my/data-dir)
-	         (exists-on-gh (zerop (call-process-shell-command
-	                               (format "gh api repos/%s/%s >/dev/null 2>&1"
-	                                       (shell-quote-argument user)
-	                                       (shell-quote-argument repo))
-	                               nil nil))))
+         (exists-on-gh (my/-repo-exists-on-gh-p user repo)))
     (setq my/bootstrap-repo-created-this-run nil)
     (cond
+     ;; Inconclusive: refuse to do anything destructive. Bubble the
+     ;; failure up to bootstrap so the user sees a clear message and
+     ;; their existing data folder stays intact.
+     ((eq exists-on-gh :network-error)
+      (let ((msg (format "Bootstrap: cannot verify whether %s/%s exists on GitHub (network/DNS/gh failure) — refusing to wipe %s. Check your connection and re-run M-x my/bootstrap."
+                         user repo dir)))
+        (display-warning 'emacs-setup msg :error)
+        (message "%s" msg)
+        (list :error (format "network unreachable — refusing to wipe %s" dir))))
      (exists-on-gh
       (message "Bootstrap: cloning %s/%s into %s…" user repo dir)
       (my/-repo-remove-conflicting-local-dir dir user repo "fresh clone")
@@ -1553,7 +1570,8 @@ Used by both the empty-dir branch and the override-existing branch."
        (format "gh repo clone %s/%s %s"
                (shell-quote-argument user) (shell-quote-argument repo)
                (shell-quote-argument dir))
-       nil nil))
+       nil nil)
+      t)
      (t
       (cond
        ((or (my/-blank-p user) (my/-blank-p repo))
@@ -1613,13 +1631,44 @@ Common causes: PAT lacks `repo' scope, repo name already taken, network."
                                :error)))))))))))
 
 ;; Explanation: Check whether the configured private repo exists on GitHub.
+;;
+;; Three-state return — t / nil is not enough. Conflating "404 Not Found"
+;; with "network unreachable / DNS failure / connection refused" caused a
+;; data-loss bug: a transient outage made callers think the repo was
+;; missing, so they fell through to the "create new repo" branch which
+;; first DELETES `my/data-dir' (see `my/-repo-remove-conflicting-local-
+;; dir'). We now distinguish the two cases and let callers refuse to
+;; touch the local folder when the answer is inconclusive.
 (defun my/-repo-exists-on-gh-p (user repo)
-  "Return non-nil when USER/REPO exists on GitHub."
-  (zerop (call-process-shell-command
-          (format "gh api repos/%s/%s >/dev/null 2>&1"
-                  (shell-quote-argument user)
-                  (shell-quote-argument repo))
-          nil nil)))
+  "Return t when USER/REPO exists on GitHub, nil when it genuinely does
+not exist (404 Not Found), or the symbol `:network-error' when the
+existence check is inconclusive (network down, DNS failure, gh CLI
+crash, etc.).  Callers MUST NOT treat `:network-error' as a missing
+repo — see `my/-repo-fetch-or-create' for the safe handling pattern."
+  (let* ((buf (generate-new-buffer " *gh-repo-exists*"))
+         (status (unwind-protect
+                     (call-process-shell-command
+                      (format "gh api repos/%s/%s 2>&1"
+                              (shell-quote-argument user)
+                              (shell-quote-argument repo))
+                      nil buf nil)
+                   t))
+         (output (with-current-buffer buf (buffer-string))))
+    (kill-buffer buf)
+    (cond
+     ;; Repo exists.
+     ((zerop status) t)
+     ;; Genuine 404 — gh prints "HTTP 404" / "Not Found" on its
+     ;; stderr when the API responds with 404. Treat as "safe to
+     ;; create".
+     ((or (string-match-p "HTTP 404" output)
+          (string-match-p "Not Found" output))
+      nil)
+     ;; Anything else (DNS failure, connection refused, timeout,
+     ;; TLS error, gh segfault, auth not configured, …) is
+     ;; INCONCLUSIVE. Refuse to answer so the caller bails instead
+     ;; of wiping the local data folder.
+     (t :network-error))))
 
 ;; Explanation: Compare two files by content, treating unreadable files as different.
 (defun my/-file-same-content-p (a b)
@@ -1714,16 +1763,28 @@ be recovered manually."
          (dir-parent (file-name-directory dir-target))
          (stamp (format-time-string "%Y%m%d-%H%M%S"))
          (backup (format "%s.bak-%s" dir-target stamp))
-         (tmp (make-temp-file (expand-file-name ".emacs-data-adopt-" dir-parent) t)))
-    (if (not (my/-repo-exists-on-gh-p user repo))
-        (progn
-          (delete-directory tmp t)
-          (display-warning
-           'emacs-setup
-           (format "%s exists with content, but %s/%s does not exist on GitHub.
+         (tmp (make-temp-file (expand-file-name ".emacs-data-adopt-" dir-parent) t))
+         (exists (my/-repo-exists-on-gh-p user repo)))
+    (cond
+     ;; Inconclusive existence check — refuse to rename `dir' to
+     ;; `dir.bak-…' on a guess. Treat as a hard bail so the user's
+     ;; existing data tree stays exactly where it is.
+     ((eq exists :network-error)
+      (delete-directory tmp t)
+      (let ((msg (format "Bootstrap: cannot verify whether %s/%s exists on GitHub (network/DNS/gh failure) — refusing to move %s aside. Check your connection and re-run M-x my/bootstrap."
+                         user repo dir)))
+        (display-warning 'emacs-setup msg :error)
+        (message "%s" msg)
+        (list :error (format "network unreachable — refusing to move %s aside" dir))))
+     ((not exists)
+      (delete-directory tmp t)
+      (display-warning
+       'emacs-setup
+       (format "%s exists with content, but %s/%s does not exist on GitHub.
 Leaving local files untouched. Create the repo first or move %s aside manually."
-                   dir user repo dir)
-           :warning))
+               dir user repo dir)
+       :warning))
+     (t
       (message "Bootstrap: cloning %s/%s into temporary adoption dir %s…" user repo tmp)
       (unless (zerop (call-process "gh" nil nil nil "repo" "clone"
                                    (format "%s/%s" user repo) tmp))
@@ -1754,7 +1815,7 @@ Leaving local files untouched. Create the repo first or move %s aside manually."
             'emacs-setup
             (format "Repo adoption failed and was rolled back: %s"
                     (error-message-string err))
-            :warning)))))))
+            :warning))))))))
 
 ;; Explanation: Ensure the private data repo exists locally, is current, and is safe to use.
 (defun my/repo-sync (identity)
@@ -1798,15 +1859,38 @@ IDENTITY is the plist returned by my/github-load-identity."
      ;; init' is idempotent via the keyfile-exists check, `git add .'
      ;; picks up whatever's there.
      ((not (file-exists-p (expand-file-name ".git" dir)))
-      (my/-repo-fetch-or-create identity))
+      ;; `my/-repo-fetch-or-create' returns `(:error …)' when the GitHub
+      ;; existence probe is inconclusive (network down, DNS failure).
+      ;; Surface that to the caller instead of silently treating a
+      ;; broken network as "all good" — the function already refused
+      ;; to delete the local folder, so we just propagate the bail.
+      (let ((res (my/-repo-fetch-or-create identity)))
+        (when (and (consp res) (eq (car res) :error))
+          (display-warning 'emacs-setup
+                           (format "Bootstrap: repo-sync bailed — %s" (cadr res))
+                           :error))
+        res))
      ;; Has .git but wrong/no remote — selected repo is authoritative.
-     ;; Delete the local folder without prompting, then clone or create the
-     ;; configured GitHub repo.
+     ;; Delete the local folder without prompting, then clone or create
+     ;; the configured GitHub repo.  CRITICAL: verify GitHub
+     ;; reachability BEFORE wiping the local folder — otherwise a
+     ;; transient outage causes data loss (the very bug `my/-repo-
+     ;; exists-on-gh-p' was hardened against). When the probe is
+     ;; inconclusive, bail without deleting.
      (t
-      (let ((current-remote (or (my/git-remote-url dir) "(no git remote)")))
-        (my/-repo-remove-conflicting-local-dir
-         dir user repo (format "wrong remote: %s" current-remote))
-        (my/-repo-fetch-or-create identity))))))
+      (let* ((current-remote (or (my/git-remote-url dir) "(no git remote)"))
+             (probe (my/-repo-exists-on-gh-p user repo)))
+        (cond
+         ((eq probe :network-error)
+          (let ((msg (format "Bootstrap: cannot verify whether %s/%s exists on GitHub (network/DNS/gh failure) — refusing to wipe %s (current remote: %s). Check your connection and re-run M-x my/bootstrap."
+                             user repo dir current-remote)))
+            (display-warning 'emacs-setup msg :error)
+            (message "%s" msg)
+            (list :error (format "network unreachable — refusing to wipe %s" dir))))
+         (t
+          (my/-repo-remove-conflicting-local-dir
+           dir user repo (format "wrong remote: %s" current-remote))
+          (my/-repo-fetch-or-create identity))))))))
 #+end_src
 
 * Step 7.5 — git-crypt unlock for the private repo
@@ -3114,15 +3198,20 @@ Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw."
                  repo repo))))))
 
 (defun my/bootstrap-step--refresh-keychain ()
-  "Pre-clear stale Keychain entries, then rewrite from BW.
+  "Read BW first; only clear+rewrite Keychain when out of sync.
 
-Synchronous BW→Keychain refresh used by step--refresh-keychain.
-Reads top-to-bottom: clear → unlock → sync → read item → build
-entries → write entries.
+Synchronous BW→Keychain refresh. Reads top-to-bottom: verify bw →
+unlock → sync → read item → build entries → already in sync? →
+:skip, else clear → multi-set → :done.
 
-Returns :done / (:error REASON)."
+Atomic from the Emacs session's POV: any error path bails BEFORE
+touching Keychain, so a failed unlock or missing BW item never
+leaves the session credential-less. On the steady-state hot path
+(Keychain already mirrors BW) returns :skip with zero `security'
+writes.
+
+Returns :done / :skip / (:error REASON)."
   (message "Bootstrap step 4: refresh Keychain runtime cache from BW…")
-  (my/bootstrap--keychain-clear-bw-derived)
   (cond
    ((not (my/bw-installed-p))
     '(:error "bw CLI not installed; install with: brew install bitwarden-cli"))
@@ -3138,12 +3227,30 @@ Returns :done / (:error REASON)."
        (t
         (let* ((entries (my/bootstrap--build-keychain-entries item))
                (counts (my/bootstrap--count-entries-by-kind entries)))
-          (my/keychain-multi-set entries)
-          (message "Bootstrap step 4: Keychain refreshed — github=%d, api=%d, git-crypt=%d."
-                   (plist-get counts :github)
-                   (plist-get counts :api)
-                   (plist-get counts :gitcrypt))
-          :done)))))))
+          (cond
+           ((my/bootstrap--keychain-already-in-sync-p entries)
+            (message "Bootstrap step 4: Keychain already in sync with BW — skipping rewrite.")
+            :skip)
+           (t
+            (my/bootstrap--keychain-clear-bw-derived)
+            (my/keychain-multi-set entries)
+            (message "Bootstrap step 4: Keychain refreshed — github=%d, api=%d, git-crypt=%d."
+                     (plist-get counts :github)
+                     (plist-get counts :api)
+                     (plist-get counts :gitcrypt))
+            :done)))))))))
+
+(defun my/bootstrap--keychain-already-in-sync-p (entries)
+  "Return t iff every (SERVICE ACCOUNT VALUE) in ENTRIES already
+matches the current Keychain value (read via `my/keychain-get').
+Used by `my/bootstrap-step--refresh-keychain' as a hot-path guard
+so the steady-state refresh issues zero `security' writes."
+  (cl-every (lambda (triple)
+              (let ((svc (nth 0 triple))
+                    (acc (nth 1 triple))
+                    (val (nth 2 triple)))
+                (equal val (my/keychain-get svc acc))))
+            entries))
 
 (defun my/bootstrap--keychain-clear-bw-derived ()
   "Delete the github + api + all git-crypt entries from Keychain.
