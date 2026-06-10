@@ -4093,9 +4093,18 @@ Builds three sections in place:
 
 (defun my/bootstrap-step--generate-starter-data ()
   "Create boilerplate org/gtd/wiki files in `my/data-dir' if missing.
-Returns :done / :skip."
+
+Returns :done / :skip. Idempotent — `my/generate-starter-data'
+itself skips files that already exist."
   (message "Bootstrap step 5: generate starter data in any gaps…")
-  :skip)
+  (cond
+   ((not (file-directory-p my/data-dir))
+    (message "Bootstrap step 5: skipping — %s is not a directory." my/data-dir)
+    :skip)
+   (t
+    (my/generate-starter-data my/data-dir (my/github-load-identity))
+    (message "Bootstrap step 5: starter files generated for any gaps under %s." my/data-dir)
+    :done)))
 
 (defun my/bootstrap-step--authenticate-gh ()
   "Authenticate the gh CLI using the BW-stored token if not already.
