@@ -3906,10 +3906,74 @@ Wipes any non-matching prior contents at `my/data-dir' first."
     (my/bootstrap-ensure-seed-config-files)))
 
 (defun my/bootstrap-step--unlock-git-crypt ()
-  "If the cloned repo uses git-crypt, unlock with the key from BW.
-Returns :done / :skip / (:error REASON)."
+  "If the cloned repo uses git-crypt, unlock with the matching key.
+
+Branches (top-to-bottom):
+  - repo doesn't declare git-crypt    → :skip
+  - already unlocked on this Mac      → :skip (idempotent)
+  - git-crypt CLI not installable     → (:error \"…\")
+  - key found in BW or Keychain       → unlock + :done
+  - opted-out sentinel set             → :skip
+  - repo created in THIS bootstrap run → auto-init + :done
+  - else (encrypted clone, no key)    → (:error \"…\")"
   (message "Bootstrap step 3: git-crypt unlock (no-op if not encrypted)…")
-  :skip)
+  (let ((id (my/github-load-identity)))
+    (cond
+     ((not (my/bootstrap--repo-uses-git-crypt-p)) :skip)
+     ((my/bootstrap--repo-already-git-crypt-unlocked-p) :skip)
+     ((not (my/bootstrap--ensure-git-crypt-installed))
+      '(:error "git-crypt not installed; install manually: brew install git-crypt"))
+     (t (my/bootstrap--apply-git-crypt-key id)))))
+
+(defun my/bootstrap--repo-uses-git-crypt-p ()
+  "Return t when `my/data-dir' is a git repo that declares git-crypt."
+  (and (file-directory-p my/data-dir)
+       (my/repo-uses-git-crypt-p my/data-dir)))
+
+(defun my/bootstrap--repo-already-git-crypt-unlocked-p ()
+  "Return t when `my/data-dir' already has its git-crypt session active."
+  (my/repo-already-unlocked-p my/data-dir))
+
+(defun my/bootstrap--ensure-git-crypt-installed ()
+  "Install git-crypt via brew if missing. Returns t iff present after."
+  (unless (my/git-crypt-installed-p)
+    (message "Bootstrap step 3: installing git-crypt via brew…")
+    (my/git-crypt-install))
+  (my/git-crypt-installed-p))
+
+(defun my/bootstrap--apply-git-crypt-key (id)
+  "Read the per-repo key from BW + Keychain, dispatch on what we find.
+Returns :done / :skip / (:error REASON)."
+  (let* ((repo (plist-get id :repo))
+         (pair (and repo (my/-git-crypt-read repo)))
+         (bw-val (car pair))
+         (kc-val (cdr pair)))
+    (cond
+     ((not repo)
+      (message "Bootstrap step 3: BW.Repo blank; cannot derive per-repo key slot.")
+      :skip)
+     ((or (my/-git-crypt-sentinel-p bw-val)
+          (my/-git-crypt-sentinel-p kc-val))
+      (message "Bootstrap step 3: git-crypt skipped for repo '%s' (sentinel set; M-x my/git-crypt-reset to revive)."
+               repo)
+      :skip)
+     ((my/-git-crypt-real-key-p bw-val)
+      (message "Bootstrap step 3: git-crypt key for repo '%s' from BW." repo)
+      (my/git-crypt-unlock my/data-dir bw-val)
+      :done)
+     ((my/-git-crypt-real-key-p kc-val)
+      (message "Bootstrap step 3: git-crypt key for repo '%s' from Keychain." repo)
+      (my/git-crypt-unlock my/data-dir kc-val)
+      :done)
+     (my/bootstrap-repo-created-this-run
+      (message "Bootstrap step 3: no key in BW/Keychain — auto-initializing this newly-created repo.")
+      (my/-repo-auto-init-git-crypt my/data-dir repo)
+      :done)
+     (t
+      `(:error
+        ,(format "Repo '%s' uses git-crypt but no matching key was found in BW or Keychain. \
+Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw."
+                 repo repo))))))
 
 (defun my/bootstrap-step--refresh-keychain ()
   "Pre-clear stale Keychain entries; rewrite from BW.
