@@ -2518,8 +2518,11 @@ gating + replacement of inline prompts) lands in subsequent commits.
 (defvar-local my/-config-form-rows nil
   "Buffer-local alist of (KEY . WIDGET) for the current setup form.")
 
-(defvar-local my/-config-form-skip-checkboxes nil
-  "Buffer-local alist of (KEY . CHECKBOX-WIDGET) for the skip toggles.")
+(defvar-local my/-config-form-skip-eligible nil
+  "Buffer-local list of row keys that are skip-eligible.
+Populated by `my/-config-form-insert-row' when SKIP-ELIGIBLE is non-nil.
+Consumed by `my/-config-form-collect' to decide that an empty submit
+on one of these rows means \"write `my/api-skipped-sentinel'\".")
 
 (defconst my/-config-form-secret-placeholder "••••••••"
   "Literal pre-fill string used for SECRET rows whose stored value is
@@ -2541,10 +2544,10 @@ button the user pressed.")
 (defun my/-config-form-status (cur-value)
   "Return a short status string describing CUR-VALUE."
   (cond
-   ((null cur-value)                                  "[not set]")
-   ((string= cur-value my/api-skipped-sentinel)       "[skipped]")
-   ((string-empty-p cur-value)                        "[not set]")
-   (t                                                 "[set]")))
+   ((null cur-value)                            "[not set]")
+   ((string= cur-value my/api-skipped-sentinel) "[skipped — type to set]")
+   ((string-empty-p cur-value)                  "[not set]")
+   (t                                           "[set]")))
 
 (defun my/-config-form-current-gh-field (item field)
   "Read FIELD from ITEM (parsed alist or nil), return string or nil.
@@ -2573,11 +2576,13 @@ CURRENT  current stored value (string or nil). Status indicator
                                           unless the user clears + retypes)
            value blank or sentinel      → field starts empty
 SECRET   non-nil renders the field with masked echo characters.
-SKIP-ELIGIBLE non-nil adds a checkbox to the right; checked = write
-              `my/api-skipped-sentinel' on save. ALWAYS defaults to
-              unchecked regardless of stored value — the visible
-              `[skipped]' status indicator is enough for the user to
-              see the current opt-out state.
+SKIP-ELIGIBLE non-nil marks the row as opt-out-able. An empty
+              submit on such a row writes `my/api-skipped-sentinel'
+              to BW + Keychain. The user CLEARS the secret
+              placeholder (or types nothing on a fresh row) and
+              the row records as `:skip'. The previous per-row
+              checkbox UX is gone — the empty-submit rule is the
+              single signal.
 HELP     optional one-line help string printed under the input."
   (widget-insert
    (format "  %-22s %s\n  %-22s "
@@ -2601,15 +2606,7 @@ HELP     optional one-line help string printed under the input."
          (field (apply #'widget-create 'editable-field args)))
     (push (cons key field) my/-config-form-rows))
   (when skip-eligible
-    (widget-insert "  ")
-    ;; Checkbox initial value is hard-coded nil. Even when the stored
-    ;; value already equals `my/api-skipped-sentinel' we DON'T pre-tick:
-    ;; the status indicator already shows `[skipped]', and pre-ticking
-    ;; led to surprising "I clicked Save and now everything's skipped"
-    ;; behaviour after a single accidental Save.
-    (let ((cb (widget-create 'checkbox nil)))
-      (push (cons key cb) my/-config-form-skip-checkboxes))
-    (widget-insert " Skip permanently"))
+    (push key my/-config-form-skip-eligible))
   (widget-insert "\n")
   (when help
     (widget-insert (format "    %s\n" help)))
@@ -2622,34 +2619,35 @@ HELP     optional one-line help string printed under the input."
     (let ((v (widget-value w)))
       (and (stringp v) (string-trim v)))))
 
-(defun my/-config-form-row-skipped-p (key)
-  "Non-nil when the Skip checkbox for KEY is ticked."
-  (when-let* ((cb (cdr (assoc key my/-config-form-skip-checkboxes))))
-    (widget-value cb)))
-
 (defun my/-config-form-collect ()
   "Return an alist (KEY . PLIST) of intended changes from the form.
 PLIST keys: :value (string or `:skip' or `:unchanged').
 
 Resolution order per row:
-  - checkbox ticked                        → :skip
-  - typed = `my/-config-form-secret-placeholder' → :unchanged
+  - typed = `my/-config-form-secret-placeholder'      → :unchanged
     (user left the secret placeholder intact; keep the stored value)
-  - typed blank or nil                     → :unchanged
-  - otherwise                              → :value typed"
+  - typed blank/nil AND row is skip-eligible          → :skip
+    (write `my/api-skipped-sentinel'; the placeholder-based UX
+    means the user EXPLICITLY cleared the field, or never set it)
+  - typed blank/nil AND row is NOT skip-eligible      → :unchanged
+    (required-field rows can't be wiped from the form; the
+    orchestrator will re-open the form if the field is still
+    missing on the next launch)
+  - otherwise                                         → :value typed"
   (mapcar
    (lambda (kv)
-     (let* ((key   (car kv))
-            (skip  (my/-config-form-row-skipped-p key))
-            (typed (my/-config-form-row-value key)))
+     (let* ((key       (car kv))
+            (skip-elig (memq key my/-config-form-skip-eligible))
+            (typed     (my/-config-form-row-value key))
+            (blank     (or (null typed) (string-empty-p typed))))
        (cons key
              (cond
-              (skip
-               (list :value :skip))
               ((and (stringp typed)
                     (string= typed my/-config-form-secret-placeholder))
                (list :value :unchanged))
-              ((or (null typed) (string-empty-p typed))
+              ((and blank skip-elig)
+               (list :value :skip))
+              (blank
                (list :value :unchanged))
               (t
                (list :value typed))))))
@@ -2838,13 +2836,14 @@ fields are missing."
       (erase-buffer)
       (remove-overlays))
     (setq my/-config-form-rows nil
-          my/-config-form-skip-checkboxes nil)
+          my/-config-form-skip-eligible nil)
     (widget-insert "Emacs Distro Setup\n")
     (widget-insert "==================\n\n")
     (widget-insert "Each row's typed value is written to BOTH macOS Keychain (runtime\n")
     (widget-insert "cache) AND your Bitwarden 'emacs_credentials' item (cross-Mac source).\n")
-    (widget-insert "Leave blank to keep the current value. Tick [Skip] under an API key\n")
-    (widget-insert "to permanently opt out of it (__SKIPPED__ sentinel, never re-prompted).\n\n")
+    (widget-insert "Secrets that are already stored show as `********' — leave them alone\n")
+    (widget-insert "to keep the value. Clear an API key field and Save to opt out of it\n")
+    (widget-insert "permanently (__SKIPPED__ sentinel, never re-prompted).\n\n")
 
     (widget-insert "Bitwarden vault access\n----------------------\n")
     (my/-config-form-insert-row
@@ -2915,8 +2914,9 @@ github.com/<username>/emacs15.")
     (widget-create 'push-button :notify #'my/-config-form-cancel "Cancel")
     (widget-insert "\n\n")
     (widget-insert "Tip: TAB moves between fields; RET on a button activates it.\n")
-    (widget-insert "    Status indicators ([set] / [not set] / [skipped]) reflect the\n")
-    (widget-insert "    value STORED at the moment the form opened, not what you type.\n")
+    (widget-insert "    Status indicators ([set] / [not set] / [skipped — type to set])\n")
+    (widget-insert "    reflect the value STORED at the moment the form opened, not what\n")
+    (widget-insert "    you type.\n")
 
     (use-local-map widget-keymap)
     (widget-setup)
