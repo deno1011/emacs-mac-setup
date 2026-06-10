@@ -3708,3 +3708,167 @@ github.com/<username>/emacs15.")
 ;; file's evaluation and leaving the form permanently unavailable.
 (my/bootstrap-resolve-data-dir-now)
 #+end_src
+
+* Step 13 — Business-logic layer (orchestrator + step stubs)
+
+The bootstrap so far is correct but hard to read: a mix of async
+chains, throws, predicates, hooks-of-hooks. This section introduces a
+single TOP-LEVEL ORCHESTRATOR that any reader can scan top-to-bottom
+to know exactly what bootstrap does, in what order, with which
+failure modes.
+
+Each step is a separate function with one named responsibility. Each
+step returns a symbol:
+
+  =:done=        — step completed normally (or was a no-op)
+  =:skip=        — step decided to do nothing for a real reason
+  =:need-input=  — step can't proceed without user input;
+                   orchestrator should open the config form + restart
+  =(:error R)=   — step failed (orchestrator decides how to react)
+
+The orchestrator is the only place that knows the OVERALL sequence;
+each step knows only its own job and the primitives it calls.
+
+This commit (1/N): orchestrator + step SIGNATURES only. Step bodies
+are stubs that either delegate to existing logic or no-op. Bootstrap
+remains functional end-to-end during the refactor; subsequent commits
+implement one step at a time.
+
+#+begin_src emacs-lisp :tangle yes
+;;; ============================================================
+;;; Bootstrap business logic — read this section for the flow.
+;;; ============================================================
+
+(defun my/bootstrap-orchestrate ()
+  "Top-level bootstrap recipe.
+
+Reads top-to-bottom. Each line is a single named step; each step
+is implemented as its own function below. The orchestrator's only
+job is sequencing + reacting to `:need-input' (open the form,
+restart) or `:error' (display a warning, stop)."
+  (interactive)
+  (message "Bootstrap: starting orchestrator (business-logic layer)…")
+  (catch 'my/bootstrap-bail
+    ;; 1. Where does this Mac's data live?
+    (my/bootstrap--dispatch (my/bootstrap-step--resolve-data-dir))
+
+    ;; 2. Is the private repo cloned into that folder? Clone if not.
+    (my/bootstrap--dispatch (my/bootstrap-step--ensure-data-folder))
+
+    ;; 3. Is git-crypt configured? Unlock if so.
+    (my/bootstrap--dispatch (my/bootstrap-step--unlock-git-crypt))
+
+    ;; 4. Sync the Keychain runtime cache from BW.
+    (my/bootstrap--dispatch (my/bootstrap-step--refresh-keychain))
+
+    ;; 5. Generate starter org/wiki files in any gaps.
+    (my/bootstrap--dispatch (my/bootstrap-step--generate-starter-data))
+
+    ;; 6. Is gh CLI authenticated? Auth if not.
+    (my/bootstrap--dispatch (my/bootstrap-step--authenticate-gh))
+
+    ;; 7. Lock BW, log summary.
+    (my/bootstrap--dispatch (my/bootstrap-step--finalize))
+
+    (message "Bootstrap: done.")))
+
+(defun my/bootstrap--dispatch (step-result)
+  "React to a step's return symbol.
+:done / :skip   → continue silently
+:need-input     → open the setup form, throw `my/bootstrap-bail'
+(:error REASON) → warn with REASON, throw `my/bootstrap-bail'."
+  (pcase step-result
+    (:done nil)
+    (:skip nil)
+    (:need-input
+     (my/bootstrap-step--open-config-form-and-restart)
+     (throw 'my/bootstrap-bail :need-input))
+    (`(:error ,reason)
+     (display-warning 'emacs-setup
+                      (format "Bootstrap aborted: %s" reason)
+                      :warning)
+     (throw 'my/bootstrap-bail :error))
+    (other
+     (display-warning 'emacs-setup
+                      (format "Bootstrap step returned unexpected value: %S" other)
+                      :warning)
+     (throw 'my/bootstrap-bail :unexpected))))
+
+;;; ============================================================
+;;; Steps — short, single responsibility, return a symbol.
+;;; STUBS in this commit; one wired per subsequent commit.
+;;; ============================================================
+
+(defun my/bootstrap-step--resolve-data-dir ()
+  "Set `my/data-dir' from one of (priority order):
+  1. ~/.emacs.d/data-dir.el on disk (cached choice)
+  2. BW.Repo via cached Keychain creds (silent unlock)
+  3. nothing → returns :need-input so the form can collect input.
+Returns :done / :need-input."
+  (message "Bootstrap step 1: resolve data folder location…")
+  (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
+    (cond
+     ((file-exists-p data-dir-el) :done)
+     ((my/bootstrap--try-resolve-from-bw data-dir-el) :done)
+     (t :need-input))))
+
+(defun my/bootstrap-step--ensure-data-folder ()
+  "Ensure the private GitHub repo is cloned into `my/data-dir'.
+Returns :done / :skip / (:error REASON)."
+  (message "Bootstrap step 2: ensure data folder is a clone of the private repo…")
+  ;; STUB — wired in commit 3. For now, delegate to existing logic
+  ;; via `my/bootstrap--run-full-sync' inside `my/bootstrap-orchestrate-legacy'.
+  :skip)
+
+(defun my/bootstrap-step--unlock-git-crypt ()
+  "If the cloned repo uses git-crypt, unlock with the key from BW.
+Returns :done / :skip / (:error REASON)."
+  (message "Bootstrap step 3: git-crypt unlock (no-op if not encrypted)…")
+  :skip)
+
+(defun my/bootstrap-step--refresh-keychain ()
+  "Pre-clear stale Keychain entries; rewrite from BW.
+Returns :done / (:error REASON)."
+  (message "Bootstrap step 4: refresh Keychain runtime cache from BW…")
+  :done)
+
+(defun my/bootstrap-step--generate-starter-data ()
+  "Create boilerplate org/gtd/wiki files in `my/data-dir' if missing.
+Returns :done / :skip."
+  (message "Bootstrap step 5: generate starter data in any gaps…")
+  :skip)
+
+(defun my/bootstrap-step--authenticate-gh ()
+  "Authenticate the gh CLI using the BW-stored token if not already.
+Returns :done / :skip / (:error REASON)."
+  (message "Bootstrap step 6: authenticate gh CLI…")
+  :skip)
+
+(defun my/bootstrap-step--finalize ()
+  "Lock the BW vault, emit a one-line summary. Returns :done."
+  (message "Bootstrap step 7: finalize (lock BW, emit summary)…")
+  (when my/bw-session (my/bw-lock))
+  :done)
+
+(defun my/bootstrap-step--open-config-form-and-restart ()
+  "Open `my/bootstrap-config-form' synchronously, block on
+`recursive-edit', then tell the user to restart.
+
+Currently delegates to the existing first-launch helper so bootstrap
+remains functional during the refactor; this commit just wires the
+dispatch path."
+  (my/bootstrap--first-launch-blocking-form
+   (expand-file-name "data-dir.el" user-emacs-directory)))
+
+;;; ============================================================
+;;; LEGACY PATH — keeps the old `my/bootstrap' working for now.
+;;; Will be deleted in the final cleanup commit once every step
+;;; has its own implementation.
+;;; ============================================================
+;;
+;; `my/bootstrap' (the function bound to emacs-startup-hook in
+;; config.org) still points at the old logic; the orchestrator is
+;; runnable explicitly via `M-x my/bootstrap-orchestrate' so you can
+;; A/B compare. Subsequent commits will flip the hook to call the
+;; orchestrator once each step is fleshed out.
+#+end_src
