@@ -3804,13 +3804,52 @@ restart) or `:error' (display a warning, stop)."
   1. ~/.emacs.d/data-dir.el on disk (cached choice)
   2. BW.Repo via cached Keychain creds (silent unlock)
   3. nothing → returns :need-input so the form can collect input.
-Returns :done / :need-input."
+
+Returns :done if `my/data-dir' is settled, :need-input otherwise."
   (message "Bootstrap step 1: resolve data folder location…")
   (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
     (cond
-     ((file-exists-p data-dir-el) :done)
-     ((my/bootstrap--try-resolve-from-bw data-dir-el) :done)
-     (t :need-input))))
+     ;; 1. Cached choice on disk.
+     ((file-exists-p data-dir-el)
+      (message "Bootstrap step 1: data folder = %s (cached in %s)."
+               my/data-dir data-dir-el)
+      :done)
+     ;; 2. Silent restore from BW via cached Keychain creds.
+     ((my/bootstrap--restore-data-dir-from-bw)
+      :done)
+     ;; 3. Need user input.
+     (t
+      (message "Bootstrap step 1: no cached choice, no Keychain creds — form needed.")
+      :need-input))))
+
+(defun my/bootstrap--restore-data-dir-from-bw ()
+  "Try to derive `my/data-dir' from BW using cached Keychain creds.
+ZERO PROMPTS, ZERO UI. Returns t on success, nil on any failure.
+
+Idempotent: failure leaves no partial state (no data-dir.el written,
+`my/data-dir' unchanged). Success writes data-dir.el and sets the
+in-memory `my/data-dir' / `my/bw-session'."
+  (and (my/bw-installed-p)
+       (let ((email  (my/keychain-get my/keychain-service
+                                      my/keychain-account-bw-email))
+             (master (my/keychain-get my/keychain-service
+                                      my/keychain-account-bw-master)))
+         (and (not (my/-blank-p email))
+              (not (my/-blank-p master))
+              (let ((session (my/bw--unlock-internal email master)))
+                (and session
+                     (progn (setq my/bw-session (copy-sequence session)) t)
+                     (let* ((item (my/bw-get-item my/bw-credentials-item))
+                            (repo (and item (my/bw-item-field item "Repo")))
+                            (target (and (not (my/-blank-p repo))
+                                         (my/bootstrap-data-dir-for-repo repo))))
+                       (and target
+                            (progn
+                              (setq my/data-dir target)
+                              (my/bootstrap-write-data-dir-selection target)
+                              (message "Bootstrap step 1: data folder = %s (restored from BW.Repo='%s', no form needed)."
+                                       target repo)
+                              t)))))))))
 
 (defun my/bootstrap-step--ensure-data-folder ()
   "Ensure the private GitHub repo is cloned into `my/data-dir'.
