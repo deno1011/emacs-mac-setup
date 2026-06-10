@@ -881,24 +881,39 @@ real issue, add a chained second-stage task here."
                               (string-trim (substring out 0 (min 120 (length out))))))))))
        :on-failure
        (lambda (err)
-         (funcall cb nil (my/-bw-get-item-async-format-error item-name err))))))
+         (my/-bw-get-item-async-handle-failure cb item-name err)))))
     nil))
 
-;; Explanation: format bw async errors, recognising duplicate-item case.
-(defun my/-bw-get-item-async-format-error (item-name err)
-  "Map a raw bw-cli stderr ERR into a clearer user-facing error string.
+;; Explanation: handle async bw failures, with duplicate-item recovery.
+(defun my/-bw-get-item-async-handle-failure (cb item-name err)
+  "Map a raw bw-cli stderr ERR into either a recovered item or a
+clear user-facing error string. Calls (funcall CB ITEM ERR-OR-NIL).
+
 Currently special-cases `More than one result was found' (duplicate
-items in BW vault) with a remediation hint. Other errors pass
-through unchanged."
+items in BW vault — happens when bw cli's name search is fuzzy
+enough to match multiple items, e.g. `emacs-credentials' fuzzy-
+matches both `emacs_credentials' and `old_emacs_credentials').
+Falls back to the SYNC `my/bw-get-item' on that path, which already
+implements the duplicate fallback via `bw list items --search NAME'
++ exact-name filter + most-fields sort. Other errors pass through
+unchanged as a callback error string."
   (let ((msg (or err "bw exited non-zero")))
     (cond
      ((and (stringp msg)
            (string-match-p "More than one result was found" msg))
-      (format "BW vault has DUPLICATE items named '%s'. \
-Delete the stale one in the BW web/desktop client and restart Emacs. \
-bw said: %s"
-              item-name (string-trim msg)))
-     (t msg))))
+      ;; Recovery: sync version's duplicate fallback picks the exact-
+      ;; name match with the most fields. Synchronous but only fires
+      ;; in the rare duplicate-error case (already on the main thread
+      ;; in the callback context).
+      (let ((item (my/bw-get-item item-name)))
+        (cond
+         (item (funcall cb item nil))
+         (t    (funcall cb nil
+                        (format "BW vault has multiple items fuzzy-matching '%s' \
+and none with that EXACT name. Rename the desired item to '%s' in the BW \
+web/desktop client and restart Emacs. bw said: %s"
+                                item-name item-name (string-trim msg)))))))
+     (t (funcall cb nil msg)))))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
