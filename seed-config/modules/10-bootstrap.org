@@ -3381,10 +3381,16 @@ retry without re-typing everything; on success it is killed and
                       changes)
             (message "Setup form: nothing to save (all rows unchanged)."))
            (t
-            ;; Step 1: cache form-entered BW email + master to Keychain
-            ;; BEFORE unlock, so `my/bw-unlock' takes the cached path.
-            (message "Setup form: caching BW credentials to Keychain…")
-            (redisplay t)
+            ;; --- Pre-compute everything we plan to write ------------
+            ;; Strategy: ONE bw call for the whole credentials item
+            ;; (GH identity bundle + every API key field), ONE Keychain
+            ;; multi-set for the runtime cache.
+            ;;
+            ;; Why: the previous per-row approach did 2 bw subprocesses
+            ;; per API key (get + edit) plus its own get+edit for the
+            ;; GH bundle — 12-16 subprocesses on a fresh save, ~20-30
+            ;; seconds. Batching reduces it to ~3 subprocesses
+            ;; (1 bw get + 1 bw edit + 1 multi-keychain bash).
             (let* ((bw-email-row  (alist-get 'bw-email  changes))
                    (bw-master-row (alist-get 'bw-master changes))
                    (new-email
@@ -3394,69 +3400,76 @@ retry without re-typing everything; on success it is killed and
                    (new-master
                     (and (consp bw-master-row)
                          (stringp (plist-get bw-master-row :value))
-                         (plist-get bw-master-row :value))))
+                         (plist-get bw-master-row :value)))
+                   (gh-fields '()) gh-user gh-token
+                   (api-fields '())
+                   (keychain-entries '()))
+              ;; Walk changes once, build the four batches.
+              (dolist (kv changes)
+                (let* ((key (car kv))
+                       (val (plist-get (cdr kv) :value))
+                       (kn  (symbol-name key))
+                       (env-key (and (string-prefix-p "api/" kn)
+                                     (substring kn 4))))
+                  (cond
+                   ((eq val :unchanged) nil)
+                   (env-key
+                    (let ((wv (if (eq val :skip)
+                                  my/api-skipped-sentinel val)))
+                      (push (cons env-key wv) api-fields)
+                      (push (list my/keychain-service env-key wv)
+                            keychain-entries)
+                      (if (eq val :skip) (cl-incf skipped) (cl-incf written))))
+                   ((memq key '(gh-username gh-token gh-email gh-fullname gh-repo))
+                    (when (and (stringp val) (not (string-empty-p val)))
+                      (pcase key
+                        ('gh-username (setq gh-user val))
+                        ('gh-token    (setq gh-token val))
+                        ('gh-email    (push (cons "Email"    val) gh-fields))
+                        ('gh-fullname (push (cons "Fullname" val) gh-fields))
+                        ('gh-repo     (push (cons "Repo"     val) gh-fields))))))))
+              ;; Step 1: cache BW email + master to Keychain BEFORE
+              ;; unlock so my/bw-unlock takes the cached path.
+              (message "Setup form: caching BW credentials to Keychain…")
+              (redisplay t)
               (when (and new-email (not (string-empty-p new-email)))
                 (my/keychain-set my/keychain-service new-email
                                  my/keychain-account-bw-email))
               (when (and new-master (not (string-empty-p new-master)))
                 (my/keychain-set my/keychain-service new-master
-                                 my/keychain-account-bw-master)))
-            ;; Step 2: ensure BW is unlocked. Uses Keychain creds we
-            ;; just wrote in step 1.
-            (unless my/bw-session
-              (message "Setup form: unlocking Bitwarden vault (this may take 1–2 seconds)…")
-              (redisplay t)
-              (unless (my/bw-unlock)
-                (error "BW unlock declined or failed (master password? bw CLI installed?)")))
-            ;; Step 3a: API key rows — dual-write each.
-            (dolist (kv changes)
-              (let* ((key (car kv))
-                     (val (plist-get (cdr kv) :value))
-                     (kn  (symbol-name key))
-                     (env-key (and (string-prefix-p "api/" kn)
-                                   (substring kn 4))))
-                (when (and env-key (not (eq val :unchanged)))
-                  (message "Setup form: writing %s to BW + Keychain…" env-key)
-                  (redisplay t)
-                  (let ((write-val (if (eq val :skip)
-                                       my/api-skipped-sentinel
-                                     val)))
-                    (my/keychain-set my/keychain-service write-val env-key)
-                    (my/bw-api-key-set env-key write-val)
-                    (if (eq val :skip) (cl-incf skipped) (cl-incf written))))))
-            ;; Step 3b: GH identity rows — accumulate, write as one
-            ;; update/create.
-            (let ((gh-fields '()) gh-user gh-token any-gh)
-              (dolist (kv changes)
-                (let ((key (car kv))
-                      (val (plist-get (cdr kv) :value)))
-                  (when (and (not (eq val :unchanged))
-                             (not (eq val :skip))
-                             (memq key '(gh-username gh-token gh-email
-                                         gh-fullname gh-repo)))
-                    (setq any-gh t)
-                    (pcase key
-                      ('gh-username (setq gh-user val))
-                      ('gh-token    (setq gh-token val))
-                      ('gh-email    (push (cons "Email"    val) gh-fields))
-                      ('gh-fullname (push (cons "Fullname" val) gh-fields))
-                      ('gh-repo     (push (cons "Repo"     val) gh-fields))))))
-              (when any-gh
-                (message "Setup form: writing GitHub identity bundle to BW…")
+                                 my/keychain-account-bw-master))
+              ;; Step 2: unlock BW.
+              (unless my/bw-session
+                (message "Setup form: unlocking Bitwarden vault (1-2 sec)…")
                 (redisplay t)
-                (let ((item (my/bw-get-item my/bw-credentials-item)))
+                (unless (my/bw-unlock)
+                  (error "BW unlock declined or failed (master password? bw CLI installed?)")))
+              ;; Step 3: ONE bw call writing GH identity + every
+              ;; API field at once.
+              (when (or gh-user gh-token gh-fields api-fields)
+                (message "Setup form: writing 1 BW item with %d field(s) (single call)…"
+                         (+ (length gh-fields) (length api-fields)))
+                (redisplay t)
+                (let* ((merged-fields (append gh-fields api-fields))
+                       (item (my/bw-get-item my/bw-credentials-item)))
                   (cond
                    (item
                     (my/bw-update-item my/bw-credentials-item
                                        :username gh-user
                                        :password gh-token
-                                       :fields   gh-fields))
+                                       :fields   merged-fields))
                    (t
                     (my/bw-create-item my/bw-credentials-item
                                        :username (or gh-user "")
                                        :password (or gh-token "")
-                                       :fields   gh-fields)))
-                  (cl-incf written))))
+                                       :fields   merged-fields)))
+                  (when (or gh-user gh-token gh-fields) (cl-incf written))))
+              ;; Step 4: ONE Keychain batch write for the runtime cache.
+              (when keychain-entries
+                (message "Setup form: caching %d API value(s) to Keychain…"
+                         (length keychain-entries))
+                (redisplay t)
+                (my/keychain-multi-set keychain-entries)))
             (message "Setup form: saved %d / skipped %d row(s) to BW + Keychain."
                      written skipped)
             (setq saved-anything (or (> written 0) (> skipped 0)))))
