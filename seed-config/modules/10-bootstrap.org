@@ -3976,10 +3976,120 @@ Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw."
                  repo repo))))))
 
 (defun my/bootstrap-step--refresh-keychain ()
-  "Pre-clear stale Keychain entries; rewrite from BW.
+  "Pre-clear stale Keychain entries, then rewrite from BW.
+
+Synchronous replacement for `my/keychain-refresh-from-bw-async'.
+Reads top-to-bottom: clear → unlock → sync → read item → build
+entries → write entries.
+
 Returns :done / (:error REASON)."
   (message "Bootstrap step 4: refresh Keychain runtime cache from BW…")
-  :done)
+  (my/bootstrap--keychain-clear-bw-derived)
+  (cond
+   ((not (my/bw-installed-p))
+    '(:error "bw CLI not installed; install with: brew install bitwarden-cli"))
+   ((not (or my/bw-session (my/bw-unlock)))
+    '(:error "BW could not be unlocked (cached master missing or wrong)"))
+   (t
+    (my/bootstrap--bw-sync-local-cache)
+    (let ((item (my/bw-get-item my/bw-credentials-item)))
+      (cond
+       ((not item)
+        `(:error ,(format "BW item '%s' not found (or vault has fuzzy duplicates blocking exact match)"
+                          my/bw-credentials-item)))
+       (t
+        (let* ((entries (my/bootstrap--build-keychain-entries item))
+               (counts (my/bootstrap--count-entries-by-kind entries)))
+          (my/keychain-multi-set entries)
+          (message "Bootstrap step 4: Keychain refreshed — github=%d, api=%d, git-crypt=%d."
+                   (plist-get counts :github)
+                   (plist-get counts :api)
+                   (plist-get counts :gitcrypt))
+          :done)))))))
+
+(defun my/bootstrap--keychain-clear-bw-derived ()
+  "Delete the github + api + all git-crypt entries from Keychain.
+Preserves bw-email + bw-master (the unlock cache) so subsequent
+launches can still silent-restore."
+  (dolist (acct (list my/keychain-account-github-username
+                      my/keychain-account-github-token
+                      my/keychain-account-github-email
+                      my/keychain-account-github-fullname
+                      my/keychain-account-github-repo
+                      my/keychain-account-github-skipped))
+    (my/keychain-delete my/keychain-service acct))
+  (dolist (env-var my/api-key-fields)
+    (my/keychain-delete my/keychain-service env-var))
+  ;; Drain every per-repo git-crypt entry (account names are dynamic).
+  (while (zerop (call-process-shell-command
+                 (format "security delete-generic-password -s %s >/dev/null 2>&1"
+                         (shell-quote-argument my/git-crypt-keychain-service))
+                 nil nil))))
+
+(defun my/bootstrap--bw-sync-local-cache ()
+  "Synchronously run `bw sync' so the local data.json reflects the server."
+  (when my/bw-session
+    (call-process-shell-command
+     (format "bw --nointeraction sync --session %s >/dev/null 2>&1"
+             (shell-quote-argument my/bw-session))
+     nil nil)))
+
+(defun my/bootstrap--build-keychain-entries (item)
+  "Return a list of (SERVICE ACCOUNT VALUE) triples to write from BW ITEM.
+
+Builds three sections in place:
+  - GitHub identity (under `my/keychain-service')
+  - API keys        (under `my/keychain-service')
+  - git-crypt keys  (under `my/git-crypt-keychain-service', one
+                     entry per repo under BOTH bare name AND the
+                     full `GitCryptKey:<repo>' account)."
+  (let ((entries '())
+        (skipped (my/bw-item-field item "GitHubSkipped")))
+    ;; --- GitHub identity ---
+    (cond
+     ((and skipped (string= skipped my/api-skipped-sentinel))
+      (push (list my/keychain-service
+                  my/keychain-account-github-skipped
+                  my/api-skipped-sentinel)
+            entries))
+     (t
+      (dolist (pair `((,my/keychain-account-github-username . ,(my/bw-item-username item))
+                      (,my/keychain-account-github-token    . ,(my/bw-item-password item))
+                      (,my/keychain-account-github-email    . ,(my/bw-item-field item "Email"))
+                      (,my/keychain-account-github-fullname . ,(my/bw-item-field item "Fullname"))
+                      (,my/keychain-account-github-repo     . ,(my/bw-item-field item "Repo"))))
+        (unless (my/-blank-p (cdr pair))
+          (push (list my/keychain-service (car pair) (cdr pair))
+                entries)))))
+    ;; --- API keys ---
+    (dolist (env-var my/api-key-fields)
+      (let ((v (my/bw-item-field item env-var)))
+        (unless (my/-blank-p v)
+          (push (list my/keychain-service env-var v) entries))))
+    ;; --- git-crypt per-repo keys ---
+    (dolist (field (my/bw-item-fields-list item))
+      (let ((name  (cdr (assoc 'name  field)))
+            (value (cdr (assoc 'value field))))
+        (when (and (stringp name)
+                   (string-match "\\`GitCryptKey:\\(.+\\)\\'" name)
+                   (not (my/-blank-p value)))
+          (push (list my/git-crypt-keychain-service (match-string 1 name) value)
+                entries)
+          (push (list my/git-crypt-keychain-service name value)
+                entries))))
+    entries))
+
+(defun my/bootstrap--count-entries-by-kind (entries)
+  "Return a plist counting ENTRIES by kind: :github, :api, :gitcrypt."
+  (let ((g 0) (a 0) (gc 0))
+    (dolist (e entries)
+      (let ((service (nth 0 e))
+            (account (nth 1 e)))
+        (cond
+         ((string= service my/git-crypt-keychain-service) (cl-incf gc))
+         ((member account my/api-key-fields)              (cl-incf a))
+         (t                                                (cl-incf g)))))
+    (list :github g :api a :gitcrypt gc)))
 
 (defun my/bootstrap-step--generate-starter-data ()
   "Create boilerplate org/gtd/wiki files in `my/data-dir' if missing.
