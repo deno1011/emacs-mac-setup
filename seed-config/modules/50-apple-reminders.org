@@ -7,7 +7,7 @@ sync between org-mode and Apple Reminders.
 macOS only (JXA/osascript required).
 
 #+begin_src emacs-lisp :tangle yes
-;;; 55-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
+;;; 50-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
 (defvar org-apple-reminders-sync-file)
@@ -54,9 +54,9 @@ The package binds its own keymap under =C-c r= (=C-c r R= sync, =C-c r p= /
 delete, …), so no manual =global-set-key= calls are needed.
 
 #+begin_src emacs-lisp :tangle yes
-;; No data-dir.el gate. The 10-bootstrap module runs the orchestrator
+;; No data-dir.el gate. The 20-bootstrap module runs the orchestrator
 ;; synchronously at the END of its own tangled load — see Step 9 of
-;; modules/10-bootstrap.org — so by the time this module tangles,
+;; modules/20-bootstrap.org — so by the time this module tangles,
 ;; `my/data-dir' has its final value (Keychain.GitHubRepo, BW.Repo,
 ;; or the form's typed value, whichever the probe settled). The
 ;; `:config' setq below resolves directly to ~/CHOSEN-REPO/data/org/

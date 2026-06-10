@@ -1,9 +1,10 @@
 #+TITLE: Bootstrap — Bitwarden, GitHub, Personal data, Secrets
 #+STARTUP: overview
 
-Loaded *first* by [[file:../config.org][config.org]]'s discovery loop (numeric prefix =10-=
-puts it ahead of every other module). Everything here runs before
-[[file:20-core.org][20-core.org]], [[file:50-org.org][50-org.org]], etc., so by the time the rest of the
+Loaded EARLY by [[file:../config.org][config.org]]'s discovery loop (numeric prefix =20-=
+puts it ahead of every module that contains a load-time
+=use-package= call). Everything here runs before
+[[file:30-core.org][30-core.org]], [[file:40-org.org][40-org.org]], etc., so by the time the rest of the
 config loads, API keys are in =setenv=, the user's private repo is
 synced into =my/data-dir=, and =gh= is authenticated.
 
@@ -22,7 +23,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 - =my/keychain-service=      :: macOS Keychain service for cached BW unlock credentials (default "emacs_credentials")
 
 #+begin_src emacs-lisp :tangle yes
-;;; 10-bootstrap.el --- Bootstrap private Emacs repo -*- lexical-binding: t; -*-
+;;; 20-bootstrap.el --- Bootstrap private Emacs repo -*- lexical-binding: t; -*-
 
 (require 'cl-lib)
 (require 'json)
@@ -43,7 +44,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 ;; before its real defvar is hit in Step 12.
 (defvar my/-config-form-result)
 
-(declare-function my/task-shell "05-tasks")
+(declare-function my/task-shell "10-tasks")
 #+end_src
 
 * Step 0 — Package manager (elpaca)
@@ -54,13 +55,13 @@ Bootstraps the [[https://github.com/progfolio/elpaca][elpaca]] package manager a
 
 This used to live in =~/.emacs.d/init.el='s section 3 — but nothing
 in init.el itself needed elpaca, and the FIRST module that actually
-calls =use-package= at load time is =20-core.org=. Putting the
+calls =use-package= at load time is =30-core.org=. Putting the
 bootstrap here keeps init.el thin (data-dir + config-dir + secrets
 + entry point) and groups the heavy "ensure the toolchain is ready"
 work with the rest of bootstrap.
 
 Module load order (=config.org='s discovery loop) is
-=00= → =05= → =10= → =20= → …. =00-startfirst= and =05-tasks= make
+=00= → =05= → =10= → =20= → …. =00-startfirst= and =10-tasks= make
 no load-time =use-package= calls, so elpaca being ready by the end
 of THIS module's tangle is sufficient. =(elpaca-wait)= at the
 bottom of the block blocks until =elpaca-use-package= is built,
@@ -736,7 +737,7 @@ Behaviour:
                        ;; `string-trim' returns the SAME string as `out'
                        ;; when there's nothing to trim. The task
                        ;; framework calls `(clear-string output)' AFTER
-                       ;; this callback returns (see 05-tasks.org
+                       ;; this callback returns (see 10-tasks.org
                        ;; L679), zeroing every byte of `out'. Without
                        ;; the copy, `my/bw-session' aliases `out' and
                        ;; gets zeroed too — every subsequent
@@ -763,7 +764,7 @@ Behaviour:
                     ;;
                     ;; CRITICAL: pass `copy-sequence' of session. The
                     ;; task framework calls `clear-string' on every :env
-                    ;; value after `make-process' (05-tasks.org L545-547).
+                    ;; value after `make-process' (10-tasks.org L545-547).
                     ;; Without copy, the framework would zero the SAME
                     ;; string `my/bw-session' references — every later
                     ;; bw call would then fail with "Vault is locked".
@@ -2479,7 +2480,8 @@ to keep the two stores in sync without a separate sync step."
 ;; Explanation: User command — clear one API key in BOTH stores; next bootstrap prompts.
 (defun my/api-key-reset (env-var)
   "Clear ENV-VAR's value or sentinel in BOTH Keychain and Bitwarden.
-The next opening of `my/bootstrap-config-form' will show the row as \"[not set]\" so it can be re-entered."
+The next opening of `my/bootstrap-config-form' will show the row
+as \"[not set]\" so it can be re-entered."
   (interactive
    (list (completing-read "Reset API key (env var): "
                           my/api-key-fields nil t)))
@@ -2503,7 +2505,7 @@ The next opening of `my/bootstrap-config-form' will show the row as \"[not set]\
 Invoked at the END of this module's own tangled load — before
 config.org's discovery loop continues to the next module — so
 `my/data-dir' is settled and the data repo is on disk before
-20-core / 50-org / 55-apple-reminders et al. tangle anything
+30-core / 40-org / 50-apple-reminders et al. tangle anything
 that bakes a `my/data-dir'-derived path.
 
 The orchestrator (=my/bootstrap-orchestrate=, Step 13) owns the

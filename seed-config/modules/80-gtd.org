@@ -3,7 +3,7 @@
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
-Numeric prefix =80-= places this module after =50-org.org=, so the
+Numeric prefix =80-= places this module after =40-org.org=, so the
 user's GTD tweaks override Org defaults set there.
 
 The actual GTD configuration lives in =~/emacs/data/org/gtd-config.el=

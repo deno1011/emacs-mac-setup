@@ -322,7 +322,7 @@ echo "==> Wrote $EMACS_D/distro-source.el (branch=$BRANCH)"
 # USER DATA lives (org files, wiki, etc.).
 #
 # Policy matches `my/bootstrap-ensure-seed-config-files' in
-# seed-config/modules/10-bootstrap.org: distro-tracked files in
+# seed-config/modules/20-bootstrap.org: distro-tracked files in
 # seed-config/ are OVERWRITTEN on every install so fixes flow through.
 #
 # Users who want to FREEZE local config from distro updates (e.g. while
@@ -438,7 +438,7 @@ echo "  Secrets:     $SRC_DIR/emacs.d/secrets.el   (per-Mac, not in git)"
 echo ""
 echo "  First launch (init.el) loads $CONFIG_DIR/config.org, which"
 echo "  discovers and runs the modules in numeric order. The first module"
-echo "  (10-bootstrap.org) does:"
+echo "  (20-bootstrap.org) does:"
 echo "    1. Ask whether to use Bitwarden for secrets (recommended)"
 echo "    2. If yes — prompt for email + master, cache to macOS Keychain"
 echo "    3. Read or create the emacs_credentials Bitwarden item"

@@ -4,7 +4,7 @@
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp
-;;; 50-org.el --- Org mode configuration -*- lexical-binding: t; -*-
+;;; 40-org.el --- Org mode configuration -*- lexical-binding: t; -*-
 
 (require 'org)
 (require 'org-agenda)
@@ -1551,4 +1551,4 @@ launches the browser. Updates live as you edit pages.
 
 * Apple Reminders
 
-Konfiguriert in [[file:55-apple-reminders.org][55-apple-reminders.org]] — wird vom Modul-Discovery in [[file:../config.org][config.org]] geladen; der =eq system-type 'darwin'=-Guard sitzt innerhalb des Moduls selbst.
+Konfiguriert in [[file:50-apple-reminders.org][50-apple-reminders.org]] — wird vom Modul-Discovery in [[file:../config.org][config.org]] geladen; der =eq system-type 'darwin'=-Guard sitzt innerhalb des Moduls selbst.

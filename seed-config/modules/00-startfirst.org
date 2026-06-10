@@ -5,7 +5,7 @@ This config is an early load config for anything which need to be executed befor
 
 * Instant dark theme via built-in =modus-vivendi=
 
-The user-facing theme is =cyberpunk-theme=, set up in =20-core.org=. But
+The user-facing theme is =cyberpunk-theme=, set up in =30-core.org=. But
 =cyberpunk-theme= is a package — elpaca doesn't finish building it
 until =after-init-hook= fires, several seconds into startup. Without
 intervention, the first frame appears WHITE during that window and
@@ -15,7 +15,7 @@ Solution: load Emacs's built-in =modus-vivendi= (a high-contrast dark
 theme that ships with Emacs 28+) immediately at the top of this
 early-load module. =modus-vivendi= is a built-in — no install needed,
 no elpaca queue, no wait. The frame goes dark within milliseconds.
-Later, when =cyberpunk-theme= is built and 20-core.org runs its
+Later, when =cyberpunk-theme= is built and 30-core.org runs its
 =(load-theme 'cyberpunk t)=, that disables modus-vivendi and stacks
 cyberpunk on top.
 

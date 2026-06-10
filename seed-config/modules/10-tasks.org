@@ -2,12 +2,12 @@
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
 #+begin_src emacs-lisp :tangle yes
-;;; 05-tasks.el --- Async task framework -*- lexical-binding: t; -*-
+;;; 10-tasks.el --- Async task framework -*- lexical-binding: t; -*-
 #+end_src
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
-Numeric prefix =05-= loads ahead of =10-bootstrap.org=. Bootstrap and
+Numeric prefix =10-= loads ahead of =20-bootstrap.org=. Bootstrap and
 any other module submits work here.
 
 * Overview

@@ -5,7 +5,7 @@
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp :tangle yes
-;;; 70-gptel.el --- gptel agent runtime loader -*- lexical-binding: t; -*-
+;;; 60-gptel.el --- gptel agent runtime loader -*- lexical-binding: t; -*-
 
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)
@@ -39,7 +39,7 @@ is installed and updated from Git.
 * Repository Roles
 
 - =~/emacs= is the private live Emacs-plus runtime repo.
-- =~/emacs/config/modules/70-gptel.org= is only the loader for the AI package.
+- =~/emacs/config/modules/60-gptel.org= is only the loader for the AI package.
 - =~/gptel-agent-runtime= is the standalone package development repo.
 - =~/emacs-mac-setup= is the installer/bootstrap/template repo.
 
@@ -118,7 +118,7 @@ which reads the runtime cache in macOS Keychain (service
 =emacs_credentials=) directly. No API key string is ever held in
 =process-environment=, in a =defvar=, or in any in-Emacs global state
 between requests; the value is held only in the lambda's local binding
-for the duration of the HTTP request. See =modules/10-bootstrap.org=
+for the duration of the HTTP request. See =modules/20-bootstrap.org=
 Step 8 for the storage model.
 
 #+begin_src emacs-lisp :tangle yes

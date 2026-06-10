@@ -46,7 +46,7 @@
 agenda files, GTD content, etc. NOT the literate config (that lives at
 `my/config-dir' = ~/.emacs.d/config/, regardless of which data-dir is
 selected). nil during the brief window between init.el and the
-10-bootstrap module load; the bootstrap orchestrator settles it from
+20-bootstrap module load; the bootstrap orchestrator settles it from
 Keychain.GitHubRepo / BW.Repo / setup-form Save before any other module
 tangles. Set explicitly only when EMACS_DATA_DIR is in the environment
 (escape hatch for testing / scripted installs).")
@@ -63,11 +63,11 @@ the data folder doesn't affect where config loads from.")
 ;; 3. Package manager: elpaca --------------------------------------------
 ;;
 ;; Moved out of this file. The elpaca + elpaca-use-package bootstrap now
-;; lives at the TOP of `~/.emacs.d/config/modules/10-bootstrap.org'
+;; lives at the TOP of `~/.emacs.d/config/modules/20-bootstrap.org'
 ;; (Step 0). Nothing inside this init.el needs elpaca, and the first
-;; module that actually calls `use-package' at load time is 20-core. By
+;; module that actually calls `use-package' at load time is 30-core. By
 ;; the time the discovery loop in config.org reaches that module,
-;; `10-bootstrap' has already finished its Step 0 block — including
+;; `20-bootstrap' has already finished its Step 0 block — including
 ;; `(elpaca-wait)' — so `:ensure …' recipes work as before.
 
 ;; 4. Secrets — per-Mac, never tracked in git ----------------------------

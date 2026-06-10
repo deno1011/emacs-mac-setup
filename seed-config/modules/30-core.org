@@ -29,7 +29,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 The selected private config/data repo should be visible all the time so
 repo switches are obvious after restart. This is intentionally in core
-config, not in =05-tasks=: tasks only contributes task status.
+config, not in =10-tasks=: tasks only contributes task status.
 
 #+begin_src emacs-lisp
 (defun my/data-dir-repo-name ()
@@ -66,7 +66,7 @@ config, not in =05-tasks=: tasks only contributes task status.
 
 [[https://github.com/dholm/benchmark-init-el][benchmark-init]] activates as the first thing this module does so it
 captures every subsequent =require= and =load=. Reports include
-=10-bootstrap.org=-deferred work that fires after init too. Inspect
+=20-bootstrap.org=-deferred work that fires after init too. Inspect
 with:
 
 - =M-x benchmark-init/show-durations-tree= — sortable tree by total time
@@ -106,7 +106,7 @@ long time" behaviour — every interactive command was triggering a GC
 on a heap that grew progressively more fragmented.
 
 The init-phase tuning has to run *before* =package.el= initializes,
-which means it can't live in this file (=20-core.org= is loaded by
+which means it can't live in this file (=30-core.org= is loaded by
 =config.org=, which is loaded by =init.el=, which already finished by
 the time tangled lisp here runs). Emacs 27+ supports
 [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Early-Init-File.html][=early-init.el=]] specifically for this purpose, and that's where the
