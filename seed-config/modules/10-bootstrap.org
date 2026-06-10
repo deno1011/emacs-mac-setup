@@ -39,7 +39,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 ;; git-crypt machinery is defined.
 (defvar my/git-crypt-keychain-service)
 ;; Forward-declare the setup form's result variable so byte-compiler
-;; sees it in `my/bootstrap--first-launch-blocking-form' (Step 9)
+;; sees it in `my/bootstrap-step--open-config-form-and-restart' (Step 13)
 ;; before its real defvar is hit in Step 12.
 (defvar my/-config-form-result)
 
@@ -214,10 +214,8 @@ Returns the task name (a symbol) so callers can depend on completion
 via the task framework's `:depends-on'. ON-FINISH (optional) is a
 one-arg callback receiving t on success / nil on failure.
 
-This is the actual beachball fix for `my/keychain-refresh-from-bw--sync'
-— Keychain writes used to block the UI for ~1-2 seconds on every
-bootstrap launch. Now they run in the background; the main thread
-returns ~immediately after BW reads complete."
+Async wrapper around `my/keychain-multi-set'. Used by the form
+save handler when writing many entries at once."
   (cond
    ((null entries) nil)
    ((not (fboundp 'my/task-shell))
@@ -244,7 +242,7 @@ returns ~immediately after BW reads complete."
 ;; Explanation: List the Keychain (service . account) pairs that the BW refresh OWNS.
 (defun my/keychain-bw-derived-entries ()
   "Return list of (SERVICE . ACCOUNT) pairs that the BW->Keychain
-refresh writes to. Used by `my/keychain-refresh-from-bw-async' as
+refresh writes to. Used by `my/bootstrap-step--refresh-keychain' as
 the pre-clear set: every refresh wipes these entries first so the
 Keychain mirrors the canonical BW state. If BW reports the item as
 renamed/deleted, the kc-multi-set write never fires; Keychain stays
@@ -2192,20 +2190,21 @@ process memory.
 
 ** Lifecycle
 
-- *First launch on a Mac*: =my/api-keys-load= calls
-  =my/api-keys-pull-to-keychain=, which performs ONE Bitwarden unlock,
-  copies each field into Keychain, and locks BW. Any field still empty
-  after the pull is prompted for and stored to BOTH stores.
-- *Subsequent launches*: Keychain entries already exist; no Bitwarden
-  involvement, no prompts.
-- *Rotating a key*: =M-x my/api-key-set= prompts for the new value and
-  writes to BOTH stores.
-- *External BW edit* (mobile app, BW Desktop, web): =M-x
-  my/api-keys-sync-from-bw= refreshes Keychain from BW with one unlock
-  cycle. Bootstrap does NOT auto-sync — that would add ~500 ms to every
-  Emacs start for an event that rarely happens.
+- *First launch on a Mac*: the orchestrator's
+  =my/bootstrap-step--refresh-keychain= reads every API field from the
+  BW =my/bw-credentials-item= and writes them into Keychain in one
+  batched =my/keychain-multi-set= call. Any field still missing is
+  reported by =my/bootstrap-step--finalize= with a pointer to
+  =M-x my/bootstrap-config-form= so the user can fill the gaps.
+- *Subsequent launches*: Keychain entries already exist; the refresh
+  step still runs (pre-clears + rewrites from BW) but no prompts.
+- *Rotating a key*: =M-x my/bootstrap-config-form= or
+  =M-x my/api-key-set=; both dual-write to BW + Keychain.
+- *External BW edit* (mobile app, BW Desktop, web): the next launch's
+  refresh step picks up the change automatically. =M-x
+  my/keychain-refresh-from-bw= forces a refresh now.
 - *Re-prompting a key*: =M-x my/api-key-reset KEY= clears both stores;
-  next =my/api-keys-load= prompts and stores fresh.
+  the next form open shows the row as `[not set]`.
 
 Consumers (gptel backends, etc.) only ever call =my/api-key-fetch= — the
 fast Keychain read. They never see Bitwarden.
@@ -2214,7 +2213,7 @@ fast Keychain read. They never see Bitwarden.
 ;; Explanation: Persist one provider API key into the consolidated Bitwarden credentials item.
 (defun my/bw-api-key-set (env-var value)
   "Persist ENV-VAR API key VALUE as a custom field in `my/bw-credentials-item'.
-Used internally by `my/api-key-set' and `my/api-keys-load' for the BW
+Used internally by `my/api-key-set' for the BW
 side of dual-write operations. Requires BW to already be unlocked."
   (unless my/bw-session
     (error "BW not unlocked; cannot save %s" env-var))
@@ -2325,7 +2324,7 @@ to keep the two stores in sync without a separate sync step."
 ;; Explanation: User command — clear one API key in BOTH stores; next bootstrap prompts.
 (defun my/api-key-reset (env-var)
   "Clear ENV-VAR's value or sentinel in BOTH Keychain and Bitwarden.
-Next `my/api-keys-load' will re-prompt and dual-write a fresh value."
+The next opening of `my/bootstrap-config-form' will show the row as \"[not set]\" so it can be re-entered."
   (interactive
    (list (completing-read "Reset API key (env var): "
                           my/api-key-fields nil t)))
@@ -2417,7 +2416,7 @@ for progress; see *task: repo-pull* for full output."
 
 Single-buffer `widget.el` form that replaces the inline read-string /
 read-passwd prompts scattered across `my/github-load-identity' and
-`my/api-keys-load'. Users see what's set, what's missing, and what's
+the orchestrator. Users see what's set, what's missing, and what's
 been opted out of — all in one buffer — and can edit just the rows
 they care about. Save dual-writes every changed row to both
 Bitwarden (in `my/bw-credentials-item') and macOS Keychain (under
@@ -2442,7 +2441,7 @@ gating + replacement of inline prompts) lands in subsequent commits.
   "Set by `my/-config-form-save' or `my/-config-form-cancel' before
 exiting `recursive-edit'.  Symbol values: `saved', `unchanged',
 `cancelled'.  Used by callers wrapping the form in a blocking flow
-\(e.g. `my/bootstrap--first-launch-blocking-form') to tell which
+\(e.g. `my/bootstrap-step--open-config-form-and-restart') to tell which
 button the user pressed.")
 
 (defun my/-config-form-status (cur-value)
@@ -2698,7 +2697,7 @@ retry without re-typing everything; on success it is killed and
 (defun my/-config-form-cancel (&rest _ignore)
   "Cancel the setup form without saving.
 Exits any wrapping `recursive-edit' so callers like
-`my/bootstrap-resolve-data-dir-now' can fall through to their
+`my/bootstrap-step--open-config-form-and-restart' can fall through to their
 no-input fallback."
   (interactive)
   (setq my/-config-form-result 'cancelled)
@@ -3093,7 +3092,7 @@ Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw."
 (defun my/bootstrap-step--refresh-keychain ()
   "Pre-clear stale Keychain entries, then rewrite from BW.
 
-Synchronous replacement for `my/keychain-refresh-from-bw-async'.
+Synchronous BW→Keychain refresh used by step--refresh-keychain.
 Reads top-to-bottom: clear → unlock → sync → read item → build
 entries → write entries.
 
