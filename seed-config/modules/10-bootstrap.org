@@ -2521,6 +2521,16 @@ gating + replacement of inline prompts) lands in subsequent commits.
 (defvar-local my/-config-form-skip-checkboxes nil
   "Buffer-local alist of (KEY . CHECKBOX-WIDGET) for the skip toggles.")
 
+(defconst my/-config-form-secret-placeholder "••••••••"
+  "Literal pre-fill string used for SECRET rows whose stored value is
+real (non-blank, not `my/api-skipped-sentinel'). Eight U+2022 BULLET
+characters. The widget masks the display (so the user sees `********')
+but `widget-value' returns this exact 8-bullet string. The collect
+helper treats a typed value equal to this constant as `:unchanged' —
+i.e. the user left the placeholder intact and the stored secret stays
+put. Any other typed value (including the empty string after the user
+deliberately cleared the placeholder) is taken literally.")
+
 (defvar my/-config-form-result nil
   "Set by `my/-config-form-save' or `my/-config-form-cancel' before
 exiting `recursive-edit'.  Symbol values: `saved', `unchanged',
@@ -2552,12 +2562,17 @@ KEY      symbol used in `my/-config-form-rows' (alist key).
 LABEL    displayed label.
 CURRENT  current stored value (string or nil). Status indicator
          (\\=`[set]\\='/\\=`[not set]\\='/\\=`[skipped]\\=') goes on the line above
-         the input. For NON-secret fields we ALSO pre-fill the
-         editable field with this value so the user can see and
-         edit what's stored.  Secret fields stay blank (we never
-         echo a stored password back to the buffer).
-SECRET   non-nil masks the editable field with bullets and
-         disables the pre-fill described above.
+         the input. Pre-fill rules:
+           non-secret + value real      → field starts with the value
+           secret + value real          → field starts with
+                                          `my/-config-form-secret-placeholder'
+                                          (the widget masks the display to
+                                          `********'; `widget-value' still
+                                          returns the literal 8 bullets so
+                                          `collect' treats it as :unchanged
+                                          unless the user clears + retypes)
+           value blank or sentinel      → field starts empty
+SECRET   non-nil renders the field with masked echo characters.
 SKIP-ELIGIBLE non-nil adds a checkbox to the right; checked = write
               `my/api-skipped-sentinel' on save. ALWAYS defaults to
               unchecked regardless of stored value — the visible
@@ -2571,17 +2586,18 @@ HELP     optional one-line help string printed under the input."
   ;; Build the widget-create arg list dynamically: include `:secret'
   ;; ONLY when SECRET is non-nil. Passing `:secret nil' triggers a
   ;; `Wrong type argument: characterp, nil' inside the widget value-
-  ;; create code.  Pre-fill the field with CURRENT-VALUE iff non-
-  ;; secret AND value is set / not the skip-sentinel.
-  (let* ((prefill (and (not secret)
-                       (stringp current-value)
-                       (not (string-empty-p current-value))
-                       (not (string= current-value my/api-skipped-sentinel))
-                       current-value))
+  ;; create code.
+  (let* ((value-real-p (and (stringp current-value)
+                            (not (string-empty-p current-value))
+                            (not (string= current-value my/api-skipped-sentinel))))
+         (prefill (cond
+                   ((not value-real-p) "")
+                   (secret             my/-config-form-secret-placeholder)
+                   (t                  current-value)))
          (args (append
                 (list :size 40 :format "%v")
                 (when secret (list :secret ?*))
-                (list (or prefill ""))))
+                (list prefill)))
          (field (apply #'widget-create 'editable-field args)))
     (push (cons key field) my/-config-form-rows))
   (when skip-eligible
@@ -2615,20 +2631,28 @@ HELP     optional one-line help string printed under the input."
   "Return an alist (KEY . PLIST) of intended changes from the form.
 PLIST keys: :value (string or `:skip' or `:unchanged').
 
-A row is :skip iff its checkbox is ticked.
-A row is :unchanged iff its input is blank AND not :skip.
-Otherwise :value is the typed string."
+Resolution order per row:
+  - checkbox ticked                        → :skip
+  - typed = `my/-config-form-secret-placeholder' → :unchanged
+    (user left the secret placeholder intact; keep the stored value)
+  - typed blank or nil                     → :unchanged
+  - otherwise                              → :value typed"
   (mapcar
    (lambda (kv)
-     (let* ((key (car kv))
-            (skip (my/-config-form-row-skipped-p key))
+     (let* ((key   (car kv))
+            (skip  (my/-config-form-row-skipped-p key))
             (typed (my/-config-form-row-value key)))
        (cons key
              (cond
-              (skip                              (list :value :skip))
+              (skip
+               (list :value :skip))
+              ((and (stringp typed)
+                    (string= typed my/-config-form-secret-placeholder))
+               (list :value :unchanged))
               ((or (null typed) (string-empty-p typed))
-                                                 (list :value :unchanged))
-              (t                                 (list :value typed))))))
+               (list :value :unchanged))
+              (t
+               (list :value typed))))))
    my/-config-form-rows))
 
 (defun my/-config-form-save (&rest _ignore)
