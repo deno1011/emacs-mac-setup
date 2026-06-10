@@ -49,11 +49,12 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 * Tunables (override in secrets.el)
 
 #+begin_src emacs-lisp :tangle yes
-(defvar my/bw-credentials-item "emacs-credentials"
+(defvar my/bw-credentials-item "emacs_credentials"
   "Single Bitwarden item that bundles ALL Emacs-distro secrets:
 GitHub PAT + identity (login.username / login.password / Email /
 Fullname / Repo), git-crypt key (GitCryptKey), and provider API keys
-(GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY).")
+(GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY).
+Underscores in the name to match the BW vault convention.")
 
 (defvar my/api-key-fields
   '("GEMINI_API_KEY" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GROQ_API_KEY")
@@ -739,19 +740,18 @@ sits in Emacs memory for the ~20 ms between unlock and Keychain write.
 * Step 3 — Bitwarden item read / write helpers
 
 #+begin_src emacs-lisp :tangle yes
-;; Explanation: Fetch one Bitwarden item by name, recovering from duplicate names with an exact search.
+;; Explanation: Fetch one Bitwarden item by EXACT name. No fuzzy/search fallback.
 (defun my/bw-get-item (item-name)
   "Return parsed alist for ITEM-NAME, or nil if missing / no session.
 
-IMPORTANT — exact-name check on `direct': the bw CLI's `bw get item NAME'
-does SUBSTRING matching, not exact. If the vault contains
-`old_emacs-credentials' but not `emacs-credentials', then `bw get
-item emacs-credentials' will substring-match and return
-`old_emacs-credentials' silently. Without the `string=' guard below,
-this function would return the wrong item and downstream code would
-treat it as if the originally-named entry still existed. The check
-forces us into the duplicate-fallback path, which also exact-name
-filters and so correctly returns nil for the rename case."
+STRICT EXACT-NAME ONLY. Calls `bw get item NAME' and accepts the
+result iff the returned item's `name' field equals ITEM-NAME via
+`string='. Any of the following → nil:
+  - bw exits non-zero (item missing, vault locked, network, …)
+  - bw exits 0 but returns a substring/fuzzy match (different name)
+  - bw exits 0 but reports duplicates (ambiguous → caller must fix
+    the vault; no `bw list items --search' fallback because that
+    walks fuzzy matches and the user explicitly opted out)."
   (when my/bw-session
     (let* ((out (with-output-to-string
                   (with-current-buffer standard-output
@@ -770,35 +770,7 @@ filters and so correctly returns nil for the rename case."
            (direct-name-matches
             (and direct
                  (string= (cdr (assoc 'name direct)) item-name))))
-      (or (and direct-name-matches direct)
-          ;; Either direct returned a substring match (reject) or duplicate
-          ;; item names made `bw get item NAME' ambiguous. Fall back to an
-          ;; exact-name list search.
-          (let* ((list-out (with-output-to-string
-                             (with-current-buffer standard-output
-                               (call-process-shell-command
-                                (format "bw --nointeraction list items --search %s --session %s 2>/dev/null"
-                                        (shell-quote-argument item-name)
-                                        (shell-quote-argument my/bw-session))
-                                nil t))))
-                 (items (when (and list-out
-                                   (string-prefix-p "[" (string-trim list-out)))
-                          (condition-case nil
-                              (json-parse-string list-out
-                                                 :object-type 'alist
-                                                 :array-type 'list
-                                                 :null-object nil
-                                                 :false-object nil)
-                            (error nil))))
-                 (exact (cl-remove-if-not
-                         (lambda (item)
-                           (string= (cdr (assoc 'name item)) item-name))
-                         (or items '()))))
-            (car
-             (sort exact
-                   (lambda (a b)
-                     (> (length (or (cdr (assoc 'fields a)) []))
-                        (length (or (cdr (assoc 'fields b)) [])))))))))))
+      (when direct-name-matches direct))))
 
 ;; Explanation: Async variant of my/bw-get-item — `bw get item' runs in a my/task-shell subprocess.
 (defun my/bw-get-item-async (item-name callback)
@@ -884,35 +856,25 @@ real issue, add a chained second-stage task here."
          (my/-bw-get-item-async-handle-failure cb item-name err)))))
     nil))
 
-;; Explanation: handle async bw failures, with duplicate-item recovery.
+;; Explanation: format async bw failures (no fuzzy / no list-search recovery).
 (defun my/-bw-get-item-async-handle-failure (cb item-name err)
-  "Map a raw bw-cli stderr ERR into either a recovered item or a
-clear user-facing error string. Calls (funcall CB ITEM ERR-OR-NIL).
+  "Map a raw bw-cli stderr ERR into a clearer user-facing error and
+deliver it via (funcall CB nil ERR-STRING).
 
-Currently special-cases `More than one result was found' (duplicate
-items in BW vault — happens when bw cli's name search is fuzzy
-enough to match multiple items, e.g. `emacs-credentials' fuzzy-
-matches both `emacs_credentials' and `old_emacs_credentials').
-Falls back to the SYNC `my/bw-get-item' on that path, which already
-implements the duplicate fallback via `bw list items --search NAME'
-+ exact-name filter + most-fields sort. Other errors pass through
-unchanged as a callback error string."
+STRICT — no recovery, no second subprocess, no fuzzy search. The
+duplicate-item case (`More than one result was found') is surfaced
+with a remediation hint pointing the user at the BW vault to delete
+or rename the offending item. Other errors pass through unchanged."
   (let ((msg (or err "bw exited non-zero")))
     (cond
      ((and (stringp msg)
            (string-match-p "More than one result was found" msg))
-      ;; Recovery: sync version's duplicate fallback picks the exact-
-      ;; name match with the most fields. Synchronous but only fires
-      ;; in the rare duplicate-error case (already on the main thread
-      ;; in the callback context).
-      (let ((item (my/bw-get-item item-name)))
-        (cond
-         (item (funcall cb item nil))
-         (t    (funcall cb nil
-                        (format "BW vault has multiple items fuzzy-matching '%s' \
-and none with that EXACT name. Rename the desired item to '%s' in the BW \
-web/desktop client and restart Emacs. bw said: %s"
-                                item-name item-name (string-trim msg)))))))
+      (funcall cb nil
+               (format "BW vault has multiple items whose name matches '%s' (bw \
+treats `-' and `_' as equivalent in its name search). Delete the stale items \
+in the BW web/desktop client so only ONE item literally named '%s' remains, \
+then restart Emacs. bw said: %s"
+                       item-name item-name (string-trim msg))))
      (t (funcall cb nil msg)))))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
