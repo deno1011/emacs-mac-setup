@@ -3853,11 +3853,57 @@ in-memory `my/data-dir' / `my/bw-session'."
 
 (defun my/bootstrap-step--ensure-data-folder ()
   "Ensure the private GitHub repo is cloned into `my/data-dir'.
-Returns :done / :skip / (:error REASON)."
+
+Branches (top-to-bottom):
+  - identity missing in BW          → :skip
+  - data-dir is already the right   → :skip (idempotent fast path)
+    clone (origin URL matches)
+  - data-dir needs (re)cloning      → clone + :done
+
+Returns :done / :skip."
   (message "Bootstrap step 2: ensure data folder is a clone of the private repo…")
-  ;; STUB — wired in commit 3. For now, delegate to existing logic
-  ;; via `my/bootstrap--run-full-sync' inside `my/bootstrap-orchestrate-legacy'.
-  :skip)
+  (let ((id (my/github-load-identity)))
+    (cond
+     ((not (my/bootstrap--github-identity-usable-p id))
+      (message "Bootstrap step 2: skipping — BW '%s' missing required username/repo."
+               my/bw-credentials-item)
+      :skip)
+     ((my/bootstrap--data-folder-matches-identity-p id)
+      (message "Bootstrap step 2: data folder already a clone of %s/%s — nothing to do."
+               (plist-get id :username) (plist-get id :repo))
+      :skip)
+     (t
+      (my/bootstrap--clone-private-repo id)
+      :done))))
+
+(defun my/bootstrap--github-identity-usable-p (id)
+  "Return t when ID has the minimum non-blank fields to clone (user + repo)."
+  (and id
+       (not (my/-blank-p (plist-get id :username)))
+       (not (my/-blank-p (plist-get id :repo)))))
+
+(defun my/bootstrap--data-folder-matches-identity-p (id)
+  "Return t when `my/data-dir' has a `.git/' AND its origin matches ID's
+USER/REPO. Tolerates both `.git'-suffixed and bare URLs."
+  (let* ((user (plist-get id :username))
+         (repo (plist-get id :repo))
+         (expected (format "https://github.com/%s/%s.git" user repo))
+         (expected-bare (replace-regexp-in-string "\\.git\\'" "" expected))
+         (actual (my/git-remote-url my/data-dir)))
+    (and actual (member actual (list expected expected-bare)) t)))
+
+(defun my/bootstrap--clone-private-repo (id)
+  "Clone ID's repo into `my/data-dir' (or create+push if absent on GH).
+Wipes any non-matching prior contents at `my/data-dir' first."
+  (let ((user (plist-get id :username))
+        (repo (plist-get id :repo))
+        (dir my/data-dir))
+    (when (file-exists-p (expand-file-name ".git" dir))
+      (my/-repo-remove-conflicting-local-dir
+       dir user repo
+       (format "wrong remote: %s" (or (my/git-remote-url dir) "(none)"))))
+    (my/-repo-fetch-or-create id)
+    (my/bootstrap-ensure-seed-config-files)))
 
 (defun my/bootstrap-step--unlock-git-crypt ()
   "If the cloned repo uses git-crypt, unlock with the key from BW.
