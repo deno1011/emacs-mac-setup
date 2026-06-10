@@ -2969,15 +2969,31 @@ in-memory `my/data-dir' / `my/bw-session'."
   "Ensure the private GitHub repo is cloned into `my/data-dir'.
 
 Branches (top-to-bottom):
-  - identity missing in BW          → :skip
-  - data-dir is already the right   → :skip (idempotent fast path)
+  - identity missing AND folder      → (:error …) — force-unlock BW once,
+    unhealthy                          then abort if identity still nil
+  - identity missing in BW           → :skip
+  - data-dir is already the right    → :skip (idempotent fast path)
     clone (origin URL matches)
-  - data-dir needs (re)cloning      → clone + :done
+  - data-dir needs (re)cloning       → clone + :done
 
-Returns :done / :skip."
+Returns :done / :skip / (:error …)."
   (message "Bootstrap step 2: ensure data folder is a clone of the private repo…")
   (let ((id (my/github-load-identity)))
+    ;; Safety net: Step 1's fast path (data-dir.el on disk) returns
+    ;; :done without unlocking BW, so `id' may be nil here purely
+    ;; because `my/bw-session' is unset. If the data folder is in any
+    ;; way unhealthy we MUST validate against the real identity —
+    ;; force a silent BW unlock (Keychain-cached creds, no prompts on
+    ;; the happy path) and retry. If identity is still nil after the
+    ;; unlock attempt, we have no way to validate or clone → abort.
+    (when (and (not id)
+               (my/bootstrap--data-folder-needs-clone-p))
+      (my/bw-unlock)
+      (setq id (my/github-load-identity)))
     (cond
+     ((and (not id)
+           (my/bootstrap--data-folder-needs-clone-p))
+      '(:error "BW unreachable / item missing — cannot validate or clone the data folder; run M-x my/bootstrap-config-form to fix"))
      ((not (my/bootstrap--github-identity-usable-p id))
       (message "Bootstrap step 2: skipping — BW '%s' missing required username/repo."
                my/bw-credentials-item)
@@ -2995,6 +3011,14 @@ Returns :done / :skip."
   (and id
        (not (my/-blank-p (plist-get id :username)))
        (not (my/-blank-p (plist-get id :repo)))))
+
+(defun my/bootstrap--data-folder-needs-clone-p (&optional id)
+  "Return t when `my/data-dir' is missing, lacks `.git/', or (when ID
+non-nil) its `origin' remote doesn't match ID's user/repo. The
+structural check (missing / no .git) works without ID."
+  (or (not (file-directory-p my/data-dir))
+      (not (file-exists-p (expand-file-name ".git" my/data-dir)))
+      (and id (not (my/bootstrap--data-folder-matches-identity-p id)))))
 
 (defun my/bootstrap--data-folder-matches-identity-p (id)
   "Return t when `my/data-dir' has a `.git/' AND its origin matches ID's
