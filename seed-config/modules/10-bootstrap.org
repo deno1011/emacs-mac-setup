@@ -3082,7 +3082,7 @@ until the user has chosen a data folder."
       (my/bootstrap-start-keychain-refresh-task
        #'my/bootstrap-start-full-sync-task)))))
 
-(defun my/bootstrap--first-launch-blocking-form (_data-dir-el)
+(defun my/bootstrap--first-launch-blocking-form (data-dir-el)
   "Open the setup form and block bootstrap until the user submits it.
 
 Runs from `my/bootstrap' on `emacs-startup-hook' — by then the
@@ -3102,21 +3102,15 @@ the next restart since data-dir.el still doesn't exist."
   (setq my/-config-form-result nil)
   (my/bootstrap-config-form)
   (recursive-edit)
+  ;; The form save handler now writes data-dir.el directly (we no
+  ;; longer round-trip through BW to re-read the Repo field). So
+  ;; the post-form check is simply "did data-dir.el get written?".
   (cond
+   ((file-exists-p data-dir-el)
+    (message "Bootstrap: data folder set to %s. RESTART Emacs to load config with the new data folder."
+             my/data-dir))
    ((eq my/-config-form-result 'saved)
-    (let* ((id   (and my/bw-session
-                      (my/bw-get-item my/bw-credentials-item)))
-           (repo (and id (my/bw-item-field id "Repo")))
-           (target (and (not (my/-blank-p repo))
-                        (my/bootstrap-data-dir-for-repo repo))))
-      (cond
-       (target
-        (setq my/data-dir target)
-        (my/bootstrap-write-data-dir-selection target)
-        (message "Bootstrap: data folder set to %s (from BW.Repo='%s'). RESTART Emacs to load config with the new data folder."
-                 target repo))
-       (t
-        (message "Bootstrap: Repo field blank — data-dir.el NOT written. Restart and fill in the Data repo name field to continue.")))))
+    (message "Bootstrap: form was saved but data-dir.el NOT written (Repo field blank?). Restart and fill in the Data repo name field to continue."))
    (t
     (message "Bootstrap: setup form cancelled / not submitted — data-dir.el NOT written. Restart to re-open the form."))))
 #+end_src
@@ -3300,10 +3294,14 @@ FIELD is one of the symbols `username', `password', `Email',
   "Insert one labelled input row.
 KEY      symbol used in `my/-config-form-rows' (alist key).
 LABEL    displayed label.
-CURRENT  current stored value (string or nil). Used only to print
-         a status indicator on a line ABOVE the input — never
-         echoed back into the editable field.
-SECRET   non-nil masks the editable field with bullets.
+CURRENT  current stored value (string or nil). Status indicator
+         (\\=`[set]\\='/\\=`[not set]\\='/\\=`[skipped]\\=') goes on the line above
+         the input. For NON-secret fields we ALSO pre-fill the
+         editable field with this value so the user can see and
+         edit what's stored.  Secret fields stay blank (we never
+         echo a stored password back to the buffer).
+SECRET   non-nil masks the editable field with bullets and
+         disables the pre-fill described above.
 SKIP-ELIGIBLE non-nil adds a checkbox to the right; checked = write
               `my/api-skipped-sentinel' on save. ALWAYS defaults to
               unchecked regardless of stored value — the visible
@@ -3317,13 +3315,17 @@ HELP     optional one-line help string printed under the input."
   ;; Build the widget-create arg list dynamically: include `:secret'
   ;; ONLY when SECRET is non-nil. Passing `:secret nil' triggers a
   ;; `Wrong type argument: characterp, nil' inside the widget value-
-  ;; create code, which crashed the whole form render. Using `?*'
-  ;; as the masking char rather than `?●' so it renders consistently
-  ;; even on terminal Emacs / minimal fonts.
-  (let* ((args (append
+  ;; create code.  Pre-fill the field with CURRENT-VALUE iff non-
+  ;; secret AND value is set / not the skip-sentinel.
+  (let* ((prefill (and (not secret)
+                       (stringp current-value)
+                       (not (string-empty-p current-value))
+                       (not (string= current-value my/api-skipped-sentinel))
+                       current-value))
+         (args (append
                 (list :size 40 :format "%v")
                 (when secret (list :secret ?*))
-                (list "")))
+                (list (or prefill ""))))
          (field (apply #'widget-create 'editable-field args)))
     (push (cons key field) my/-config-form-rows))
   (when skip-eligible
@@ -3484,7 +3486,24 @@ retry without re-typing everything; on success it is killed and
                 (message "Setup form: caching %d API value(s) to Keychain…"
                          (length keychain-entries))
                 (redisplay t)
-                (my/keychain-multi-set keychain-entries)))
+                (my/keychain-multi-set keychain-entries))
+              ;; Step 5: write data-dir.el DIRECTLY from the form's
+              ;; gh-repo value. Previously this was left to the calling
+              ;; bootstrap function (which did a BW round-trip to
+              ;; re-read the Repo field after save) — any hiccup in
+              ;; that round-trip left data-dir.el unwritten and the
+              ;; form reopened on the next launch. Now data-dir.el is
+              ;; written in the same atomic save: if save succeeds,
+              ;; the chosen folder is on disk.
+              (let* ((repo-pair (assoc "Repo" gh-fields))
+                     (repo      (and repo-pair (cdr repo-pair)))
+                     (target    (and (not (my/-blank-p repo))
+                                     (my/bootstrap-data-dir-for-repo repo))))
+                (when target
+                  (message "Setup form: writing data-dir.el → %s…" target)
+                  (redisplay t)
+                  (setq my/data-dir target)
+                  (my/bootstrap-write-data-dir-selection target))))
             (message "Setup form: saved %d / skipped %d row(s) to BW + Keychain."
                      written skipped)
             (setq saved-anything (or (> written 0) (> skipped 0)))))
