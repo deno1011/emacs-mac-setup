@@ -2947,25 +2947,30 @@ restart) or `:error' (display a warning, stop)."
   (interactive)
   (message "Bootstrap: starting orchestrator (business-logic layer)…")
   (catch 'my/bootstrap-bail
-    ;; 1. Where does this Mac's data live?
+    ;; 1. Silent probe — read cached Keychain creds, try BW unlock,
+    ;;    harvest `emacs_credentials' item. Populates
+    ;;    `my/-bootstrap-probe-data' for the next step. Always :done.
+    (my/bootstrap--dispatch (my/bootstrap-step--probe-credentials))
+
+    ;; 2. Where does this Mac's data live?
     (my/bootstrap--dispatch (my/bootstrap-step--resolve-data-dir))
 
-    ;; 2. Is the private repo cloned into that folder? Clone if not.
+    ;; 3. Is the private repo cloned into that folder? Clone if not.
     (my/bootstrap--dispatch (my/bootstrap-step--ensure-data-folder))
 
-    ;; 3. Is git-crypt configured? Unlock if so.
+    ;; 4. Is git-crypt configured? Unlock if so.
     (my/bootstrap--dispatch (my/bootstrap-step--unlock-git-crypt))
 
-    ;; 4. Sync the Keychain runtime cache from BW.
+    ;; 5. Sync the Keychain runtime cache from BW.
     (my/bootstrap--dispatch (my/bootstrap-step--refresh-keychain))
 
-    ;; 5. Generate starter org/wiki files in any gaps.
+    ;; 6. Generate starter org/wiki files in any gaps.
     (my/bootstrap--dispatch (my/bootstrap-step--generate-starter-data))
 
-    ;; 6. Is gh CLI authenticated? Auth if not.
+    ;; 7. Is gh CLI authenticated? Auth if not.
     (my/bootstrap--dispatch (my/bootstrap-step--authenticate-gh))
 
-    ;; 7. Lock BW, log summary.
+    ;; 8. Lock BW, log summary.
     (my/bootstrap--dispatch (my/bootstrap-step--finalize))
 
     (message "Bootstrap: done.")))
@@ -2996,6 +3001,112 @@ restart) or `:error' (display a warning, stop)."
 ;;; Steps — short, single responsibility, return a symbol.
 ;;; STUBS in this commit; one wired per subsequent commit.
 ;;; ============================================================
+
+(defvar my/-bootstrap-probe-data nil
+  "Plist of credential state harvested by `my/bootstrap-step--probe-credentials'.
+Keys:
+  :bw-master            string or nil (read from Keychain).
+  :bw-email             string or nil (read from Keychain).
+  :bw-unlocked?         t when the probe opened a BW session.
+  :item                 BW `emacs_credentials' item plist, or nil.
+  :data-dir-el-exists?  t when ~/.emacs.d/data-dir.el is on disk.
+
+Overwritten on every orchestrator run. Read by
+`my/bootstrap--probe-data-complete-p' and by the form-prefill path;
+do not consume from outside the orchestrator chain.")
+
+(defun my/bootstrap-step--probe-credentials ()
+  "Silent probe of cached credentials.
+
+Reads `my/keychain-account-bw-email' + `my/keychain-account-bw-master'
+from Keychain. If both present, calls `my/bw--unlock-internal' to
+obtain a session, then reads `my/bw-credentials-item' via
+`my/bw-get-item'. Stashes the harvest in `my/-bootstrap-probe-data'
+for the next step (`resolve-data-dir' in this commit;
+`ensure-form-submitted' once the form gate moves here) and the form
+prefill.
+
+Always returns :done — failure to unlock or fetch the item leaves
+`:item' nil, never raises. On success, sets `my/bw-session' so
+subsequent steps reuse the same unlock."
+  (message "Bootstrap step 1: probing cached credentials…")
+  (let* ((email   (my/keychain-get my/keychain-service
+                                   my/keychain-account-bw-email))
+         (master  (my/keychain-get my/keychain-service
+                                   my/keychain-account-bw-master))
+         (session (and (my/bw-installed-p)
+                       (not (my/-blank-p email))
+                       (not (my/-blank-p master))
+                       (condition-case _err
+                           (my/bw--unlock-internal email master)
+                         (error nil))))
+         (item    (and session
+                       (progn (setq my/bw-session (copy-sequence session))
+                              (condition-case _err
+                                  (my/bw-get-item my/bw-credentials-item)
+                                (error nil))))))
+    (setq my/-bootstrap-probe-data
+          (list :bw-master  master
+                :bw-email   email
+                :bw-unlocked? (and session t)
+                :item       item
+                :data-dir-el-exists?
+                (file-exists-p
+                 (expand-file-name "data-dir.el" user-emacs-directory))))
+    (message "Bootstrap step 1: probe — BW %s, item %s, data-dir.el %s."
+             (if session "unlocked" "not unlocked")
+             (if item    "found"    "missing")
+             (if (plist-get my/-bootstrap-probe-data :data-dir-el-exists?)
+                 "present" "absent")))
+  :done)
+
+(defun my/bootstrap--probe-data-complete-p ()
+  "Non-nil when every credential bootstrap needs is already settled.
+
+Consumes `my/-bootstrap-probe-data' populated by
+`my/bootstrap-step--probe-credentials'.
+
+A field is \"settled\" when it is non-blank in Keychain or in the BW
+`emacs_credentials' item. For skip-eligible fields
+(`my/api-key-fields'), the `my/api-skipped-sentinel' value also
+counts as settled (the user has opted out). Required fields
+(BW vault, GitHub identity) do NOT accept the sentinel.
+
+Special case: if the BW item carries the GitHub opt-out sentinel
+(`my/github--opted-out-p'), GitHub identity fields are not required.
+
+Returns t when the form can be skipped; nil otherwise."
+  (let* ((probe   my/-bootstrap-probe-data)
+         (item    (plist-get probe :item))
+         (kc      (lambda (acc)
+                    (my/keychain-get my/keychain-service acc)))
+         (bw-f    (lambda (name)
+                    (and item (my/bw-item-field item name))))
+         (set-p   (lambda (v)
+                    (and (stringp v)
+                         (not (string-empty-p v))
+                         (not (string= v my/api-skipped-sentinel)))))
+         (settled (lambda (v)
+                    (and (stringp v) (not (string-empty-p v)))))
+         (gh-out  (my/github--opted-out-p item)))
+    (and (funcall set-p (plist-get probe :bw-master))
+         (funcall set-p (plist-get probe :bw-email))
+         (or (plist-get probe :data-dir-el-exists?)
+             (funcall set-p (funcall bw-f "Repo")))
+         (or gh-out
+             (and (or (funcall set-p (funcall kc my/keychain-account-github-username))
+                      (funcall set-p (my/bw-item-username item)))
+                  (or (funcall set-p (funcall kc my/keychain-account-github-token))
+                      (funcall set-p (my/bw-item-password item)))
+                  (or (funcall set-p (funcall kc my/keychain-account-github-email))
+                      (funcall set-p (funcall bw-f "Email")))
+                  (or (funcall set-p (funcall kc my/keychain-account-github-fullname))
+                      (funcall set-p (funcall bw-f "Fullname")))))
+         (cl-every
+          (lambda (env-var)
+            (or (funcall settled (funcall kc env-var))
+                (funcall settled (funcall bw-f env-var))))
+          my/api-key-fields))))
 
 (defun my/bootstrap-step--resolve-data-dir ()
   "Set `my/data-dir' from one of (priority order):
