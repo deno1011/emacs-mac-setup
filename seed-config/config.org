@@ -77,11 +77,13 @@ overall config load."
 (let ((local (expand-file-name "local.org" my/config-dir)))
   (when (file-exists-p local) (my/-load-module local)))
 
-;; Bootstrap runs AFTER modules load AND after the first frame is
-;; painted — so Emacs is interactive while bootstrap does its work
-;; (BW unlock, gh, possibly git clone). `my/bootstrap' itself is a
-;; no-op on steady-state launches (everything cached in Keychain +
-;; repo already cloned + gh authed). The full sync flow only fires
-;; when `my/bootstrap--needs-anything-p' detects missing state.
-(add-hook 'emacs-startup-hook #'my/bootstrap)
+;; Bootstrap is invoked synchronously at the END of the 10-bootstrap
+;; module's own tangled block (see Step 9 of modules/10-bootstrap.org)
+;; so the form opens — and `my/data-dir' is settled, the data repo is
+;; cloned, and starter content is generated — BEFORE the discovery
+;; loop continues on to 20-core / 50-org / 55-apple-reminders / etc.
+;; This way every subsequent module loads with the final `my/data-dir'
+;; in place, and `org-agenda-files', `org-apple-reminders-sync-file',
+;; etc. resolve to the chosen path on the FIRST launch. Nothing left
+;; to do on `emacs-startup-hook'.
 #+end_src

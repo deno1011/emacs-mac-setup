@@ -2429,12 +2429,16 @@ The next opening of `my/bootstrap-config-form' will show the row as \"[not set]\
 
 * Step 9 — Entry point (thin wrapper over the orchestrator)
 
-Called from =config.org='s =emacs-startup-hook= AFTER all modules have
-loaded and the first frame is painted. The orchestrator
-(=my/bootstrap-orchestrate=, Step 13) owns the bootstrap recipe; this
-entry point fires the two fire-and-forget background tasks (distro
-config refresh, daemon-service install) and then runs the
-orchestrator synchronously.
+Invoked at the END of this module's own tangled load — before
+config.org's discovery loop continues to the next module — so
+`my/data-dir' is settled and the data repo is on disk before
+20-core / 50-org / 55-apple-reminders et al. tangle anything
+that bakes a `my/data-dir'-derived path.
+
+The orchestrator (=my/bootstrap-orchestrate=, Step 13) owns the
+bootstrap recipe; this entry point fires the two fire-and-forget
+background tasks (distro config refresh, daemon-service install)
+and then runs the orchestrator synchronously.
 
 #+begin_src emacs-lisp :tangle yes
 
@@ -2457,6 +2461,13 @@ after changing state."
   (my/bootstrap-start-distro-config-update-task)
   (my/bootstrap-start-daemon-service-task)
   (my/bootstrap-orchestrate))
+
+;; Run NOW — synchronously, before config.org's discovery loop loads
+;; the next module. The orchestrator opens the form via
+;; `recursive-edit' when needed; init blocks on it. By the time
+;; control returns here, `my/data-dir' is final and the data folder
+;; is populated.
+(my/bootstrap)
 
 #+end_src
 
@@ -2949,11 +2960,11 @@ github.com/<username>/emacs15.")
 
 ;; (The module-load-time `(my/bootstrap-resolve-data-dir-now)' side-
 ;; effect was removed in the business-logic refactor. The orchestrator
-;; — fired from `emacs-startup-hook' via `my/bootstrap' — now owns the
-;; entire flow including data-dir resolution. Modules that depend on
-;; `my/data-dir' tangle with init.el's default; the first launch shows
-;; the setup form, Save writes data-dir.el, and the second launch
-;; tangles modules with the correct value.)
+;; — fired at the END of THIS module's tangled load via `(my/bootstrap)'
+;; in Step 9 — now owns the entire flow including data-dir resolution.
+;; Modules numbered 20-… and above tangle AFTER the orchestrator has
+;; settled `my/data-dir', so their load-time `setq's resolve to the
+;; final path on the first launch.)
 #+end_src
 
 * Step 13 — Business-logic layer (orchestrator + step stubs)
@@ -2967,12 +2978,9 @@ failure modes.
 Each step is a separate function with one named responsibility. Each
 step returns a symbol:
 
-  =:done=            — step completed normally (or was a no-op)
-  =:skip=            — step decided to do nothing for a real reason
-  =:restart-needed=  — step ran the user-facing portion successfully but
-                       config has shifted in a way that requires an Emacs
-                       restart (e.g. data-dir.el was just written)
-  =(:error R)=       — step failed (orchestrator decides how to react)
+  =:done=        — step completed normally (or was a no-op)
+  =:skip=        — step decided to do nothing for a real reason
+  =(:error R)=   — step failed (orchestrator decides how to react)
 
 The orchestrator is the only place that knows the OVERALL sequence;
 each step knows only its own job and the primitives it calls.
@@ -2992,9 +3000,11 @@ implement one step at a time.
 
 Reads top-to-bottom. Each line is a single named step; each step
 is implemented as its own function below. The orchestrator's only
-job is sequencing + reacting to `:restart-needed' (data-dir.el was
-just written; stop so the user can restart) or `:error' (display a
-warning, stop)."
+job is sequencing + reacting to `:error' (display a warning,
+stop). Since the orchestrator runs SYNCHRONOUSLY before subsequent
+modules load (see Step 9), there is no \"restart needed\" path —
+every step completes against the final `my/data-dir' value, and
+the discovery loop continues from there."
   (interactive)
   (message "Bootstrap: starting orchestrator (business-logic layer)…")
   (catch 'my/bootstrap-bail
@@ -3031,13 +3041,10 @@ warning, stop)."
 (defun my/bootstrap--dispatch (step-result)
   "React to a step's return symbol.
 :done / :skip    → continue silently
-:restart-needed  → step already messaged the user; throw `my/bootstrap-bail'
 (:error REASON)  → warn with REASON, throw `my/bootstrap-bail'."
   (pcase step-result
     (:done nil)
     (:skip nil)
-    (:restart-needed
-     (throw 'my/bootstrap-bail :restart-needed))
     (`(:error ,reason)
      (display-warning 'emacs-setup
                       (format "Bootstrap aborted: %s" reason)
@@ -3190,11 +3197,10 @@ writes data-dir.el silently here — no extra BW round-trip.
 
 Outcome:
   :skip            — every required credential is settled; form not opened.
-  :done            — form opened, user saved, data-dir.el was already on
-                     disk (subsequent-launch path); bootstrap continues.
-  :restart-needed  — form opened, user saved, data-dir.el was JUST written
-                     (first-launch path); modules tangled with init.el's
-                     default need a restart before the remaining steps run.
+  :done            — form opened and user saved; `my/data-dir' is now
+                     final and bootstrap continues. Since the orchestrator
+                     runs synchronously BEFORE later modules tangle (see
+                     Step 9), there is no \"restart needed\" branch.
   (:error REASON)  — form cancelled or saved-but-incomplete."
   (message "Bootstrap step 2: ensuring setup form is complete…")
   (let* ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory))
@@ -3222,20 +3228,17 @@ Outcome:
       (recursive-edit)
       (let ((now? (file-exists-p data-dir-el)))
         (cond
-         ;; First-launch path: data-dir.el was just written.
-         ((and (not existed?) now?)
-          (message "Bootstrap: data folder set to %s. RESTART Emacs to load config with the new data folder."
-                   my/data-dir)
-          :restart-needed)
+         ;; Form saved AND data-dir.el is on disk → continue. Since
+         ;; the orchestrator runs synchronously before later modules
+         ;; tangle, `my/data-dir' is already final for the rest of
+         ;; this Emacs session; no restart needed.
+         (now? :done)
          ;; Form was saved but data-dir.el still missing: Repo blank.
-         ((and (not now?) (eq my/-config-form-result 'saved))
-          '(:error "form saved but data-dir.el not written — fill the 'Data repo name' field and restart"))
+         ((eq my/-config-form-result 'saved)
+          '(:error "form saved but Repo field was blank — re-open the form and fill the 'Data repo name' field"))
          ;; Cancelled or otherwise unsubmitted with data-dir.el missing.
-         ((not now?)
-          '(:error "setup form cancelled — bootstrap halted; restart to re-open"))
-         ;; Subsequent-launch path: form recorded changes; continue.
          (t
-          :done)))))))
+          '(:error "setup form cancelled — bootstrap halted; M-x my/bootstrap to retry"))))))))
 
 (defun my/bootstrap-step--ensure-data-folder ()
   "Ensure the private GitHub repo is cloned into `my/data-dir'.
