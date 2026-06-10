@@ -4107,10 +4107,40 @@ itself skips files that already exist."
     :done)))
 
 (defun my/bootstrap-step--authenticate-gh ()
-  "Authenticate the gh CLI using the BW-stored token if not already.
-Returns :done / :skip / (:error REASON)."
+  "Ensure gh CLI is installed and authenticated against the user's account.
+
+Branches:
+  - install attempt failed   → (:error …)
+  - already authenticated    → :skip (idempotent)
+  - else                     → log in with BW-stored token → :done."
   (message "Bootstrap step 6: authenticate gh CLI…")
-  :skip)
+  (cond
+   ((not (my/bootstrap--ensure-gh-installed))
+    '(:error "gh CLI not installed; install manually: brew install gh"))
+   ((my/gh-authenticated-p)
+    (message "Bootstrap step 6: gh already authenticated.")
+    :skip)
+   (t (my/bootstrap--gh-login-from-bw))))
+
+(defun my/bootstrap--ensure-gh-installed ()
+  "Install gh via brew if missing. Returns t iff present after."
+  (unless (my/gh-installed-p)
+    (message "Bootstrap step 6: installing gh via brew…")
+    (my/gh-install))
+  (my/gh-installed-p))
+
+(defun my/bootstrap--gh-login-from-bw ()
+  "Authenticate gh using the GitHub token from BW emacs_credentials.
+Returns :done / (:error REASON)."
+  (let* ((id (my/github-load-identity))
+         (token (and id (plist-get id :token))))
+    (cond
+     ((my/-blank-p token)
+      '(:error "BW has no GitHub token; cannot authenticate gh"))
+     (t
+      (message "Bootstrap step 6: authenticating gh with BW-stored token…")
+      (my/gh-login-with-token token)
+      :done))))
 
 (defun my/bootstrap-step--finalize ()
   "Lock the BW vault, emit a one-line summary. Returns :done."
