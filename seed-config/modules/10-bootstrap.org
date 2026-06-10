@@ -2717,12 +2717,37 @@ retry without re-typing everything; on success it is killed and
                       (if (eq val :skip) (cl-incf skipped) (cl-incf written))))
                    ((memq key '(gh-username gh-token gh-email gh-fullname gh-repo))
                     (when (and (stringp val) (not (string-empty-p val)))
+                      ;; Mirror every GH identity field to Keychain on
+                      ;; save so the next-launch probe can short-circuit
+                      ;; from Keychain alone (no BW unlock subprocess).
+                      ;; The matching `my/keychain-account-github-*'
+                      ;; constants live near the top of this module.
                       (pcase key
-                        ('gh-username (setq gh-user val))
-                        ('gh-token    (setq gh-token val))
-                        ('gh-email    (push (cons "Email"    val) gh-fields))
-                        ('gh-fullname (push (cons "Fullname" val) gh-fields))
-                        ('gh-repo     (push (cons "Repo"     val) gh-fields))))))))
+                        ('gh-username
+                         (setq gh-user val)
+                         (push (list my/keychain-service
+                                     my/keychain-account-github-username val)
+                               keychain-entries))
+                        ('gh-token
+                         (setq gh-token val)
+                         (push (list my/keychain-service
+                                     my/keychain-account-github-token val)
+                               keychain-entries))
+                        ('gh-email
+                         (push (cons "Email" val) gh-fields)
+                         (push (list my/keychain-service
+                                     my/keychain-account-github-email val)
+                               keychain-entries))
+                        ('gh-fullname
+                         (push (cons "Fullname" val) gh-fields)
+                         (push (list my/keychain-service
+                                     my/keychain-account-github-fullname val)
+                               keychain-entries))
+                        ('gh-repo
+                         (push (cons "Repo" val) gh-fields)
+                         (push (list my/keychain-service
+                                     my/keychain-account-github-repo val)
+                               keychain-entries))))))))
               ;; Step 1: cache BW email + master to Keychain BEFORE
               ;; unlock so my/bw-unlock takes the cached path.
               (message "Setup form: caching BW credentials to Keychain…")
