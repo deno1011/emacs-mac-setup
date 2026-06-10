@@ -2907,12 +2907,17 @@ https://github.com/settings/tokens — classic `ghp_…' or fine-grained \
      "Full name used for `git config --global user.name'.")
     (my/-config-form-insert-row
      'gh-repo "Data repo name"
+     ;; Prefer cached values; fall back to a sensible default so the
+     ;; user can just hit Save on a fresh install. The default name
+     ;; maps to `~/emacs-data/' via `my/bootstrap-data-dir-for-repo'.
      (or (my/keychain-get my/keychain-service my/keychain-account-github-repo)
-         (my/-config-form-current-gh-field item 'Repo))
+         (my/-config-form-current-gh-field item 'Repo)
+         "emacs-data")
      nil nil
      "Bare name of your private GitHub data repo. e.g. 'emacs15' → \
 data folder becomes ~/emacs15/, GitHub remote becomes \
-github.com/<username>/emacs15.")
+github.com/<username>/emacs15. Default 'emacs-data' is fine for a \
+fresh install — change later by re-opening the form.")
 
     (widget-insert "\nAPI keys (in BW + Keychain)\n")
     (widget-insert     "---------------------------\n")
