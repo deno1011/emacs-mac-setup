@@ -18,6 +18,26 @@
 ;; install.sh places the seed config into ~/.emacs.d/config/ on every run;
 ;; ~/.emacs.d/config/config.org discovers and loads modules.
 
+;; 0. User override — escape hatch for a fully custom init ---------------
+;;
+;; If `~/.emacs.d/override_init.el' exists, load THAT file and skip the
+;; rest of THIS file. install.sh overwrites init.el on every run (so
+;; distro fixes reach the user automatically); override_init.el is never
+;; touched, so the user can keep a private setup that survives updates.
+;;
+;; Enable:  create `~/.emacs.d/override_init.el' with your own init.
+;; Disable: rename / delete it — the default init below takes over.
+;;
+;; A non-nil return from the catch body means the override loaded and
+;; everything after it in this file is skipped. The `provide' at the
+;; bottom still runs so `(require 'init)' elsewhere keeps working.
+(catch 'my/init-handed-off
+  (let ((override (expand-file-name "override_init.el" user-emacs-directory)))
+    (when (file-exists-p override)
+      (message "init.el: loading %s and skipping default init." override)
+      (load override nil 'nomessage)
+      (throw 'my/init-handed-off t)))
+
 ;; 1. Where data lives -----------------------------------------------------
 (defvar my/data-dir
   (let ((env (getenv "EMACS_DATA_DIR")))
@@ -108,7 +128,8 @@ the data folder doesn't affect where config loads from.")
 
 ;; 6. custom.el — keep customize out of init.el --------------------------
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
-(when (file-exists-p custom-file) (load custom-file))
+(when (file-exists-p custom-file) (load custom-file)))
+;; ^ closes the `catch' opened in section 0.
 
 (provide 'init)
 ;;; init.el ends here
