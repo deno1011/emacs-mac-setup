@@ -3234,7 +3234,7 @@ Three branches, in priority order:
      (t
       (message "Bootstrap: data-dir.el missing and Keychain has no cached BW credentials — setup form will open after Emacs is ready (waiting for frame).")))))
 
-(defun my/bootstrap--try-resolve-from-bw (data-dir-el)
+(defun my/bootstrap--try-resolve-from-bw (_data-dir-el)
   "Attempt to derive `my/data-dir' from BW silently.
 
 Reads cached `bw-email' + `bw-master' from Keychain. If both
@@ -3243,7 +3243,9 @@ present and bw CLI is installed, calls `my/bw--unlock-internal'
 then extracts the `Repo' field. On success:
   - sets `my/bw-session' so later bootstrap steps reuse it
   - sets `my/data-dir' to the BW.Repo-derived path
-  - writes data-dir.el to DATA-DIR-EL
+  - writes data-dir.el (path comes from `my/bootstrap-data-dir-file'
+    via `my/bootstrap-write-data-dir-selection'; the `_data-dir-el'
+    arg is kept for caller-site clarity but unused inside)
   - returns t
 
 Returns nil and writes nothing on any failure (bw not installed,
