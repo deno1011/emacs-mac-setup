@@ -3205,34 +3205,72 @@ we just spent two days unwinding.
 (defun my/bootstrap-resolve-data-dir-now ()
   "Resolve `my/data-dir' synchronously at module-load time.
 
-Sets `my/data-dir' to the BW.Repo-derived value and writes
-`~/.emacs.d/data-dir.el' so subsequent launches fast-path. Idempotent:
-calling again after success is a no-op via the data-dir.el branch.
+Three branches, in priority order:
 
-See the section banner for the full design rationale."
+1. `~/.emacs.d/data-dir.el' already on disk → trust it. init.el
+   loaded it earlier in this Emacs run; `my/data-dir' is correct.
+
+2. data-dir.el missing BUT Keychain has cached `bw-email' +
+   `bw-master' → try a silent BW unlock with those values, read
+   `my/bw-credentials-item' from BW, derive `my/data-dir' from the
+   Repo field, write data-dir.el. No prompts, no UI. This is the
+   path that lets `rm -rf ~/.emacs.d/' + reinstall on the SAME Mac
+   restore the chosen data folder automatically — Keychain
+   survives the ~/.emacs.d/ wipe.
+
+3. Both missing → leave `my/data-dir' at init.el's default. Module
+   safety gates ensure nothing writes under `~/emacs/'.
+   `my/bootstrap' (on `emacs-startup-hook') will open the setup
+   form after the frame is on screen."
   (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
     (cond
-     ;; Fast path: data-dir.el already on disk (written by a previous
-     ;; install.sh from $EMACS_DATA_DIR, by a previous run of this
-     ;; function, or by `my/bootstrap-ensure-selected-repo-dir' on a
-     ;; repo-switch launch). `init.el' already loaded it earlier in
-     ;; this Emacs run, so `my/data-dir' is already correct — nothing
-     ;; to do.
+     ;; Fast path: data-dir.el already on disk.
      ((file-exists-p data-dir-el)
       (message "Bootstrap: data folder = %s (cached in %s)."
                my/data-dir data-dir-el))
-     ;; data-dir.el missing → CANNOT show the form here. We're inside
-     ;; `init.el' execution; the initial frame isn't on screen yet, so
-     ;; `pop-to-buffer' + `recursive-edit' would block the event loop
-     ;; with no displayed window (frozen Emacs). The form invocation
-     ;; was moved to `my/bootstrap' which runs on `emacs-startup-hook'
-     ;; — after the frame is visible. Here we just message and bail.
-     ;; Module-level defensive gates (`(when (file-exists-p data-dir.el)
-     ;; …)' in 50-org.org / 55-apple-reminders.org / 75-wiki.org)
-     ;; ensure no module writes anything under the default `~/emacs/'
-     ;; while we're waiting for the user to fill in the form.
+     ;; Try BW silently with cached Keychain creds.
+     ((my/bootstrap--try-resolve-from-bw data-dir-el))
+     ;; Fallback: defer to the form.
      (t
-      (message "Bootstrap: data-dir.el missing — setup form will open after Emacs is ready (waiting for frame).")))))
+      (message "Bootstrap: data-dir.el missing and Keychain has no cached BW credentials — setup form will open after Emacs is ready (waiting for frame).")))))
+
+(defun my/bootstrap--try-resolve-from-bw (data-dir-el)
+  "Attempt to derive `my/data-dir' from BW silently.
+
+Reads cached `bw-email' + `bw-master' from Keychain. If both
+present and bw CLI is installed, calls `my/bw--unlock-internal'
+(NO prompts), then `my/bw-get-item' on `my/bw-credentials-item',
+then extracts the `Repo' field. On success:
+  - sets `my/bw-session' so later bootstrap steps reuse it
+  - sets `my/data-dir' to the BW.Repo-derived path
+  - writes data-dir.el to DATA-DIR-EL
+  - returns t
+
+Returns nil and writes nothing on any failure (bw not installed,
+Keychain empty, unlock declined, item missing, Repo blank).
+Failure is silent — the caller is expected to fall through to the
+post-init form path."
+  (when (my/bw-installed-p)
+    (let* ((cached-email  (my/keychain-get my/keychain-service
+                                           my/keychain-account-bw-email))
+           (cached-master (my/keychain-get my/keychain-service
+                                           my/keychain-account-bw-master)))
+      (when (and (not (my/-blank-p cached-email))
+                 (not (my/-blank-p cached-master)))
+        (message "Bootstrap: trying to restore data folder from Bitwarden (Keychain-cached creds, no prompts)…")
+        (let ((session (my/bw--unlock-internal cached-email cached-master)))
+          (when session
+            (setq my/bw-session (copy-sequence session))
+            (let* ((item (my/bw-get-item my/bw-credentials-item))
+                   (repo (and item (my/bw-item-field item "Repo")))
+                   (target (and (not (my/-blank-p repo))
+                                (my/bootstrap-data-dir-for-repo repo))))
+              (when target
+                (setq my/data-dir target)
+                (my/bootstrap-write-data-dir-selection target)
+                (message "Bootstrap: data folder = %s (restored from BW.Repo='%s', no form needed)."
+                         target repo)
+                t))))))))
 
 ;; NOTE: the side-effect call `(my/bootstrap-resolve-data-dir-now)' was
 ;; previously here. It's been moved to the END of Step 12 below — the
