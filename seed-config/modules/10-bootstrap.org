@@ -584,12 +584,10 @@ of the vault is dispatched to the background."
         (my/task-shell
          (intern (format "bw-lock-%d"
                          (cl-incf my/-keychain-task-counter)))
-         ;; `bw' reads BW_SESSION from the env when --session is absent
-         ;; — passing it via :env keeps the token OUT of argv (which
-         ;; `ps -ef' otherwise exposes). `--nointeraction' makes bw
-         ;; exit instead of prompting if the session is stale.
-         (list "bw" "--nointeraction" "lock")
-         :env `(("BW_SESSION" . ,session))
+         ;; Pass session via --session argv to match the rest of the
+         ;; async chain (see bw-get-item-async for the BW_SESSION-env
+         ;; reliability story).
+         (list "bw" "--nointeraction" "lock" "--session" session)
          :redact t)
         ;; Active hygiene: zero our local copy of the session token
         ;; now that `make-process' has the value baked into the child's
@@ -686,8 +684,10 @@ Behaviour:
                     (my/task-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
-                     (list "bw" "--nointeraction" "sync")
-                     :env `(("BW_SESSION" . ,(copy-sequence session)))
+                     ;; Session via --session argv (see bw-get-item-async
+                     ;; for the BW_SESSION-env reliability story).
+                     (list "bw" "--nointeraction" "sync"
+                           "--session" session)
                      :redact t
                      :on-success (lambda (_out) (funcall cb session))
                      :on-failure (lambda (_err) (funcall cb session))))
@@ -816,12 +816,20 @@ real issue, add a chained second-stage task here."
        ;; when the session is invalid/expired — without it the subprocess
        ;; would silently wait for a master-password prompt forever
        ;; (stdin is a closed pipe, so the prompt never returns).
-       ;; CRITICAL: `copy-sequence' the session — the task framework
-       ;; calls `clear-string' on each :env value after `make-process'
-       ;; (secret hygiene). Passing `my/bw-session' directly would
-       ;; zero the global, locking out every subsequent bw call.
-       (list "bw" "--nointeraction" "get" "item" item-name)
-       :env `(("BW_SESSION" . ,(copy-sequence my/bw-session)))
+       ;;
+       ;; HISTORICAL NOTE: this used to pass the session via BW_SESSION
+       ;; env (`copy-sequence' to avoid the task framework's clear-string
+       ;; hygiene zeroing our global). Despite the copy, real-world runs
+       ;; STILL produced `exit 1: Vault is locked.' on the async path
+       ;; while the sync path (which uses --session argv) worked fine.
+       ;; Switched to argv for reliability. Trade-off: the session token
+       ;; is briefly visible in `ps -ef' for the lifetime of this
+       ;; subprocess (a few hundred ms). Acceptable because:
+       ;;   - this Mac is single-user
+       ;;   - bw sessions auto-expire after BW's configured timeout
+       ;;   - the alternative is bootstrap not reading BW at all
+       (list "bw" "--nointeraction" "get" "item" item-name
+             "--session" my/bw-session)
        ;; Stdout is the full BW item JSON: PAT, every API key, every
        ;; GitCryptKey field. Pattern masking replaces values; the
        ;; structure stays visible. `clear-string' wipes the captured
@@ -2892,15 +2900,22 @@ required. Safe to invoke directly via M-x for retries."
               (message "Bootstrap: repo switch queued for next restart (this run continues against %s)."
                        my/data-dir))
              (t
+              (message "Bootstrap: syncing private data repo %s/%s into %s (this may take 5-30s for first clone)…"
+                       (plist-get id :username) (plist-get id :repo) my/data-dir)
+              (redisplay t)
               (my/repo-sync id)
               (my/bootstrap-ensure-seed-config-files))))
            (t
             (message "Bootstrap: repo sync skipped (BW '%s' missing username or repo name; M-x my/bootstrap-config-form to set)."
                      my/bw-credentials-item))))
         ;; 7. git-crypt unlock (no-op if repo doesn't use it).
+        (message "Bootstrap: applying git-crypt key (no-op if repo isn't encrypted)…")
+        (redisplay t)
         (my/git-crypt-step id)
         ;; 8. Starter data — only fills gaps.
         (when (file-directory-p my/data-dir)
+          (message "Bootstrap: generating starter data under %s…" my/data-dir)
+          (redisplay t)
           (my/generate-starter-data my/data-dir id)
           (message "Bootstrap: starter files generated for any gaps under %s." my/data-dir)))
        (t
