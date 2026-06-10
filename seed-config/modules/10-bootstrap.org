@@ -3071,6 +3071,14 @@ work (keychain refresh, repo clone, gh auth, api-keys-load) runs
 until the user has chosen a data folder."
   (interactive)
   (let ((data-dir-el (expand-file-name "data-dir.el" user-emacs-directory)))
+    ;; Diagnostic: log the decision path explicitly so a misfiring form
+    ;; gate becomes debuggable without filesystem access. Paste this
+    ;; from *Messages* if the form opens unexpectedly.
+    (message "Bootstrap: gate check — data-dir.el=%s exists=%s my/data-dir=%s user-emacs-directory=%s"
+             data-dir-el
+             (if (file-exists-p data-dir-el) "YES" "NO")
+             (if (boundp 'my/data-dir) my/data-dir "<unbound>")
+             user-emacs-directory)
     (cond
      ((not (file-exists-p data-dir-el))
       ;; First-launch path: form is mandatory.
