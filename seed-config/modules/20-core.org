@@ -505,11 +505,24 @@ what you usually want for prose, Org, Markdown and chat buffers.
               ;; guard; this hook only enables auto-commit for user
               ;; data files. `file-truename' on both sides handles the
               ;; case where my/data-dir is a symlink (e.g. iCloud Drive).
+              ;;
+              ;; ALSO require `.git/' to exist at my/data-dir. On a
+              ;; first-launch the data-dir's safety gates create
+              ;; `data/org/' + `wiki/' BEFORE `my/bootstrap--run-full-
+              ;; sync' clones the GitHub repo into the same root. If
+              ;; org-apple-reminders saves `reminders.org' during that
+              ;; window, git-auto-commit-mode fires, tries `git commit'
+              ;; in a dir with no `.git', and stdout gets `fatal: not
+              ;; a git repository (or any of the parent directories):
+              ;; .git'. Cosmetic but noisy. Once bootstrap clones the
+              ;; repo, `.git/' exists and future saves commit cleanly.
               (when (and buffer-file-name
                          my/data-dir
                          (string-prefix-p
                           (file-name-as-directory (file-truename my/data-dir))
-                          (file-truename buffer-file-name)))
+                          (file-truename buffer-file-name))
+                         (file-directory-p
+                          (expand-file-name ".git" my/data-dir)))
                 (git-auto-commit-mode 1)))))
 #+end_src
 
