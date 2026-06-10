@@ -881,8 +881,24 @@ real issue, add a chained second-stage task here."
                               (string-trim (substring out 0 (min 120 (length out))))))))))
        :on-failure
        (lambda (err)
-         (funcall cb nil (or err "bw exited non-zero"))))))
+         (funcall cb nil (my/-bw-get-item-async-format-error item-name err))))))
     nil))
+
+;; Explanation: format bw async errors, recognising duplicate-item case.
+(defun my/-bw-get-item-async-format-error (item-name err)
+  "Map a raw bw-cli stderr ERR into a clearer user-facing error string.
+Currently special-cases `More than one result was found' (duplicate
+items in BW vault) with a remediation hint. Other errors pass
+through unchanged."
+  (let ((msg (or err "bw exited non-zero")))
+    (cond
+     ((and (stringp msg)
+           (string-match-p "More than one result was found" msg))
+      (format "BW vault has DUPLICATE items named '%s'. \
+Delete the stale one in the BW web/desktop client and restart Emacs. \
+bw said: %s"
+              item-name (string-trim msg)))
+     (t msg))))
 
 ;; Explanation: Return a Bitwarden login password from a parsed item.
 (defun my/bw-item-password (item)
@@ -3598,29 +3614,44 @@ fields are missing."
      t nil
      "Master password used to unlock the vault. Cached in macOS Keychain.")
 
-    (widget-insert "\nGitHub identity (in BW.emacs-credentials)\n")
-    (widget-insert     "-----------------------------------------\n")
+    (widget-insert "\nGitHub identity (in BW.emacs-credentials, also cached in Keychain)\n")
+    (widget-insert     "----------------------------------------------------------------\n")
+    ;; Pre-fill from Keychain first (always available — no BW unlock
+    ;; needed) and fall back to BW if Keychain is empty AND BW is
+    ;; unlocked. On a typical M-x invocation after bootstrap, BW is
+    ;; locked so the BW path returns nil; we want the Keychain values
+    ;; the post-bootstrap refresh wrote.
     (my/-config-form-insert-row
      'gh-username "GitHub username"
-     (my/-config-form-current-gh-field item 'username) nil nil
+     (or (my/keychain-get my/keychain-service my/keychain-account-github-username)
+         (my/-config-form-current-gh-field item 'username))
+     nil nil
      "Your GitHub login handle, e.g. 'deno1011'.")
     (my/-config-form-insert-row
      'gh-token "GitHub PAT"
-     (my/-config-form-current-gh-field item 'password) t nil
+     (or (my/keychain-get my/keychain-service my/keychain-account-github-token)
+         (my/-config-form-current-gh-field item 'password))
+     t nil
      "Personal Access Token with `repo' scope. Generate at \
 https://github.com/settings/tokens — classic `ghp_…' or fine-grained \
 `github_pat_…' both work.")
     (my/-config-form-insert-row
      'gh-email "Git commit email"
-     (my/-config-form-current-gh-field item 'Email) nil nil
+     (or (my/keychain-get my/keychain-service my/keychain-account-github-email)
+         (my/-config-form-current-gh-field item 'Email))
+     nil nil
      "Email used for `git config --global user.email'.")
     (my/-config-form-insert-row
      'gh-fullname "Git commit name"
-     (my/-config-form-current-gh-field item 'Fullname) nil nil
+     (or (my/keychain-get my/keychain-service my/keychain-account-github-fullname)
+         (my/-config-form-current-gh-field item 'Fullname))
+     nil nil
      "Full name used for `git config --global user.name'.")
     (my/-config-form-insert-row
      'gh-repo "Data repo name"
-     (my/-config-form-current-gh-field item 'Repo) nil nil
+     (or (my/keychain-get my/keychain-service my/keychain-account-github-repo)
+         (my/-config-form-current-gh-field item 'Repo))
+     nil nil
      "Bare name of your private GitHub data repo. e.g. 'emacs15' → \
 data folder becomes ~/emacs15/, GitHub remote becomes \
 github.com/<username>/emacs15.")
