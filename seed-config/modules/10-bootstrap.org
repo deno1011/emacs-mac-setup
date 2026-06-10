@@ -4143,10 +4143,44 @@ Returns :done / (:error REASON)."
       :done))))
 
 (defun my/bootstrap-step--finalize ()
-  "Lock the BW vault, emit a one-line summary. Returns :done."
+  "Lock the BW vault and emit a single-line API-key summary.
+
+Reports active / opted-out / missing counts so the user knows
+whether to run `M-x my/bootstrap-config-form' to fill gaps. Always
+returns :done — there's no failure mode for a status report."
   (message "Bootstrap step 7: finalize (lock BW, emit summary)…")
+  (my/bootstrap--report-api-keys-status)
   (when my/bw-session (my/bw-lock))
   :done)
+
+(defun my/bootstrap--report-api-keys-status ()
+  "Emit a single line summarising Keychain API-key state."
+  (let* ((counts (my/bootstrap--api-keys-counts))
+         (stored    (plist-get counts :stored))
+         (opted-out (plist-get counts :opted-out))
+         (missing   (plist-get counts :missing)))
+    (cond
+     ((> missing 0)
+      (message "Bootstrap step 7: API keys — %d active, %d opted-out, %d missing (M-x my/bootstrap-config-form to set)."
+               stored opted-out missing))
+     (t
+      (message "Bootstrap step 7: API keys — %d active, %d opted-out (all configured)."
+               stored opted-out)))))
+
+(defun my/bootstrap--api-keys-counts ()
+  "Return a plist :stored :opted-out :missing for `my/api-key-fields'.
+
+`stored' = entries with a real (non-sentinel) value in Keychain
+`opted-out' = entries with the `my/api-skipped-sentinel' value
+`missing' = entries that have neither (need user input)."
+  (let ((stored 0) (opted-out 0) (missing 0))
+    (dolist (env-var my/api-key-fields)
+      (let ((raw (my/keychain-get my/keychain-service env-var)))
+        (cond
+         ((my/-blank-p raw)                        (cl-incf missing))
+         ((string= raw my/api-skipped-sentinel)    (cl-incf opted-out))
+         (t                                         (cl-incf stored)))))
+    (list :stored stored :opted-out opted-out :missing missing)))
 
 (defun my/bootstrap-step--open-config-form-and-restart ()
   "Open `my/bootstrap-config-form' synchronously, block on
