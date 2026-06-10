@@ -3043,48 +3043,69 @@ Overwritten on every orchestrator run. Read by
 do not consume from outside the orchestrator chain.")
 
 (defun my/bootstrap-step--probe-credentials ()
-  "Silent probe of cached credentials.
+  "Silent probe of cached credentials, lazy on BW unlock.
 
-Reads `my/keychain-account-bw-email' + `my/keychain-account-bw-master'
-from Keychain. If both present, calls `my/bw--unlock-internal' to
-obtain a session, then reads `my/bw-credentials-item' via
-`my/bw-get-item'. Stashes the harvest in `my/-bootstrap-probe-data'
-for the next step (`resolve-data-dir' in this commit;
-`ensure-form-submitted' once the form gate moves here) and the form
-prefill.
+Two phases:
 
-Always returns :done — failure to unlock or fetch the item leaves
-`:item' nil, never raises. On success, sets `my/bw-session' so
-subsequent steps reuse the same unlock."
+  PHASE 1 — read Keychain only. Populate `my/-bootstrap-probe-data'
+  with `:bw-master', `:bw-email', `:data-dir-el-exists?', and
+  `:item nil' / `:bw-unlocked? nil'. Then run
+  `my/bootstrap--probe-data-complete-p' — the predicate already
+  consults Keychain for every form field (GH identity, API keys)
+  via the helpers it calls. If the answer is t, the probe ends
+  here: no `bw unlock' subprocess, no `bw get item' subprocess,
+  no BW session opened.
+
+  PHASE 2 — only when Keychain alone is insufficient AND we have
+  unlock credentials cached. Run `my/bw--unlock-internal' to open
+  a session, fetch `my/bw-credentials-item', and rewrite
+  `:bw-unlocked?' + `:item'. Failure (BW not installed, master
+  rotated, network) is non-fatal — `:item' stays nil and the
+  next step (`ensure-form-submitted') opens the form to ask the
+  user.
+
+Always returns :done. On a successful Phase 2 unlock, sets
+`my/bw-session' so subsequent steps reuse the same session."
   (message "Bootstrap step 1: probing cached credentials…")
-  (let* ((email   (my/keychain-get my/keychain-service
-                                   my/keychain-account-bw-email))
-         (master  (my/keychain-get my/keychain-service
-                                   my/keychain-account-bw-master))
-         (session (and (my/bw-installed-p)
-                       (not (my/-blank-p email))
-                       (not (my/-blank-p master))
-                       (condition-case _err
-                           (my/bw--unlock-internal email master)
-                         (error nil))))
-         (item    (and session
-                       (progn (setq my/bw-session (copy-sequence session))
-                              (condition-case _err
-                                  (my/bw-get-item my/bw-credentials-item)
-                                (error nil))))))
+  (let* ((email  (my/keychain-get my/keychain-service
+                                  my/keychain-account-bw-email))
+         (master (my/keychain-get my/keychain-service
+                                  my/keychain-account-bw-master))
+         (dde-p  (file-exists-p
+                  (expand-file-name "data-dir.el" user-emacs-directory))))
+    ;; Phase 1: Keychain-only snapshot.
     (setq my/-bootstrap-probe-data
-          (list :bw-master  master
-                :bw-email   email
-                :bw-unlocked? (and session t)
-                :item       item
-                :data-dir-el-exists?
-                (file-exists-p
-                 (expand-file-name "data-dir.el" user-emacs-directory))))
-    (message "Bootstrap step 1: probe — BW %s, item %s, data-dir.el %s."
-             (if session "unlocked" "not unlocked")
-             (if item    "found"    "missing")
-             (if (plist-get my/-bootstrap-probe-data :data-dir-el-exists?)
-                 "present" "absent")))
+          (list :bw-master master
+                :bw-email  email
+                :bw-unlocked? nil
+                :item nil
+                :data-dir-el-exists? dde-p))
+    (cond
+     ;; Phase 1 was enough — short-circuit, no BW touch.
+     ((my/bootstrap--probe-data-complete-p)
+      (message "Bootstrap step 1: probe — Keychain complete, BW untouched, data-dir.el %s."
+               (if dde-p "present" "absent")))
+     ;; Phase 2 — try BW; merge results into probe data.
+     (t
+      (let* ((session (and (my/bw-installed-p)
+                           (not (my/-blank-p email))
+                           (not (my/-blank-p master))
+                           (condition-case _err
+                               (my/bw--unlock-internal email master)
+                             (error nil))))
+             (item    (and session
+                           (progn (setq my/bw-session (copy-sequence session))
+                                  (condition-case _err
+                                      (my/bw-get-item my/bw-credentials-item)
+                                    (error nil))))))
+        (setq my/-bootstrap-probe-data
+              (plist-put my/-bootstrap-probe-data :bw-unlocked? (and session t)))
+        (setq my/-bootstrap-probe-data
+              (plist-put my/-bootstrap-probe-data :item item))
+        (message "Bootstrap step 1: probe — BW %s, item %s, data-dir.el %s."
+                 (if session "unlocked" "not unlocked")
+                 (if item    "found"    "missing")
+                 (if dde-p   "present"  "absent"))))))
   :done)
 
 (defun my/bootstrap--probe-data-complete-p ()
