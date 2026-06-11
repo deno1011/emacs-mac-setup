@@ -1901,13 +1901,14 @@ default. Returns nil only if both fail."
 (defun my/-normalize-base64 (s)
   "Strip whitespace and translate base64url chars to standard base64.
 `pbcopy' / shell pipelines often produce trailing newlines; some tools
-emit `_' / `-' instead of `/' / `+'."
+emit `_' / `-' instead of `/' / `+'.  Also strip a trailing `%',
+which zsh displays as its no-newline marker and is easy to copy by accident."
   (when s
-    (replace-regexp-in-string
-     "_" "/"
-     (replace-regexp-in-string
-      "-" "+"
-      (replace-regexp-in-string "[ \t\n\r]" "" s)))))
+    (let ((compact (replace-regexp-in-string "[ \t\n\r]" "" s)))
+      (setq compact (replace-regexp-in-string "%+\\'" "" compact))
+      (replace-regexp-in-string
+       "_" "/"
+       (replace-regexp-in-string "-" "+" compact)))))
 
 ;; Explanation: Validate that a string is decodable base64 before storing it.
 (defun my/-valid-base64-p (s)
@@ -1973,13 +1974,14 @@ know the key itself is bad."
               (with-temp-file keyfile
                 (set-buffer-multibyte nil)
                 (insert (base64-decode-string (my/-normalize-base64 base64-key))))
-              (let ((default-directory dir))
-                (call-process-shell-command
-                 (format "git-crypt unlock %s 2>&1" (shell-quote-argument keyfile))
-                 nil "*git-crypt-unlock*" nil))
+              (let* ((default-directory dir)
+                     (exit-code
+                      (call-process-shell-command
+                       (format "git-crypt unlock %s 2>&1" (shell-quote-argument keyfile))
+                       nil "*git-crypt-unlock*" nil)))
               (with-current-buffer (get-buffer-create "*git-crypt-unlock*")
                 (cond
-                 ((string-match-p "Error\\|fatal\\|invalid" (buffer-string))
+                 ((not (zerop exit-code))
                   (display-warning
                    'emacs-setup
                    "git-crypt unlock failed — see *git-crypt-unlock* buffer.
@@ -1988,7 +1990,7 @@ wrong (not just the repo state), clear it with M-x my/git-crypt-reset."
                    :warning))
                  (t
                   (setq ok t)
-                  (message "Bootstrap: git-crypt unlocked %s." dir)))))
+                  (message "Bootstrap: git-crypt unlocked %s." dir))))))
           (error
            ;; base64-decode-string failure or write-file failure.
            (display-warning
@@ -2971,8 +2973,10 @@ Always returns :done. On a successful Phase 2 unlock, sets
                            kc-repo)))
     (my/bootstrap--apply-probe-repo)
     (cond
-     ;; Phase 1 was enough — short-circuit, no BW touch.
-     ((my/bootstrap--probe-data-complete-p)
+     ;; Phase 1 was enough — short-circuit, no BW touch.  For encrypted
+     ;; repos, "enough" also means git-crypt can be unlocked without BW.
+     ((and (my/bootstrap--probe-data-complete-p)
+           (my/bootstrap--probe-git-crypt-ready-p))
       (message "Bootstrap step 1: probe — Keychain complete, BW untouched, my/data-dir=%s."
                my/data-dir))
      ;; Phase 2 — try BW; merge results into probe data.
@@ -3013,6 +3017,19 @@ so subsequent steps and later-loading modules see the final
   (let ((repo (plist-get my/-bootstrap-probe-data :repo)))
     (when (and (stringp repo) (not (string-empty-p repo)))
       (setq my/data-dir (my/bootstrap-data-dir-for-repo repo)))))
+
+(defun my/bootstrap--probe-git-crypt-ready-p ()
+  "Return non-nil when Phase 1 can safely skip BW for git-crypt.
+Plain repos need no git-crypt key.  Encrypted repos may skip BW only when
+already unlocked or when the per-repo key is present in Keychain.  Otherwise
+the probe must unlock BW so Step 3 can read `GitCryptKey:<repo>'."
+  (let ((repo (plist-get my/-bootstrap-probe-data :repo)))
+    (or (not (and (file-directory-p my/data-dir)
+                  (my/repo-uses-git-crypt-p my/data-dir)))
+        (my/repo-already-unlocked-p my/data-dir)
+        (and (stringp repo)
+             (my/-git-crypt-real-key-p
+              (my/keychain-get my/git-crypt-keychain-service repo))))))
 
 (defun my/bootstrap--probe-data-complete-p ()
   "Non-nil when every credential bootstrap needs is already settled.
@@ -3276,7 +3293,8 @@ wipe, or after rotating an API key in BW."
          (null (plist-get probe :item))
          (null (plist-get probe :bw-unlocked?))
          (stringp (plist-get probe :repo))
-         (not (string-empty-p (plist-get probe :repo))))))
+         (not (string-empty-p (plist-get probe :repo)))
+         (my/bootstrap--probe-git-crypt-ready-p))))
 
 (defun my/bootstrap-step--refresh-keychain ()
   "Read BW first; only clear+rewrite Keychain when out of sync.
