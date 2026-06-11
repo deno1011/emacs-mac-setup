@@ -29,6 +29,10 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 (require 'json)
 (require 'subr-x)
 
+(prefer-coding-system 'utf-8-unix)
+(setq default-buffer-file-coding-system 'utf-8-unix
+      default-process-coding-system '(utf-8-unix . utf-8-unix))
+
 (defvar my/config-dir)
 (defvar my/data-dir)
 ;; (`my/private-config-dir' is gone — config lives at `my/config-dir' = ~/.emacs.d/config/.)
@@ -2007,6 +2011,32 @@ default. Returns nil only if both fail."
   "Cheap check: a key file is materialised under .git/git-crypt/keys/."
   (file-exists-p (expand-file-name ".git/git-crypt/keys/default" dir)))
 
+(defun my/git-crypt-refresh-open-data-buffers (dir)
+  "Revert unmodified open file buffers under DIR as UTF-8.
+If an Org buffer is opened before `git-crypt unlock' finishes, Emacs can keep
+raw bytes in memory even after the worktree becomes plaintext.  This makes
+UTF-8 bytes display as octal escapes such as \\303\\274.  After unlock, refresh
+only unmodified buffers so user edits are never discarded."
+  (let ((root (file-truename (file-name-as-directory dir)))
+        (n 0))
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when-let* ((file buffer-file-name)
+                    ((file-exists-p file))
+                    (truename (ignore-errors (file-truename file)))
+                    ((string-prefix-p root truename)))
+          (if (buffer-modified-p)
+              (message "Bootstrap: left modified buffer alone after git-crypt unlock: %s"
+                       file)
+            (let ((coding-system-for-read 'utf-8-unix))
+              (revert-buffer t t t)
+              (setq buffer-file-coding-system 'utf-8-unix)
+              (setq n (1+ n)))))))
+    (when (> n 0)
+      (message "Bootstrap: refreshed %d open data buffer%s as UTF-8 after git-crypt unlock."
+               n (if (= n 1) "" "s")))
+    n))
+
 ;; Explanation: Strip whitespace from a base64 encoded git-crypt key.
 (defun my/-normalize-base64 (s)
   "Strip whitespace and translate base64url chars to standard base64.
@@ -2100,6 +2130,7 @@ wrong (not just the repo state), clear it with M-x my/git-crypt-reset."
                    :warning))
                  (t
                   (setq ok t)
+                  (my/git-crypt-refresh-open-data-buffers dir)
                   (message "Bootstrap: git-crypt unlocked %s." dir))))))
           (error
            ;; base64-decode-string failure or write-file failure.
@@ -3443,7 +3474,9 @@ Branches (top-to-bottom):
   (let ((id (my/github-load-identity)))
     (cond
      ((not (my/bootstrap--repo-uses-git-crypt-p)) :skip)
-     ((my/bootstrap--repo-already-git-crypt-unlocked-p) :skip)
+     ((my/bootstrap--repo-already-git-crypt-unlocked-p)
+      (my/git-crypt-refresh-open-data-buffers my/data-dir)
+      :skip)
      ((not (my/bootstrap--ensure-git-crypt-installed))
       '(:error "git-crypt not installed; install manually: brew install git-crypt"))
      (t (my/bootstrap--apply-git-crypt-key id)))))
