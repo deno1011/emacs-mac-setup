@@ -1214,9 +1214,15 @@ Defaults to `my/config-dir' (= ~/.emacs.d/config/)."
 
 (defun my/bootstrap-ensure-seed-config-files ()
   "Refresh config files from the distro source into `my/config-dir'
-(which is always ~/.emacs.d/config/). Walk
-`my/distro-src-dir/seed-config/' and copy files into `my/config-dir',
-preserving subdirectory structure.
+\(which is always ~/.emacs.d/config/). Walk
+`my/distro-src-dir/emacs.d/config/' and copy files into
+`my/config-dir', preserving subdirectory structure.
+
+Until v2.0.x the source path was `my/distro-src-dir/seed-config/'.
+The directory was renamed to `emacs.d/config/' to match the layout
+the files actually land at in `~/.emacs.d/config/' — one less
+rename hop in the install pipeline. Function name and sentinel
+filename kept for backward compatibility.
 
 By default, existing seed-owned config files are OVERWRITTEN so users
 receive fixes on every start. To freeze local config from distro
@@ -1224,7 +1230,7 @@ updates, create `my/bootstrap-config-update-sentinel' inside
 `my/config-dir', or run `M-x my/bootstrap-freeze-config-updates'.
 Delete the sentinel or `M-x my/bootstrap-unfreeze-config-updates' to
 receive updates again."
-  (let ((src (expand-file-name "seed-config" my/distro-src-dir))
+  (let ((src (expand-file-name "emacs.d/config" my/distro-src-dir))
         (target-config-dir
          (and (boundp 'my/config-dir) (stringp my/config-dir) my/config-dir)))
     (cond

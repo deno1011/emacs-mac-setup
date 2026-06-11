@@ -29,24 +29,23 @@ emacs-mac-setup/
 ├── README.md                         # this file
 ├── .gitignore                        # *.elc, .claude/, editor temp files
 │
-├── emacs.d/
-│   ├── early-init.el                 # GC tuning, package.el silenced
-│   └── init.el                       # thin loader + override_init.el escape hatch
-│                                       # NOT a symlink — install.sh copies to ~/.emacs.d/
-│
-└── seed-config/                      # rsynced to ~/.emacs.d/config/ on install
-    ├── config.org                    # discovery loop + my/-load-module
-    └── modules/
-        ├── !00_startfirst.el         # source-loaded elpaca bootstrap (no byte-compile)
-        ├── 00-startfirst.org / .el   # dark theme + fullscreen
-        ├── 10-tasks.el               # async-tasks framework (vendored from deno1011/async-tasks)
-        ├── 20-bootstrap.org / .el    # credentials + form + orchestrator
-        ├── 30-core.org / .el         # base Emacs, completion, magit
-        ├── 40-org.org / .el          # org-mode, agenda, GTD, capture, LaTeX
-        ├── 50-apple-reminders.org / .el
-        ├── 60-gptel.org / .el        # gptel + gptel-agent-runtime + provider backends
-        ├── 70-wiki.org / .el         # LLM-Wiki helpers
-        └── 80-gtd.org / .el          # GTD overlay
+└── emacs.d/                          # mirrors ~/.emacs.d/ layout 1:1
+    ├── early-init.el                 # GC tuning, package.el silenced, UTF-8 defaults
+    ├── init.el                       # thin loader + override_init.el escape hatch
+    ├── secrets.el.template           # template; copied to secrets.el on first install
+    └── config/                       # rsynced to ~/.emacs.d/config/ on install
+        ├── config.org                # discovery loop + my/-load-module
+        └── modules/
+            ├── !00_startfirst.el     # source-loaded elpaca bootstrap (no byte-compile)
+            ├── 00-startfirst.org / .el   # dark theme + fullscreen
+            ├── 10-tasks.el           # async-tasks framework (vendored from deno1011/async-tasks)
+            ├── 20-bootstrap.org / .el    # credentials + form + orchestrator
+            ├── 30-core.org / .el     # base Emacs, completion, magit
+            ├── 40-org.org / .el      # org-mode, agenda, GTD, capture, LaTeX
+            ├── 50-apple-reminders.org / .el
+            ├── 60-gptel.org / .el    # gptel + gptel-agent-runtime + provider backends
+            ├── 70-wiki.org / .el     # LLM-Wiki helpers
+            └── 80-gtd.org / .el      # GTD overlay
 ```
 
 Both `.org` and `.el` are tracked. The `.el` is the tangled output of
@@ -61,7 +60,7 @@ macros are already in scope.
 
 | Layer | Owned by | Source of truth | Sync mechanism |
 |---|---|---|---|
-| Distro code (`emacs.d/`, `seed-config/`) | this repo | upstream `git` | `install.sh` → `rsync` |
+| Distro code (`emacs.d/` — including the `config/` subdir that lands at `~/.emacs.d/config/`) | this repo | upstream `git` | `install.sh` → `rsync` |
 | `async-tasks` framework | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) | upstream git | `install.sh` → `curl` → `~/.emacs.d/config/modules/10-tasks.el` |
 | Per-Mac credentials | Bitwarden + macOS Keychain | Bitwarden item `emacs_credentials` | bootstrap orchestrator syncs Keychain → BW on form save; probe rehydrates Keychain from BW when needed |
 | Per-user data (agenda, wiki) | the user's private GitHub repo | git | bootstrap clones once; `M-x my/repo-sync-now` for explicit pull |
@@ -140,7 +139,7 @@ bash ~/emacs-mac-setup-src/install.sh
 
 Pulls the latest distro on whichever branch you installed from
 (persisted via `~/.emacs.d/distro-source.el`), refreshes
-`async-tasks.el` from upstream, rsyncs `seed-config/` to
+`async-tasks.el` from upstream, rsyncs `emacs.d/config/` to
 `~/.emacs.d/config/`, copies init.el + early-init.el. Never touches
 `~/.emacs.d/custom.el`, `secrets.el`, or your data folder.
 

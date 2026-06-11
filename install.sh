@@ -354,29 +354,39 @@ echo "==> Wrote $EMACS_D/distro-source.el (branch=$BRANCH)"
 # user can switch BW.Repo freely, and `my/data-dir' only affects WHERE
 # USER DATA lives (org files, wiki, etc.).
 #
-# Policy matches `my/bootstrap-ensure-seed-config-files' in
-# seed-config/modules/20-bootstrap.org: distro-tracked files in
-# seed-config/ are OVERWRITTEN on every install so fixes flow through.
+# Repo layout now mirrors the live install layout — the distro's
+# config.org + modules/ ship as `emacs.d/config/' in this repo, and
+# `install.sh' just copies that directly into `~/.emacs.d/config/'.
+# The old `seed-config/' intermediate directory was a relic from
+# before the rsync target matched the source path one-to-one; it
+# added a renaming step with no benefit.
 #
-# Users who want to FREEZE local config from distro updates (e.g. while
-# iterating on a personal patch) create the sentinel file:
+# Policy matches `my/bootstrap-ensure-seed-config-files' in
+# emacs.d/config/modules/20-bootstrap.org: distro-tracked files
+# are OVERWRITTEN on every install so fixes flow through.
+#
+# Users who want to FREEZE local config from distro updates (e.g.
+# while iterating on a personal patch) create the sentinel file:
 #     touch ~/.emacs.d/config/.no-seed-config-updates
-# Then install.sh falls back to --ignore-existing (legacy behavior) so
-# local changes never get overwritten. `M-x my/bootstrap-freeze-config-updates'
-# inside Emacs writes the same sentinel.
+# Then install.sh falls back to --ignore-existing (legacy behavior)
+# so local changes never get overwritten. `M-x my/bootstrap-freeze-
+# config-updates' inside Emacs writes the same sentinel. The
+# sentinel filename keeps its historical name `.no-seed-config-
+# updates' for backward compatibility with existing user installs.
 CONFIG_DIR="$EMACS_D/config"
+CONFIG_SRC="$SRC_DIR/emacs.d/config"
 mkdir -p "$CONFIG_DIR/modules"
 SEED_SENTINEL="$CONFIG_DIR/.no-seed-config-updates"
 if [ -e "$SEED_SENTINEL" ]; then
-  rsync -a --ignore-existing "$SRC_DIR/seed-config/" "$CONFIG_DIR/"
-  echo "==> Seeded $CONFIG_DIR/ from $SRC_DIR/seed-config/ (FROZEN — only new files added; existing preserved)"
+  rsync -a --ignore-existing "$CONFIG_SRC/" "$CONFIG_DIR/"
+  echo "==> Seeded $CONFIG_DIR/ from $CONFIG_SRC/ (FROZEN — only new files added; existing preserved)"
   echo "    (delete $SEED_SENTINEL or run M-x my/bootstrap-unfreeze-config-updates to re-enable updates)"
 else
   # --update so we only touch destination files that are OLDER than the
   # source (or missing). Avoids racing the bootstrap's distro-config-update
   # task if it ran on a more recent seed than this install.sh fetched.
-  rsync -a --update "$SRC_DIR/seed-config/" "$CONFIG_DIR/"
-  echo "==> Seeded $CONFIG_DIR/ from $SRC_DIR/seed-config/ (refreshed distro-tracked files)"
+  rsync -a --update "$CONFIG_SRC/" "$CONFIG_DIR/"
+  echo "==> Seeded $CONFIG_DIR/ from $CONFIG_SRC/ (refreshed distro-tracked files)"
 fi
 
 # 6b. Wipe legacy ~/.emacs.d/elpa/ (package.el state) when elpaca is in use --
