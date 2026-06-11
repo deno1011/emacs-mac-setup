@@ -43,23 +43,45 @@ re-tangles + re-compiles itself transparently.
   "Directory holding the literate (.org) and vendored (.el) modules
 discovered by config.org. .org files are tangled + byte-compiled +
 loaded; vendored .el files (no .org sibling) are byte-compiled +
-loaded directly. install.sh's `6c. Vendor async-tasks' step writes
-one such .el into this directory on every install.")
+loaded directly UNLESS their basename starts with `!' — those are
+SOURCE-LOADED with no byte-compile (see `my/-load-module' for the
+why). install.sh's `6c. Vendor async-tasks' step writes one such
+byte-compiled .el; `modules/!00_startfirst.el' is the source-loaded
+one (elpaca bootstrap).")
 
 (defun my/-load-module (path)
   "Load PATH (either .org source or vendored .el). Prefer the
 byte-compiled .elc when newer than the source. Errors in any
 module are logged but do not abort the overall config load.
 
-  .org source → tangle to .el + byte-compile + load
-  .el  source → byte-compile + load
-  .elc current → load directly (~10 ms), no tangle / compile"
+  PATH basename starts with `!'  → source-load PATH (no byte-compile,
+                                   no .elc cache). Reserved for files
+                                   that DEFINE-AND-USE a macro within
+                                   the same load (e.g. elpaca
+                                   bootstrap); byte-compiling such a
+                                   file freezes the macro call as a
+                                   function call against an undefined
+                                   symbol, then the runtime funcall
+                                   fails once the macro IS registered.
+                                   The `!' sorts ASCII-before `0', so
+                                   such files run first in the
+                                   discovery loop's `string<' order.
+
+  .org source                    → tangle to .el + byte-compile + load
+  .el  source (no `!' prefix)    → byte-compile + load
+  .elc current                   → load directly (~10 ms), no tangle /
+                                   compile"
   (let* ((base (file-name-sans-extension path))
          (el   (concat base ".el"))
          (elc  (concat el  "c"))
-         (org? (string-suffix-p ".org" path)))
+         (name (file-name-nondirectory path))
+         (org? (string-suffix-p ".org" path))
+         (source-load? (string-prefix-p "!" name)))
     (condition-case err
         (cond
+         ;; Source-load (no byte-compile, no .elc).
+         (source-load?
+          (load path nil 'nomessage))
          ;; .elc current relative to whichever source file we got — load.
          ((and (file-exists-p elc)
                (file-newer-than-file-p elc path))

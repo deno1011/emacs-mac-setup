@@ -62,13 +62,20 @@ the data folder doesn't affect where config loads from.")
 
 ;; 3. Package manager: elpaca --------------------------------------------
 ;;
-;; Moved out of this file. The elpaca + elpaca-use-package bootstrap now
-;; lives at the TOP of `~/.emacs.d/config/modules/20-bootstrap.org'
-;; (Step 0). Nothing inside this init.el needs elpaca, and the first
-;; module that actually calls `use-package' at load time is 30-core. By
-;; the time the discovery loop in config.org reaches that module,
-;; `20-bootstrap' has already finished its Step 0 block — including
-;; `(elpaca-wait)' — so `:ensure …' recipes work as before.
+;; Moved out of this file. The elpaca + elpaca-use-package bootstrap
+;; now lives at `~/.emacs.d/config/modules/!00_startfirst.el' — a
+;; SOURCE-LOADED module (no byte-compile). The `!' name prefix sorts
+;; ahead of every numbered module in `string<' order, so config.org's
+;; discovery loop runs it first. It is source-loaded specifically
+;; because the `elpaca' macro is defined and used in the same file —
+;; a pattern that breaks when byte-compiled (the macro call freezes
+;; as a function call against an unknown symbol, then funcall fails
+;; at runtime). `my/-load-module' in config.org recognizes the `!'
+;; prefix and skips byte-compile for those files.
+;;
+;; Nothing here in init.el needs elpaca; the first call to
+;; `(use-package … :ensure …)' lands in `30-core.org', well after the
+;; `!00_startfirst.el' bootstrap and `(elpaca-wait)' have completed.
 
 ;; 4. Secrets — per-Mac, never tracked in git ----------------------------
 (let ((secrets (expand-file-name "secrets.el" user-emacs-directory)))
