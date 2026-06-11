@@ -1,0 +1,43 @@
+;;; 00-startfirst.el --- Earliest module: theme + frame setup -*- lexical-binding: t; -*-
+
+;; Built-in dark theme — no install required.
+(load-theme 'modus-vivendi t)
+
+;; --- Silence "compat loaded before Elpaca activation" --------------------
+;;
+;; Emacs 30 ships `compat' as a built-in. During init, byte-compilation of
+;; any package that depends on compat (magit, embark, doom-modeline, …)
+;; loads the built-in compat. When elpaca's processing later reaches its
+;; activation step for compat (a newer ELPA version, 31+), it sees compat
+;; already in `features' and emits:
+;;
+;;   Warning (emacs): compat loaded before Elpaca activation
+;;
+;; Fix: unload the built-in `compat' RIGHT BEFORE elpaca-process-queues
+;; runs. By the time elpaca activates its compat, the feature is gone and
+;; elpaca's (newer) version is the one that ends up in features. No
+;; warning, and dependents pick up the newer compat that elpaca queued.
+;;
+;; Depth -50 on `after-init-hook' guarantees this runs BEFORE elpaca's
+;; own queue processor (which init.el adds with default depth 0).
+(add-hook 'after-init-hook
+          (lambda ()
+            (when (featurep 'compat)
+              (ignore-errors (unload-feature 'compat t))))
+          -50)
+
+;;; 00-fullscreen.el --- Fullscreen graphical frames early -*- lexical-binding: t; -*-
+
+(defun my/fullscreen-frame (frame)
+  "Put graphical FRAME into fullscreen."
+  (when (and (frame-live-p frame)
+             (display-graphic-p frame))
+    (with-selected-frame frame
+      (unless (memq (frame-parameter frame 'fullscreen)
+                    '(fullscreen fullboth))
+        (set-frame-parameter frame 'fullscreen 'fullboth)))))
+
+(add-hook 'after-make-frame-functions #'my/fullscreen-frame)
+
+(when (display-graphic-p)
+  (my/fullscreen-frame (selected-frame)))
