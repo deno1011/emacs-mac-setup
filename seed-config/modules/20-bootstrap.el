@@ -2752,6 +2752,82 @@ fresh install — change later by re-opening the form.")
 ;;; Bootstrap business logic — read this section for the flow.
 ;;; ============================================================
 
+(defvar my/-bootstrap-step-timings nil
+  "Alist of (LABEL OUTCOME ELAPSED-SECONDS) populated by
+`my/bootstrap--run' during each orchestrator run. Reset at the top
+of `my/bootstrap-orchestrate' and printed in a summary banner at
+the bottom. Lets the user see exactly which step took how long on
+every launch — `my/data-dir' resolution / BW unlock / clone / gh
+auth / etc. — instead of staring at a vague spinner.")
+
+(defvar my/-bootstrap-start-time nil
+  "`current-time' value captured at the very top of
+`my/bootstrap-orchestrate'. Used by the summary banner to print
+total wall-clock elapsed.")
+
+(defun my/-bootstrap-format-elapsed (seconds)
+  "Format SECONDS for the per-step / summary log lines."
+  (cond
+   ((< seconds 0.001) "<1ms")
+   ((< seconds 1.0)   (format "%dms" (round (* 1000 seconds))))
+   (t                 (format "%.2fs" seconds))))
+
+(defun my/-bootstrap-format-outcome (outcome)
+  "Format OUTCOME (a step's return value) for the log lines."
+  (cond
+   ((eq outcome :done)               (propertize "done"       'face 'success))
+   ((eq outcome :skip)               (propertize "skip"       'face 'shadow))
+   ((and (consp outcome)
+         (eq (car outcome) :error))  (propertize "ERROR"      'face 'warning))
+   (t                                (format "%S" outcome))))
+
+(defun my/bootstrap--run (label fn)
+  "Call FN, dispatch its result, and append a timing record to
+`my/-bootstrap-step-timings'. Prints a per-step line as it goes
+so the user can watch progress live in `*Messages*' instead of
+hunting for it after the fact. LABEL is the short tag shown in
+the line and the summary banner."
+  (let* ((start   (current-time))
+         (result  (funcall fn))
+         (elapsed (float-time (time-subtract (current-time) start))))
+    (push (list label result elapsed) my/-bootstrap-step-timings)
+    (message "Bootstrap %s  %s  %s"
+             (my/-bootstrap-format-outcome result)
+             (my/-bootstrap-format-elapsed elapsed)
+             label)
+    (my/bootstrap--dispatch result)))
+
+(defun my/bootstrap--print-summary ()
+  "Print a single-line summary of the just-finished orchestrator run.
+Format:
+
+  Bootstrap: total 612ms (1 probe 95ms · 2 form 5ms · 3 folder …)
+
+The summary makes startup transparent — at a glance the user sees
+where time went, which steps skipped, whether any errored. Use the
+breakdown to spot regressions (\"refresh-keychain used to be 50ms,
+why is it 2.8s today\") without having to add ad-hoc traces."
+  (let ((total (when my/-bootstrap-start-time
+                 (float-time (time-subtract (current-time)
+                                            my/-bootstrap-start-time))))
+        (steps (nreverse my/-bootstrap-step-timings)))
+    (message "Bootstrap: total %s (%s)"
+             (if total (my/-bootstrap-format-elapsed total) "?")
+             (mapconcat
+              (lambda (entry)
+                (let ((label   (nth 0 entry))
+                      (outcome (nth 1 entry))
+                      (elapsed (nth 2 entry)))
+                  (format "%s %s%s"
+                          label
+                          (my/-bootstrap-format-elapsed elapsed)
+                          (cond
+                           ((eq outcome :skip)              (propertize " (skipped)" 'face 'shadow))
+                           ((and (consp outcome)
+                                 (eq (car outcome) :error)) (propertize " (ERROR)"   'face 'warning))
+                           (t                                "")))))
+              steps " · "))))
+
 (defun my/bootstrap-orchestrate ()
   "Top-level bootstrap recipe.
 
@@ -2761,40 +2837,57 @@ job is sequencing + reacting to `:error' (display a warning,
 stop). Since the orchestrator runs SYNCHRONOUSLY before subsequent
 modules load (see Step 9), there is no \"restart needed\" path —
 every step completes against the final `my/data-dir' value, and
-the discovery loop continues from there."
+the discovery loop continues from there.
+
+Every step's outcome and elapsed time is logged to `*Messages*' as
+it runs, and a final one-line summary banner is printed at the end
+(see `my/bootstrap--print-summary'). Switch to the messages buffer
+after init to see the breakdown."
   (interactive)
+  (setq my/-bootstrap-start-time (current-time)
+        my/-bootstrap-step-timings nil)
   (message "Bootstrap: starting orchestrator (business-logic layer)…")
-  (catch 'my/bootstrap-bail
-    ;; 1. Silent probe — read cached Keychain creds, try BW unlock,
-    ;;    harvest `emacs_credentials' item. Populates
-    ;;    `my/-bootstrap-probe-data' for the next step. Always :done.
-    (my/bootstrap--dispatch (my/bootstrap-step--probe-credentials))
+  (let ((bail
+         (catch 'my/bootstrap-bail
+           ;; 1. Silent probe — read cached Keychain creds, try BW
+           ;;    unlock, harvest `emacs_credentials' item. Populates
+           ;;    `my/-bootstrap-probe-data' for the next step. :done.
+           (my/bootstrap--run "1 probe"
+                              #'my/bootstrap-step--probe-credentials)
 
-    ;; 2. Open the setup form unless the probe says every credential
-    ;;    is already settled (Phase 1 / Phase 2 of step 1 has
-    ;;    already set `my/data-dir' from the Repo field when it
-    ;;    could).
-    (my/bootstrap--dispatch (my/bootstrap-step--ensure-form-submitted))
+           ;; 2. Open the setup form unless the probe says every
+           ;;    credential is already settled.
+           (my/bootstrap--run "2 form"
+                              #'my/bootstrap-step--ensure-form-submitted)
 
-    ;; 3. Is the private repo cloned into that folder? Clone if not.
-    (my/bootstrap--dispatch (my/bootstrap-step--ensure-data-folder))
+           ;; 3. Is the private repo cloned into that folder?
+           ;;    Clone if not.
+           (my/bootstrap--run "3 folder"
+                              #'my/bootstrap-step--ensure-data-folder)
 
-    ;; 4. Is git-crypt configured? Unlock if so.
-    (my/bootstrap--dispatch (my/bootstrap-step--unlock-git-crypt))
+           ;; 4. Is git-crypt configured? Unlock if so.
+           (my/bootstrap--run "4 git-crypt"
+                              #'my/bootstrap-step--unlock-git-crypt)
 
-    ;; 5. Sync the Keychain runtime cache from BW.
-    (my/bootstrap--dispatch (my/bootstrap-step--refresh-keychain))
+           ;; 5. Sync the Keychain runtime cache from BW (steady-state
+           ;;    launches return :skip without touching BW).
+           (my/bootstrap--run "5 keychain"
+                              #'my/bootstrap-step--refresh-keychain)
 
-    ;; 6. Generate starter org/wiki files in any gaps.
-    (my/bootstrap--dispatch (my/bootstrap-step--generate-starter-data))
+           ;; 6. Generate starter org/wiki files in any gaps.
+           (my/bootstrap--run "6 starter"
+                              #'my/bootstrap-step--generate-starter-data)
 
-    ;; 7. Is gh CLI authenticated? Auth if not.
-    (my/bootstrap--dispatch (my/bootstrap-step--authenticate-gh))
+           ;; 7. Is gh CLI authenticated? Auth if not.
+           (my/bootstrap--run "7 gh-auth"
+                              #'my/bootstrap-step--authenticate-gh)
 
-    ;; 8. Lock BW, log summary.
-    (my/bootstrap--dispatch (my/bootstrap-step--finalize))
-
-    (message "Bootstrap: done.")))
+           ;; 8. Lock BW, log API-key summary.
+           (my/bootstrap--run "8 finalize"
+                              #'my/bootstrap-step--finalize)
+           nil)))
+    (my/bootstrap--print-summary)
+    bail))
 
 (defun my/bootstrap--dispatch (step-result)
   "React to a step's return symbol.
