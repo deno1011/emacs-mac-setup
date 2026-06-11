@@ -3155,22 +3155,69 @@ Returns :done / :skip / (:error REASON)."
 Add BW field GitCryptKey:%s or run M-x my/keychain-refresh-from-bw."
                  repo repo))))))
 
+(defvar my/-bootstrap-force-refresh-keychain nil
+  "When non-nil, bypass the steady-state skip in
+`my/bootstrap-step--refresh-keychain' and run the BW→Keychain
+sync chain unconditionally. Bound by `my/bw-sync-to-keychain'
+for the manual refresh path; left nil during the orchestrator's
+auto-run so steady-state launches skip the ~2-5 s cost.")
+
+(defun my/-bootstrap-steady-state-p ()
+  "Non-nil when probe step 1's Phase 1 found Keychain complete.
+
+Phase 1 reads Keychain only (no BW touch); Phase 2 unlocks BW
+and reads `emacs_credentials' only when Phase 1 was insufficient.
+The signal that Phase 2 was skipped: `:item' is still nil and
+`:bw-unlocked?' is still nil in `my/-bootstrap-probe-data', plus
+`:repo' is populated (otherwise we don't even know where
+`my/data-dir' points).
+
+When this returns non-nil, `refresh-keychain' can safely :skip —
+there is nothing in BW the Keychain doesn't already know about,
+because Phase 1 already proved Keychain was complete. The user
+runs `M-x my/bw-sync-to-keychain' manually after editing
+`emacs_credentials' in Bitwarden on another Mac, after a Keychain
+wipe, or after rotating an API key in BW."
+  (let ((probe my/-bootstrap-probe-data))
+    (and probe
+         (null (plist-get probe :item))
+         (null (plist-get probe :bw-unlocked?))
+         (stringp (plist-get probe :repo))
+         (not (string-empty-p (plist-get probe :repo))))))
+
 (defun my/bootstrap-step--refresh-keychain ()
   "Read BW first; only clear+rewrite Keychain when out of sync.
 
-Synchronous BW→Keychain refresh. Reads top-to-bottom: verify bw →
-unlock → sync → read item → build entries → already in sync? →
-:skip, else clear → multi-set → :done.
+ON STEADY-STATE LAUNCHES this step returns :skip immediately
+without touching Bitwarden. The trigger is
+`my/-bootstrap-steady-state-p' — basically, probe step 1 found
+Keychain already complete so BW has nothing new to contribute.
+The 2-5 second `bw unlock' + `bw sync' + `bw get item' chain
+that this function would otherwise run is the biggest single
+synchronous cost in bootstrap on a steady-state launch;
+short-circuiting it cuts ~2-5 s off every subsequent Emacs start.
 
-Atomic from the Emacs session's POV: any error path bails BEFORE
-touching Keychain, so a failed unlock or missing BW item never
-leaves the session credential-less. On the steady-state hot path
-(Keychain already mirrors BW) returns :skip with zero `security'
-writes.
+On a FIRST LAUNCH (or any launch where Keychain was incomplete
+and probe Phase 2 had to fetch from BW) the full sync chain
+runs: verify bw → unlock → sync → read item → build entries →
+already in sync? → :skip, else clear → multi-set → :done.
 
-Returns :done / :skip / (:error REASON)."
+Atomic from the Emacs session's POV: any error path bails
+BEFORE touching Keychain, so a failed unlock or missing BW item
+never leaves the session credential-less.
+
+Returns :done / :skip / (:error REASON).
+
+For a manual refresh (e.g. after editing `emacs_credentials' on
+another Mac), use `\\[my/bw-sync-to-keychain]'."
   (message "Bootstrap step 4: refresh Keychain runtime cache from BW…")
   (cond
+   ;; Steady-state shortcut: probe Phase 1 already proved Keychain
+   ;; is the source of truth. Skip the slow BW chain entirely.
+   ((and (not my/-bootstrap-force-refresh-keychain)
+         (my/-bootstrap-steady-state-p))
+    (message "Bootstrap step 4: steady state — Keychain authoritative, BW sync skipped (M-x my/bw-sync-to-keychain to force).")
+    :skip)
    ((not (my/bw-installed-p))
     '(:error "bw CLI not installed; install with: brew install bitwarden-cli"))
    ((not (or my/bw-session (my/bw-unlock)))
@@ -3197,6 +3244,26 @@ Returns :done / :skip / (:error REASON)."
                      (plist-get counts :api)
                      (plist-get counts :gitcrypt))
             :done)))))))))
+
+(defun my/bw-sync-to-keychain ()
+  "Pull every field of the `emacs_credentials' BW item into Keychain.
+
+Bootstrap does this automatically on first launch (when Keychain
+hasn't been seeded). On every subsequent launch the sync is
+skipped — Keychain becomes the steady-state source of truth and
+the 2-5 second BW unlock + sync chain doesn't fire on init.
+
+Run this command interactively after you have:
+
+  - Edited `emacs_credentials' in Bitwarden on another Mac
+  - Lost or wiped your Keychain entries
+  - Rotated an API key, GH PAT, or git-crypt key in Bitwarden
+
+Returns the step's symbol (`:done', `:skip', `(:error REASON)')."
+  (interactive)
+  (message "Forcing BW → Keychain sync (this takes 2-5 seconds)…")
+  (let ((my/-bootstrap-force-refresh-keychain t))
+    (my/bootstrap-step--refresh-keychain)))
 
 (defun my/bootstrap--keychain-already-in-sync-p (entries)
   "Return t iff every (SERVICE ACCOUNT VALUE) in ENTRIES already
