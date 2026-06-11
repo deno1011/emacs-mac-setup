@@ -13,6 +13,24 @@
 (setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
       gc-cons-percentage 0.6)
 
+;; UTF-8 EVERYWHERE, set at the earliest possible moment. macOS's
+;; LANG can default to a non-UTF-8 codepage in some scenarios
+;; (LaunchAgents, brew services without a login shell, etc.), and the
+;; per-buffer coding system is decided AT FILE OPEN, not retroactively.
+;; If any of `org-clock-save.el', `recentf', or a desktop-restore
+;; reopens an Org file BEFORE 20-bootstrap.el's own UTF-8 defaults
+;; run, the buffer ends up in raw-text or undecided-unix — UTF-8 bytes
+;; like 0xC3 0xBC (`ü') then display as octal escapes (`\303\274')
+;; until you `revert-buffer-with-coding-system'.
+;;
+;; Setting `prefer-coding-system' + the two `default-*' coding system
+;; variables HERE — before `init.el', before any module, before any
+;; restore hook fires — guarantees every later file read picks UTF-8.
+(prefer-coding-system 'utf-8-unix)
+(setq default-buffer-file-coding-system 'utf-8-unix
+      default-process-coding-system '(utf-8-unix . utf-8-unix))
+(set-language-environment "UTF-8")
+
 ;; Stable used to hide byte/native compiler warnings at startup via
 ;; `warning-minimum-level'. Keep real runtime warnings visible, but stop async
 ;; native compilation from opening a scary warning buffer for harmless package
