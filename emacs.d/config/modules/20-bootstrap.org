@@ -3629,7 +3629,7 @@ Branches (top-to-bottom):
   - data-dir needs (re)cloning       → clone + :done
 
 Returns :done / :skip / (:error …)."
-  (message "Bootstrap step 2: ensure data folder is a clone of the private repo…")
+  (message "Bootstrap step 3: ensure data folder is a clone of the private repo…")
   (let ((id (my/github-load-identity)))
     ;; Safety net: step 1's Phase 1 short-circuit (Keychain complete)
     ;; returns :done without unlocking BW, so `id' may be nil here
@@ -3642,16 +3642,34 @@ Returns :done / :skip / (:error …)."
                (my/bootstrap--data-folder-needs-clone-p))
       (my/bw-unlock)
       (setq id (my/github-load-identity)))
+    ;; Fallback when the folder is already healthy and BW wasn't
+    ;; unlocked: build a minimal identity from probe step 1's
+    ;; Keychain cache. Probe already read `github-username' +
+    ;; `github-repo' into `:keychain'; combined with the just-passed
+    ;; `data-folder-needs-clone-p' check above, that's enough to run
+    ;; `data-folder-matches-identity-p' and skip cleanly. Without
+    ;; this fallback the step used to emit a misleading
+    ;; "BW 'emacs_credentials' missing required username/repo"
+    ;; message even when Keychain had every value the orchestrator
+    ;; could possibly need.
+    (unless (my/bootstrap--github-identity-usable-p id)
+      (let* ((kc     (plist-get my/-bootstrap-probe-data :keychain))
+             (svc    my/keychain-service)
+             (lookup (lambda (acc) (cdr (assoc (cons svc acc) kc))))
+             (user   (funcall lookup my/keychain-account-github-username))
+             (repo   (funcall lookup my/keychain-account-github-repo)))
+        (when (and (stringp user) (not (string-empty-p user))
+                   (stringp repo) (not (string-empty-p repo)))
+          (setq id (list :username user :repo repo)))))
     (cond
      ((and (not id)
            (my/bootstrap--data-folder-needs-clone-p))
       '(:error "BW unreachable / item missing — cannot validate or clone the data folder; run M-x my/bootstrap-config-form to fix"))
      ((not (my/bootstrap--github-identity-usable-p id))
-      (message "Bootstrap step 2: skipping — BW '%s' missing required username/repo."
-               my/bw-credentials-item)
+      (message "Bootstrap step 3: skipping — no GitHub identity in Keychain or BW.")
       :skip)
      ((my/bootstrap--data-folder-matches-identity-p id)
-      (message "Bootstrap step 2: data folder already a clone of %s/%s — nothing to do."
+      (message "Bootstrap step 3: data folder already a clone of %s/%s — nothing to do."
                (plist-get id :username) (plist-get id :repo))
       :skip)
      (t
@@ -3706,7 +3724,7 @@ Branches (top-to-bottom):
   - opted-out sentinel set             → :skip
   - repo created in THIS bootstrap run → auto-init + :done
   - else (encrypted clone, no key)    → (:error \"…\")"
-  (message "Bootstrap step 3: git-crypt unlock (no-op if not encrypted)…")
+  (message "Bootstrap step 4: git-crypt unlock (no-op if not encrypted)…")
   (let ((id (my/github-load-identity)))
     (cond
      ((not (my/bootstrap--repo-uses-git-crypt-p)) :skip)
@@ -3729,7 +3747,7 @@ Branches (top-to-bottom):
 (defun my/bootstrap--ensure-git-crypt-installed ()
   "Install git-crypt via brew if missing. Returns t iff present after."
   (unless (my/git-crypt-installed-p)
-    (message "Bootstrap step 3: installing git-crypt via brew…")
+    (message "Bootstrap step 4: installing git-crypt via brew…")
     (my/git-crypt-install))
   (my/git-crypt-installed-p))
 
@@ -3742,23 +3760,23 @@ Returns :done / :skip / (:error REASON)."
          (kc-val (cdr pair)))
     (cond
      ((not repo)
-      (message "Bootstrap step 3: BW.Repo blank; cannot derive per-repo key slot.")
+      (message "Bootstrap step 4: BW.Repo blank; cannot derive per-repo key slot.")
       :skip)
      ((or (my/-git-crypt-sentinel-p bw-val)
           (my/-git-crypt-sentinel-p kc-val))
-      (message "Bootstrap step 3: git-crypt skipped for repo '%s' (sentinel set; M-x my/git-crypt-reset to revive)."
+      (message "Bootstrap step 4: git-crypt skipped for repo '%s' (sentinel set; M-x my/git-crypt-reset to revive)."
                repo)
       :skip)
      ((my/-git-crypt-real-key-p bw-val)
-      (message "Bootstrap step 3: git-crypt key for repo '%s' from BW." repo)
+      (message "Bootstrap step 4: git-crypt key for repo '%s' from BW." repo)
       (my/git-crypt-unlock my/data-dir bw-val)
       :done)
      ((my/-git-crypt-real-key-p kc-val)
-      (message "Bootstrap step 3: git-crypt key for repo '%s' from Keychain." repo)
+      (message "Bootstrap step 4: git-crypt key for repo '%s' from Keychain." repo)
       (my/git-crypt-unlock my/data-dir kc-val)
       :done)
      (my/bootstrap-repo-created-this-run
-      (message "Bootstrap step 3: no key in BW/Keychain — auto-initializing this newly-created repo.")
+      (message "Bootstrap step 4: no key in BW/Keychain — auto-initializing this newly-created repo.")
       (my/-repo-auto-init-git-crypt my/data-dir repo)
       :done)
      (t
@@ -3823,13 +3841,13 @@ Returns :done / :skip / (:error REASON).
 
 For a manual refresh (e.g. after editing `emacs_credentials' on
 another Mac), use `\\[my/bw-sync-to-keychain]'."
-  (message "Bootstrap step 4: refresh Keychain runtime cache from BW…")
+  (message "Bootstrap step 5: refresh Keychain runtime cache from BW…")
   (cond
    ;; Steady-state shortcut: probe Phase 1 already proved Keychain
    ;; is the source of truth. Skip the slow BW chain entirely.
    ((and (not my/-bootstrap-force-refresh-keychain)
          (my/-bootstrap-steady-state-p))
-    (message "Bootstrap step 4: steady state — Keychain authoritative, BW sync skipped (M-x my/bw-sync-to-keychain to force).")
+    (message "Bootstrap step 5: steady state — Keychain authoritative, BW sync skipped (M-x my/bw-sync-to-keychain to force).")
     :skip)
    ((not (my/bw-installed-p))
     '(:error "bw CLI not installed; install with: brew install bitwarden-cli"))
@@ -3847,12 +3865,12 @@ another Mac), use `\\[my/bw-sync-to-keychain]'."
                (counts (my/bootstrap--count-entries-by-kind entries)))
           (cond
            ((my/bootstrap--keychain-already-in-sync-p entries)
-            (message "Bootstrap step 4: Keychain already in sync with BW — skipping rewrite.")
+            (message "Bootstrap step 5: Keychain already in sync with BW — skipping rewrite.")
             :skip)
            (t
             (my/bootstrap--keychain-clear-bw-derived)
             (my/keychain-multi-set entries)
-            (message "Bootstrap step 4: Keychain refreshed — github=%d, api=%d, git-crypt=%d."
+            (message "Bootstrap step 5: Keychain refreshed — github=%d, api=%d, git-crypt=%d."
                      (plist-get counts :github)
                      (plist-get counts :api)
                      (plist-get counts :gitcrypt))
@@ -3979,14 +3997,14 @@ Builds three sections in place:
 
 Returns :done / :skip. Idempotent — `my/generate-starter-data'
 itself skips files that already exist."
-  (message "Bootstrap step 5: generate starter data in any gaps…")
+  (message "Bootstrap step 6: generate starter data in any gaps…")
   (cond
    ((not (file-directory-p my/data-dir))
-    (message "Bootstrap step 5: skipping — %s is not a directory." my/data-dir)
+    (message "Bootstrap step 6: skipping — %s is not a directory." my/data-dir)
     :skip)
    (t
     (my/generate-starter-data my/data-dir (my/github-load-identity))
-    (message "Bootstrap step 5: starter files generated for any gaps under %s." my/data-dir)
+    (message "Bootstrap step 6: starter files generated for any gaps under %s." my/data-dir)
     :done)))
 
 (defun my/bootstrap-step--authenticate-gh ()
@@ -3996,19 +4014,19 @@ Branches:
   - install attempt failed   → (:error …)
   - already authenticated    → :skip (idempotent)
   - else                     → log in with BW-stored token → :done."
-  (message "Bootstrap step 6: authenticate gh CLI…")
+  (message "Bootstrap step 7: authenticate gh CLI…")
   (cond
    ((not (my/bootstrap--ensure-gh-installed))
     '(:error "gh CLI not installed; install manually: brew install gh"))
    ((my/gh-authenticated-p)
-    (message "Bootstrap step 6: gh already authenticated.")
+    (message "Bootstrap step 7: gh already authenticated.")
     :skip)
    (t (my/bootstrap--gh-login-from-bw))))
 
 (defun my/bootstrap--ensure-gh-installed ()
   "Install gh via brew if missing. Returns t iff present after."
   (unless (my/gh-installed-p)
-    (message "Bootstrap step 6: installing gh via brew…")
+    (message "Bootstrap step 7: installing gh via brew…")
     (my/gh-install))
   (my/gh-installed-p))
 
@@ -4021,7 +4039,7 @@ Returns :done / (:error REASON)."
      ((my/-blank-p token)
       '(:error "BW has no GitHub token; cannot authenticate gh"))
      (t
-      (message "Bootstrap step 6: authenticating gh with BW-stored token…")
+      (message "Bootstrap step 7: authenticating gh with BW-stored token…")
       (my/gh-login-with-token token)
       :done))))
 
@@ -4031,7 +4049,7 @@ Returns :done / (:error REASON)."
 Reports active / opted-out / missing counts so the user knows
 whether to run `M-x my/bootstrap-config-form' to fill gaps. Always
 returns :done — there's no failure mode for a status report."
-  (message "Bootstrap step 7: finalize (lock BW, emit summary)…")
+  (message "Bootstrap step 8: finalize (lock BW, emit summary)…")
   (my/bootstrap--report-api-keys-status)
   (when my/bw-session (my/bw-lock))
   :done)
@@ -4044,10 +4062,10 @@ returns :done — there's no failure mode for a status report."
          (missing   (plist-get counts :missing)))
     (cond
      ((> missing 0)
-      (message "Bootstrap step 7: API keys — %d active, %d opted-out, %d missing (M-x my/bootstrap-config-form to set)."
+      (message "Bootstrap step 8: API keys — %d active, %d opted-out, %d missing (M-x my/bootstrap-config-form to set)."
                stored opted-out missing))
      (t
-      (message "Bootstrap step 7: API keys — %d active, %d opted-out (all configured)."
+      (message "Bootstrap step 8: API keys — %d active, %d opted-out (all configured)."
                stored opted-out)))))
 
 (defun my/bootstrap--api-keys-counts ()
