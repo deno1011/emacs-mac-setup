@@ -7,10 +7,17 @@ private data repo into the path stored in Bitwarden, and seeds it with
 a sample agenda, a populated LLM-wiki, and a guided `TOUR.org`.
 
 ```bash
-EMACS_MAC_BRANCH=refactor/business-logic-layer /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/refactor/business-logic-layer/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh)"
 ```
 
 See [`!STARTHERE.md`](!STARTHERE.md) for the user-facing walkthrough.
+
+Conservative install from the `stable` branch (frozen at the last
+tagged release):
+
+```bash
+EMACS_MAC_BRANCH=stable /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/install.sh)"
+```
 
 ## Layout
 
@@ -139,16 +146,16 @@ Pulls the latest distro on whichever branch you installed from
 
 ## Branches
 
-- `main` — current production tip
-- `stable` — last shipped stable release
-- `refactor/business-logic-layer` — the branch this README documents.
-  Adds: orchestrator + step layer, Bitwarden + Keychain integration,
-  setup form, single-run install, `async-tasks` extraction,
-  `override_init.el` escape hatch, base-10 module numbering, source-
-  loaded `!00_startfirst.el` for elpaca. Merging to `main` and
-  `stable` after end-to-end verification.
+- `main` — current production tip; recommended for the curl one-liner
+  unless you have a specific reason to pin
+- `stable` — last tagged release; identical to whatever `main` was at
+  the time of the most recent tag. Move with deliberate steps; safer
+  for users who don't want rolling updates
+- Tags — semver. `v1.x` is the pre-orchestrator distro-model design;
+  `v2.0.0` introduced the orchestrator + Bitwarden + Keychain + setup
+  form + async-tasks framework
 
-Install from a non-`main` branch:
+Install from any non-`main` branch:
 
 ```bash
 EMACS_MAC_BRANCH=branch-name /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/branch-name/install.sh)"

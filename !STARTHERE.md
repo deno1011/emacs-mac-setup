@@ -11,7 +11,13 @@ Keychain.
 ## Open Terminal and run
 
 ```bash
-EMACS_MAC_BRANCH=refactor/business-logic-layer /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/refactor/business-logic-layer/install.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/main/install.sh)"
+```
+
+Or pin to the last tagged release on the `stable` branch:
+
+```bash
+EMACS_MAC_BRANCH=stable /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/deno1011/emacs-mac-setup/stable/install.sh)"
 ```
 
 After ~10 minutes (most of it `brew install emacs-plus`), Emacs
