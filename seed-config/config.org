@@ -40,38 +40,59 @@ re-tangles + re-compiles itself transparently.
 #+begin_src elisp :tangle yes
 (defvar my/modules-dir
   (expand-file-name "modules/" my/config-dir)
-  "Directory holding the module .org files discovered by config.org.")
+  "Directory holding the literate (.org) and vendored (.el) modules
+discovered by config.org. .org files are tangled + byte-compiled +
+loaded; vendored .el files (no .org sibling) are byte-compiled +
+loaded directly. install.sh's `6c. Vendor async-tasks' step writes
+one such .el into this directory on every install.")
 
-(defun my/-load-module (org-path)
-  "Load ORG-PATH. Prefer the byte-compiled .elc when newer than the
-.org source — no Org parse, no tangle, no compile. Fall back to
-tangle + byte-compile + load when the .org has changed or no .el
-exists yet. Errors in any module are logged but do not abort the
-overall config load."
-  (let* ((el  (concat (file-name-sans-extension org-path) ".el"))
-         (elc (concat el "c")))
+(defun my/-load-module (path)
+  "Load PATH (either .org source or vendored .el). Prefer the
+byte-compiled .elc when newer than the source. Errors in any
+module are logged but do not abort the overall config load.
+
+  .org source → tangle to .el + byte-compile + load
+  .el  source → byte-compile + load
+  .elc current → load directly (~10 ms), no tangle / compile"
+  (let* ((base (file-name-sans-extension path))
+         (el   (concat base ".el"))
+         (elc  (concat el  "c"))
+         (org? (string-suffix-p ".org" path)))
     (condition-case err
         (cond
-         ;; .elc is current → load directly (~10 ms).
+         ;; .elc current relative to whichever source file we got — load.
          ((and (file-exists-p elc)
-               (file-newer-than-file-p elc org-path))
+               (file-newer-than-file-p elc path))
           (load elc nil 'nomessage))
-         ;; Stale or missing .el → re-tangle + re-compile + load.
-         (t
+         ;; Literate source → tangle then byte-compile then load.
+         (org?
           (require 'ob-tangle)
-          (org-babel-tangle-file org-path el)
+          (org-babel-tangle-file path el)
+          (byte-compile-file el)
+          (load (if (file-exists-p elc) elc el) nil 'nomessage))
+         ;; Vendored .el (no .org sibling) → byte-compile + load directly.
+         (t
           (byte-compile-file el)
           (load (if (file-exists-p elc) elc el) nil 'nomessage)))
       (error
        (message "CONFIG LOAD ERROR (%s): %s"
-                (file-name-nondirectory org-path) err)))))
+                (file-name-nondirectory path) err)))))
 
 (when (file-directory-p my/modules-dir)
-  (dolist (f (sort (seq-remove
-                    (lambda (p) (string-match-p "\\.disabled\\.org\\'" p))
-                    (directory-files my/modules-dir t "\\.org\\'"))
-                   #'string<))
-    (my/-load-module f)))
+  (let* ((orgs (directory-files my/modules-dir t "\\.org\\'"))
+         (els  (directory-files my/modules-dir t "\\.el\\'"))
+         ;; Skip .el files whose .org sibling owns the tangle — load
+         ;; them via the .org path so any pending re-tangle happens.
+         (vendored-els
+          (seq-remove
+           (lambda (el)
+             (member (concat (file-name-sans-extension el) ".org") orgs))
+           els))
+         (live (seq-remove
+                (lambda (p) (string-match-p "\\.disabled\\.org\\'" p))
+                (append orgs vendored-els))))
+    (dolist (f (sort live #'string<))
+      (my/-load-module f))))
 
 ;; Per-Mac override — loads LAST, can shadow anything above. Optional.
 (let ((local (expand-file-name "local.org" my/config-dir)))

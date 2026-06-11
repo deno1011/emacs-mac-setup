@@ -44,7 +44,7 @@ Customisation tunables (override in =~/.emacs.d/secrets.el= which loads before t
 ;; before its real defvar is hit in Step 12.
 (defvar my/-config-form-result)
 
-(declare-function my/task-shell "10-tasks")
+(declare-function async-tasks-shell "async-tasks")
 #+end_src
 
 * Step 0 — Package manager (elpaca)
@@ -292,7 +292,7 @@ until writes are visible to subsequent `security' reads."
 (defun my/keychain-multi-set-async (entries &optional on-finish)
   "Asynchronous variant of `my/keychain-multi-set'. ENTRIES is a list
 of (SERVICE ACCOUNT VALUE) triples. The bash subprocess is spawned
-via `my/task-shell' — the main thread does NOT block while the
+via `async-tasks-shell' — the main thread does NOT block while the
 ~1 second of `security' calls execute.
 
 Returns the task name (a symbol) so callers can depend on completion
@@ -303,7 +303,7 @@ Async wrapper around `my/keychain-multi-set'. Used by the form
 save handler when writing many entries at once."
   (cond
    ((null entries) nil)
-   ((not (fboundp 'my/task-shell))
+   ((not (fboundp 'async-tasks-shell))
     ;; Tasks module not loaded yet — fall back to sync so we don't drop writes.
     (my/keychain-multi-set entries)
     (when on-finish (funcall on-finish t))
@@ -312,7 +312,7 @@ save handler when writing many entries at once."
     (let ((task-name (intern (format "kc-multi-set-%d"
                                      (cl-incf my/-keychain-task-counter))))
           (cb (or on-finish #'ignore)))
-      (my/task-shell
+      (async-tasks-shell
        task-name
        ;; `bash -s' reads the script from stdin instead of from argv.
        ;; That keeps the shell-quoted secret VALUES out of `ps -ef'
@@ -388,7 +388,7 @@ silently trusting a stale cache."
      ((null svc-acc-pairs)
       (run-at-time 0 nil cb t)
       nil)
-     ((not (fboundp 'my/task-shell))
+     ((not (fboundp 'async-tasks-shell))
       ;; Sync fallback for very early bootstrap.
       (dolist (sa svc-acc-pairs)
         (let ((service (car sa))
@@ -433,7 +433,7 @@ silently trusting a stale cache."
                 svc-acc-pairs
                 "\n")
                "\nexit 0\n")))
-        (my/task-shell
+        (async-tasks-shell
          task-name
          (list "bash" "-s")
          :stdin script
@@ -471,7 +471,7 @@ shell-outs."
                    pairs
                    "\n")))
          (cb (or callback #'ignore)))
-    (my/task-shell
+    (async-tasks-shell
      (intern (format "kc-multi-get-%d"
                      (cl-incf my/-keychain-task-counter)))
      (list "bash" "-c" script)
@@ -654,7 +654,7 @@ Returns the session token or nil if the user declined / unlock failed."
 ;; Explanation: Async variant of my/bw-lock — fire-and-forget background subprocess.
 (defun my/bw-lock-async ()
   "Clear `my/bw-session' immediately and spawn `bw lock' as a
-background `my/task-shell' task. Returns immediately; the actual
+background `async-tasks-shell' task. Returns immediately; the actual
 lock call (~200 ms) happens in a subprocess.
 
 Use from async bootstrap callbacks that have finished reading BW —
@@ -664,8 +664,8 @@ of the vault is dispatched to the background."
   (when my/bw-session
     (let ((session my/bw-session))
       (setq my/bw-session nil)
-      (when (fboundp 'my/task-shell)
-        (my/task-shell
+      (when (fboundp 'async-tasks-shell)
+        (async-tasks-shell
          (intern (format "bw-lock-%d"
                          (cl-incf my/-keychain-task-counter)))
          ;; Pass session via --session argv to match the rest of the
@@ -693,7 +693,7 @@ Behaviour:
   - Keychain has cached email + master → read both via
     `my/keychain-multi-get-async' (ONE subprocess, no main-thread
     `security' calls), then spawn `bw unlock --raw' as a
-    `my/task-shell' task. The sentinel sets `my/bw-session', fires a
+    `async-tasks-shell' task. The sentinel sets `my/bw-session', fires a
     backgrounded `bw sync', then invokes CALLBACK. UI stays
     responsive during the ~500-1000 ms crypto unwrap.
   - No cached creds → falls back to SYNCHRONOUS `my/bw-unlock' since
@@ -716,7 +716,7 @@ Behaviour:
              ;; No cached creds → SYNC prompt path (first launch only).
              (funcall cb (my/bw-unlock)))
             (t
-             (my/task-shell
+             (async-tasks-shell
               (intern (format "bw-unlock-%d"
                               (cl-incf my/-keychain-task-counter)))
               ;; `--passwordenv BW_PW' makes bw read the master from the
@@ -737,8 +737,10 @@ Behaviour:
                        ;; `string-trim' returns the SAME string as `out'
                        ;; when there's nothing to trim. The task
                        ;; framework calls `(clear-string output)' AFTER
-                       ;; this callback returns (see 10-tasks.org
-                       ;; L679), zeroing every byte of `out'. Without
+                       ;; this callback returns (see async-tasks.el's
+                       ;; secret-masking block in
+                       ;; `async-tasks--shell-finished'), zeroing every
+                       ;; byte of `out'. Without
                        ;; the copy, `my/bw-session' aliases `out' and
                        ;; gets zeroed too — every subsequent
                        ;; `bw … --session my/bw-session' then reports
@@ -764,7 +766,8 @@ Behaviour:
                     ;;
                     ;; CRITICAL: pass `copy-sequence' of session. The
                     ;; task framework calls `clear-string' on every :env
-                    ;; value after `make-process' (10-tasks.org L545-547).
+                    ;; value after `make-process' (see
+                    ;; `async-tasks--start-shell' in async-tasks.el).
                     ;; Without copy, the framework would zero the SAME
                     ;; string `my/bw-session' references — every later
                     ;; bw call would then fail with "Vault is locked".
@@ -777,7 +780,7 @@ Behaviour:
                     ;; either bw-get-item finds the item (we write it
                     ;; into Keychain) or it doesn't (Keychain stays
                     ;; empty, predicate detects "needs work").
-                    (my/task-shell
+                    (async-tasks-shell
                      (intern (format "bw-sync-%d"
                                      (cl-incf my/-keychain-task-counter)))
                      ;; Session via --session argv (see bw-get-item-async
@@ -1454,10 +1457,10 @@ receive updates again."
 This does not block Emacs startup. Updated config is written to disk for
 the next restart; currently loaded modules keep running from memory."
   (cond
-   ((and (fboundp 'my/task-shell)
+   ((and (fboundp 'async-tasks-shell)
          (or (file-directory-p my/distro-src-dir)
              (not (my/-blank-p my/distro-repo-url))))
-    (my/task-shell
+    (async-tasks-shell
      'distro-config-update
      (list "sh" "-lc" (my/bootstrap-distro-update-command))
      :on-success
@@ -1526,8 +1529,8 @@ No-op when:
   - the task framework isn't loaded yet.
 
 When configuration IS needed, dispatches `brew services start' as a
-`my/task-shell' subprocess (non-blocking; shows up in
-`M-x my/task-status' as `emacs-daemon-service-setup'). On macOS,
+`async-tasks-shell' subprocess (non-blocking; shows up in
+`M-x async-tasks-status' as `emacs-daemon-service-setup'). On macOS,
 that command installs the plist into ~/Library/LaunchAgents/ AND may
 briefly cycle the currently-running daemon (one-time disruption — on
 all subsequent boots the daemon comes up automatically and bootstrap
@@ -1538,7 +1541,7 @@ is a no-op)."
    ((my/bootstrap-daemon-service-configured-p)
     (message "Bootstrap: emacs daemon LaunchAgent already configured (%s)."
              my/bootstrap-emacs-plus-formula))
-   ((not (fboundp 'my/task-shell))
+   ((not (fboundp 'async-tasks-shell))
     nil)
    ((not (executable-find "brew"))
     (display-warning
@@ -1548,7 +1551,7 @@ is a no-op)."
    (t
     (message "Bootstrap: emacs daemon LaunchAgent missing; running `brew services start %s' (background)."
              my/bootstrap-emacs-plus-formula)
-    (my/task-shell
+    (async-tasks-shell
      'emacs-daemon-service-setup
      (list "brew" "services" "start" my/bootstrap-emacs-plus-formula)
      :on-success
@@ -2552,14 +2555,14 @@ when the directory is empty, but does NOT =git pull= on subsequent
 launches.
 
 Use =M-x my/repo-sync-now= when you actually want fresh data from
-GitHub. Runs as a =my/task-shell= background task — non-blocking; see
-=M-x my/task-status= for progress.
+GitHub. Runs as a =async-tasks-shell= background task — non-blocking; see
+=M-x async-tasks-status= for progress.
 
 #+begin_src emacs-lisp :tangle yes
 ;; Explanation: User command — pull the private repo in the background.
 (defun my/repo-sync-now ()
   "Pull the private data repo into `my/data-dir' in the background.
-Non-blocking — runs as a `my/task-shell' task. See M-x my/task-status
+Non-blocking — runs as a `async-tasks-shell' task. See M-x async-tasks-status
 for progress; see *task: repo-pull* for full output."
   (interactive)
   (let ((dir my/data-dir))
@@ -2567,7 +2570,7 @@ for progress; see *task: repo-pull* for full output."
      ((not (file-directory-p (expand-file-name ".git" dir)))
       (message "repo-sync-now: %s is not a git clone yet — run M-x my/bootstrap to clone first." dir))
      (t
-      (my/task-shell
+      (async-tasks-shell
        'repo-pull
        (list "git" "-C" dir "pull" "--rebase" "--autostash")
        :on-success

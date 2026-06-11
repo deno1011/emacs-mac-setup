@@ -365,6 +365,45 @@ if [ -d "$EMACS_D/elpa" ] && [ -d "$EMACS_D/elpaca" ]; then
   rm -rf "$EMACS_D/elpa"
 fi
 
+# 6c. Vendor async-tasks from upstream into the modules directory ----------
+#
+# `async-tasks` is the standalone task framework formerly shipped inline as
+# 10-tasks.org. Source of truth is the public repo at
+# https://github.com/deno1011/async-tasks; we fetch the latest tagged copy
+# (or main HEAD when no tag is pinned) and drop it as
+# `~/.emacs.d/config/modules/10-tasks.el` so it loads inline at module-load
+# time. No elpaca queue, no `(elpaca-wait)` cost on launch — and other
+# Emacs users can still install the same package independently from MELPA.
+#
+# Override the repo (forks for testing) with EMACS_MAC_ASYNC_TASKS_REPO.
+# Pin to a release with EMACS_MAC_ASYNC_TASKS_TAG=v0.1.0; defaults to main.
+ASYNC_TASKS_REPO="${EMACS_MAC_ASYNC_TASKS_REPO:-deno1011/async-tasks}"
+ASYNC_TASKS_TAG="${EMACS_MAC_ASYNC_TASKS_TAG:-main}"
+ASYNC_TASKS_URL="https://raw.githubusercontent.com/$ASYNC_TASKS_REPO/$ASYNC_TASKS_TAG/async-tasks.el"
+ASYNC_TASKS_DST="$CONFIG_DIR/modules/10-tasks.el"
+# Pre-2026 distro versions shipped this module inline as 10-tasks.org.
+# If the user is upgrading from one of those, the .org would shadow our
+# freshly-vendored .el (the discovery loop prefers .org siblings). Wipe
+# both stale outputs before fetching.
+rm -f "$CONFIG_DIR/modules/10-tasks.org" "$CONFIG_DIR/modules/10-tasks.elc"
+echo "==> Fetching async-tasks from $ASYNC_TASKS_REPO@$ASYNC_TASKS_TAG …"
+if curl -fsSL --retry 3 --max-time 30 -o "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_URL"; then
+  mv "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_DST"
+  # Stale .elc would shadow the freshly-fetched .el; nuke it.
+  rm -f "${ASYNC_TASKS_DST}c"
+  echo "    -> $ASYNC_TASKS_DST"
+else
+  rm -f "$ASYNC_TASKS_DST.tmp"
+  if [ -f "$ASYNC_TASKS_DST" ]; then
+    echo "WARNING: async-tasks fetch failed; keeping existing copy at $ASYNC_TASKS_DST" >&2
+  else
+    echo "WARNING: async-tasks fetch failed AND no prior copy on disk." >&2
+    echo "         Bootstrap will run without the task framework — background" >&2
+    echo "         jobs (distro-config-update, daemon-install, …) will be no-ops." >&2
+    echo "         Check network / proxy and re-run install.sh." >&2
+  fi
+fi
+
 # 7. Daemon-aware launchers ------------------------------------------------
 #
 # Subsequent Emacs starts go through the daemon (~/Library/LaunchAgents/
