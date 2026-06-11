@@ -516,7 +516,22 @@ echo "==> Wrote $HOME/bin/emacs-gui (daemon-aware launcher)"
 # daemon model. Stays under ~/Applications/ so brew updates to emacs-plus
 # never touch it. Unsigned — Gatekeeper will warn on first launch; the user
 # right-clicks Open the first time.
+#
+# Re-install hygiene: we must REMOVE any previous Emacs Client.app entirely
+# before writing the new one, otherwise macOS's LaunchServices treats the
+# in-place overwrite as a new app while keeping the old entry around. After
+# a few installs Launchpad ends up with multiple "Emacs Client" icons, all
+# pointing at the same path but each holding its own LSItemRecord. The user
+# trashes them one by one (auto-renamed `Emacs Client 09.34.56.app' etc.)
+# and the next install adds a new one. The `rm -rf' + lsregister + Dock
+# restart below makes the placement idempotent: one bundle, one Launchpad
+# icon, no matter how many times install.sh is re-run.
 APP_DIR="$HOME/Applications/Emacs Client.app"
+mkdir -p "$HOME/Applications"
+# Clean slate before write — guarantees LaunchServices gets a fresh
+# (re)registration rather than treating the modified bundle as a sibling
+# of the previous one.
+[ -e "$APP_DIR" ] && rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 cat > "$APP_DIR/Contents/MacOS/Emacs Client" <<'EOF'
 #!/bin/bash
@@ -547,7 +562,22 @@ cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
+# Strip Gatekeeper quarantine so the first launch doesn't pop the
+# "downloaded from internet" warning on a script-written bundle.
+xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
+# Force LaunchServices to register THIS path, replacing any prior
+# entry it had for the same path. Without `-f' it would simply add
+# another LSItemRecord. Suppress noisy output but keep failure
+# tolerant — lsregister is a private framework binary, no contract.
+if [ -x "$LSREG" ]; then
+  "$LSREG" -f "$APP_DIR" 2>/dev/null || true
+fi
+mdimport "$APP_DIR" 2>/dev/null || true
+# Restart the Dock so Launchpad re-reads its icon grid and shows the
+# single replaced bundle instead of the cached stale one.
+killall Dock 2>/dev/null || true
 echo "==> Wrote $APP_DIR (.app wrapper for the daemon-aware launcher)"
+echo "    (LaunchServices re-registered; Dock restarted to refresh Launchpad)"
 
 # 6. Done ------------------------------------------------------------------
 echo ""
