@@ -129,12 +129,29 @@ unset _BREW_SHELLENV_LINE _PROFILE
 # 2. emacs-plus ------------------------------------------------------------
 EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
 EMACS_BREW_ARGS="${EMACS_BREW_ARGS:---with-xwidgets}"
+EMACS_TAP="${EMACS_TAP:-d12frosted/emacs-plus}"
 
 if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
   echo "==> Installing $EMACS_FORMULA $EMACS_BREW_ARGS (this takes ~10 minutes on first install)..."
-  brew tap d12frosted/emacs-plus 2>/dev/null || true
+
+  # Make the tap explicit and visible. Recent Homebrew versions (4.5+)
+  # refuse to install a formula from a tap unless it is registered and
+  # the install command qualifies the formula with the tap's path.
+  # Previous behavior — `brew tap … 2>/dev/null || true` followed by
+  # `brew install emacs-plus@30' — relied on a soft tap step and an
+  # unqualified formula name; both of those have stopped being enough.
+  # Symptom: `Error: Refusing to load formula from untrusted tap: …'
+  # at install time, with the install.sh trap catching it and exiting.
+  if ! brew tap | grep -qx "$EMACS_TAP"; then
+    echo "==> brew tap $EMACS_TAP"
+    brew tap "$EMACS_TAP"
+  fi
+
+  # Install via the FULLY-QUALIFIED formula path so brew never has to
+  # guess which tap the recipe came from. Equivalent to `brew install
+  # d12frosted/emacs-plus/emacs-plus@30 --with-xwidgets'.
   # shellcheck disable=SC2086
-  brew install "$EMACS_FORMULA" $EMACS_BREW_ARGS
+  brew install "${EMACS_TAP}/${EMACS_FORMULA}" $EMACS_BREW_ARGS
 fi
 
 # Place the actual .app bundle in /Applications using `ditto` — Apple's
