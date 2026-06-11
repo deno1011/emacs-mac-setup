@@ -41,14 +41,26 @@
 ;; 1. Where data lives -----------------------------------------------------
 (defvar my/data-dir
   (let ((env (getenv "EMACS_DATA_DIR")))
-    (and env (expand-file-name (file-name-as-directory env))))
+    (if env
+        (expand-file-name (file-name-as-directory env))
+      user-emacs-directory))
   "Root directory for the user's PERSONAL DATA — org files, wiki content,
 agenda files, GTD content, etc. NOT the literate config (that lives at
 `my/config-dir' = ~/.emacs.d/config/, regardless of which data-dir is
-selected). nil during the brief window between init.el and the
-20-bootstrap module load; the bootstrap orchestrator settles it from
-Keychain.GitHubRepo / BW.Repo / setup-form Save before any other module
-tangles. Set explicitly only when EMACS_DATA_DIR is in the environment
+selected).
+
+Default is `user-emacs-directory' (`~/.emacs.d/'). The choice matters
+because third-party packages — gptel-agent-runtime is one — read this
+variable AT LOAD TIME via byte-compiled code like
+`(directory-file-name my/data-dir)'. A nil value crashes them with
+\"Wrong type argument: stringp, nil\". The same packages typically
+ship a `(defvar my/data-dir user-emacs-directory …)' as a hint, but
+`defvar' is a no-op once the variable is bound, so init.el's binding
+wins.
+
+The bootstrap orchestrator overwrites this with the chosen folder
+(from Keychain.GitHubRepo / BW.Repo / setup-form Save) on first run
+and on every subsequent launch. Override per-Mac via `EMACS_DATA_DIR'
 (escape hatch for testing / scripted installs).")
 
 ;; 2. Where the literate config lives ------------------------------------
