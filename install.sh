@@ -255,9 +255,18 @@ echo "==> Dock restarted; Launchpad will show Emacs after it respawns (~2s)"
 # 3. Clone or update the distro -------------------------------------------
 if [ -d "$SRC_DIR/.git" ]; then
   echo "==> Updating $SRC_DIR (branch: $BRANCH)..."
+  # Use `merge --ff-only origin/$BRANCH' rather than
+  # `pull --ff-only origin $BRANCH'. The pull form does an *implicit*
+  # second fetch on top of the explicit one above, and when the
+  # background bootstrap-distro-update task (see 20-bootstrap.org)
+  # races against this install run, the second fetch can leave
+  # FETCH_HEAD with multiple "for-merge" entries — at which point
+  # git aborts with `fatal: Cannot fast-forward to multiple branches.'
+  # Merging directly against the local tracking ref bypasses
+  # FETCH_HEAD and is robust against the race.
   git -C "$SRC_DIR" fetch origin "$BRANCH"
   git -C "$SRC_DIR" checkout "$BRANCH"
-  git -C "$SRC_DIR" pull --ff-only origin "$BRANCH"
+  git -C "$SRC_DIR" merge --ff-only "origin/$BRANCH"
 else
   echo "==> Cloning distro to $SRC_DIR..."
   git clone --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"

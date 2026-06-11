@@ -1392,6 +1392,20 @@ receive updates again."
   (let* ((dir (file-name-as-directory (expand-file-name my/distro-src-dir)))
          (repo (or my/distro-repo-url "https://github.com/deno1011/emacs-mac-setup.git"))
          (branch (or my/distro-branch "main")))
+    ;; The update sequence is: fetch → checkout → merge-ff-only against
+    ;; the local tracking ref `origin/BRANCH'. Previously the third
+    ;; step was `git pull --ff-only origin BRANCH', which is equivalent
+    ;; to `git fetch origin BRANCH && git merge --ff-only FETCH_HEAD'
+    ;; — and the implicit second fetch raced against any concurrent
+    ;; git operation on the same clone (a prior install.sh run, a
+    ;; parallel update task, etc.), occasionally leaving FETCH_HEAD
+    ;; with multiple "for-merge" entries. Git then aborted the merge
+    ;; with `fatal: Cannot fast-forward to multiple branches.' and
+    ;; bootstrap surfaced "Distro checkout update failed: exit 128".
+    ;; Switching to `git merge --ff-only origin/BRANCH' bypasses
+    ;; FETCH_HEAD entirely — the local tracking ref is unambiguous
+    ;; and a single ref, so the merge has nothing to be confused
+    ;; about.
     (format
      (concat
       "set -e; "
@@ -1403,7 +1417,7 @@ receive updates again."
       "fi; "
       "git -C %s fetch origin %s; "
       "git -C %s checkout %s; "
-      "git -C %s pull --ff-only origin %s; "
+      "git -C %s merge --ff-only origin/%s; "
       "else "
       "mkdir -p %s; "
       "rmdir %s 2>/dev/null || true; "
@@ -1418,7 +1432,7 @@ receive updates again."
      (shell-quote-argument dir)
      (shell-quote-argument branch)
      (shell-quote-argument dir)
-     (shell-quote-argument branch)
+     branch ;; merge --ff-only origin/BRANCH — bare branch name (already a valid ref-name segment)
      (shell-quote-argument dir)
      (shell-quote-argument dir)
      (shell-quote-argument branch)
