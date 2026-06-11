@@ -1068,9 +1068,70 @@ The repo name is the directory name by design: Repo=emacs4 maps to
     (call-process-shell-command "brew install gh" nil "*install-gh*" t)
     (executable-find "gh")))
 
+(defvar my/-gh-auth-verified nil
+  "Session-scoped positive-cache flag for `my/gh-authenticated-p'.
+t once `gh auth status' has returned 0 in THIS Emacs session AND
+`gh''s host config file hasn't been modified since. Reset on Emacs
+restart (this is a defvar) or `M-x my/gh-auth-recheck'.")
+
+(defvar my/gh-auth-cache-file
+  (expand-file-name ".gh-auth-verified" user-emacs-directory)
+  "Marker file whose mtime carries forward `my/gh-authenticated-p''s
+positive cache across Emacs restarts. Touched after a successful
+`gh auth status'. Compared against `my/gh-config-file's mtime so
+that any `gh auth login' / `gh auth refresh' / `gh auth logout'
+outside Emacs invalidates the cache automatically.")
+
+(defvar my/gh-config-file
+  (expand-file-name ".config/gh/hosts.yml" (or (getenv "HOME") "~"))
+  "Path to `gh''s host configuration. Touched by `gh auth login'
+and `gh auth refresh', removed by `gh auth logout'. Used by
+`my/gh-authenticated-p' to invalidate the cache when the user has
+changed gh's state outside Emacs.")
+
 ;; Explanation: Check whether GitHub CLI already has a usable authenticated session.
 (defun my/gh-authenticated-p ()
-  (zerop (call-process-shell-command "gh auth status 2>/dev/null" nil nil)))
+  "Return t iff `gh auth status' reports an authenticated CLI.
+
+Two-layer cache so the ~400 ms `gh auth status' subprocess only
+runs when something has actually changed:
+
+  1. In-memory cache hit (`my/-gh-auth-verified' is t) → return t.
+     Lasts the rest of the Emacs session.
+  2. `gh''s `hosts.yml' missing → return nil immediately.
+     If gh is logged out, no subprocess is needed to confirm it.
+  3. Our marker file (`my/gh-auth-cache-file') is NEWER than
+     `gh''s `hosts.yml' AND both exist → set the in-memory cache
+     and return t. The mtime comparison means a `gh auth login'
+     or `gh auth refresh' outside Emacs (which touches
+     `hosts.yml') auto-invalidates the cache.
+  4. Else: run `gh auth status'. On success (rc 0), touch the
+     marker file + set the in-memory cache so subsequent calls
+     short-circuit. On failure, return nil — bootstrap's step
+     6 then falls through to `gh login' via the BW token."
+  (cond
+   (my/-gh-auth-verified t)
+   ((not (file-exists-p my/gh-config-file)) nil)
+   ((and (file-exists-p my/gh-auth-cache-file)
+         (file-newer-than-file-p my/gh-auth-cache-file my/gh-config-file))
+    (setq my/-gh-auth-verified t))
+   ((zerop (call-process-shell-command "gh auth status 2>/dev/null" nil nil))
+    (ignore-errors (with-temp-file my/gh-auth-cache-file (insert "")))
+    (setq my/-gh-auth-verified t))
+   (t nil)))
+
+(defun my/gh-auth-recheck ()
+  "Force `my/gh-authenticated-p' to re-verify on its next call.
+Clears the in-memory cache AND removes the persistent marker file
+so the next bootstrap (or any future call) re-runs `gh auth
+status'. Use after rotating the GH token in Bitwarden, after
+`gh auth logout' outside Emacs, or any time bootstrap appears to
+trust a stale auth state."
+  (interactive)
+  (setq my/-gh-auth-verified nil)
+  (when (file-exists-p my/gh-auth-cache-file)
+    (delete-file my/gh-auth-cache-file))
+  (message "gh auth cache cleared; next `my/bootstrap' will re-verify."))
 
 ;; Explanation: Authenticate GitHub CLI non-interactively with the token from Bitwarden.
 (defun my/gh-login-with-token (token)
@@ -1090,11 +1151,20 @@ captures stderr so the failure reason is visible."
                      (format "echo %s | gh auth login --with-token 2>&1"
                              (shell-quote-argument token))
                      nil t)))
-        (unless (zerop status)
+        (cond
+         ((zerop status)
+          ;; Prime both layers of `my/gh-authenticated-p''s cache so
+          ;; the next call hits the in-memory shortcut instead of
+          ;; spawning yet another `gh auth status' subprocess just to
+          ;; confirm what the just-finished `gh auth login' already
+          ;; proved.
+          (ignore-errors (with-temp-file my/gh-auth-cache-file (insert "")))
+          (setq my/-gh-auth-verified t))
+         (t
           (display-warning 'emacs-setup
                            (format "gh auth login failed (exit %d). See *bootstrap-gh* for details:\n%s"
                                    status (string-trim (buffer-string)))
-                           :warning))))
+                           :warning)))))
     (my/gh-authenticated-p))))
 #+end_src
 
