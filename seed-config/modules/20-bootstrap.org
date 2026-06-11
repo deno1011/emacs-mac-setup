@@ -2448,37 +2448,13 @@ after changing state."
   (my/bootstrap-start-daemon-service-task)
   (my/bootstrap-orchestrate))
 
-;; Run NOW — synchronously, before config.org's discovery loop loads
-;; the next module. The orchestrator opens the form via
-;; `recursive-edit' when needed; init blocks on it. By the time
-;; control returns here, `my/data-dir' is final and the data folder
-;; is populated.
-;;
-;; DEPENDENCY GATE: bootstrap relies on the `async-tasks' framework
-;; for every background job it schedules (distro-config-update,
-;; daemon-install, BW unlock async refresh, gh auth, repo sync …).
-;; Tasks is vendored at install time by install.sh's section 6c —
-;; if that curl failed and no on-disk copy exists, the function
-;; symbols this module's other steps reference are unbound and
-;; bootstrap can't run safely.
-;;
-;; Skip the orchestrator entirely in that case (rather than half-
-;; running it and emitting a stream of fboundp-guarded no-ops). All
-;; defuns above are still defined, so once the missing package is
-;; in place the user can manually re-run `M-x my/bootstrap'.
-(cond
- ((require 'async-tasks nil 'noerror)
-  (my/bootstrap))
- (t
-  (display-warning
-   'emacs-setup
-   (concat "async-tasks package not loaded — bootstrap skipped.\n"
-           "Re-run install.sh (its 6c step vendors async-tasks.el from "
-           "https://github.com/deno1011/async-tasks into "
-           "~/.emacs.d/config/modules/10-tasks.el), or set up\n"
-           "EMACS_MAC_ASYNC_TASKS_REPO / EMACS_MAC_ASYNC_TASKS_TAG to "
-           "point at a fork / pinned release. Then `M-x my/bootstrap'.")
-   :warning)))
+;; NB: the auto-invocation of `(my/bootstrap)' used to live here in
+;; Step 9, but the cond gate calling it would fire BEFORE Step 13's
+;; orchestrator + step defuns were tangled — `(my/bootstrap)' would
+;; reach `(my/bootstrap-orchestrate)' and hit a void-function error,
+;; silently aborting bootstrap. The gate now lives at the very end
+;; of Step 13's last `:tangle yes' block, after every dependency
+;; has been defined. See the bottom of this file.
 
 #+end_src
 
@@ -3642,15 +3618,44 @@ returns :done — there's no failure mode for a status report."
          (t                                         (cl-incf stored)))))
     (list :stored stored :opted-out opted-out :missing missing)))
 
-;;; ============================================================
-;;; LEGACY PATH — keeps the old `my/bootstrap' working for now.
-;;; Will be deleted in the final cleanup commit once every step
-;;; has its own implementation.
-;;; ============================================================
+;; ============================================================
+;; Run NOW — synchronously, before config.org's discovery loop
+;; loads the next module. The orchestrator opens the form via
+;; `recursive-edit' when needed; init blocks on it. By the time
+;; control returns here, `my/data-dir' is final and the data folder
+;; is populated.
 ;;
-;; `my/bootstrap' (the function bound to emacs-startup-hook in
-;; config.org) still points at the old logic; the orchestrator is
-;; runnable explicitly via `M-x my/bootstrap-orchestrate' so you can
-;; A/B compare. Subsequent commits will flip the hook to call the
-;; orchestrator once each step is fleshed out.
+;; DEPENDENCY GATE: bootstrap relies on the `async-tasks' framework
+;; for every background job it schedules (distro-config-update,
+;; daemon-install, BW unlock async refresh, gh auth, repo sync …).
+;; Tasks is vendored at install time by install.sh's section 6c —
+;; if that curl failed and no on-disk copy exists, the function
+;; symbols this module's other steps reference are unbound and
+;; bootstrap can't run safely.
+;;
+;; Skip the orchestrator entirely in that case (rather than half-
+;; running it and emitting a stream of fboundp-guarded no-ops). All
+;; defuns above are still defined, so once the missing package is
+;; in place the user can manually re-run `M-x my/bootstrap'.
+;;
+;; CRITICAL: this MUST be the last form in the file. Earlier
+;; placement in Step 9 led to `(my/bootstrap)' firing before Step
+;; 13's `(defun my/bootstrap-orchestrate)' had been read by the
+;; loader — the orchestrator's function cell was void and bootstrap
+;; aborted silently. Order in `:tangle yes' blocks is source order,
+;; so the gate has to come AFTER every defun it transitively calls.
+;; ============================================================
+(cond
+ ((require 'async-tasks nil 'noerror)
+  (my/bootstrap))
+ (t
+  (display-warning
+   'emacs-setup
+   (concat "async-tasks package not loaded — bootstrap skipped.\n"
+           "Re-run install.sh (its 6c step vendors async-tasks.el from "
+           "https://github.com/deno1011/async-tasks into "
+           "~/.emacs.d/config/modules/10-tasks.el), or set up\n"
+           "EMACS_MAC_ASYNC_TASKS_REPO / EMACS_MAC_ASYNC_TASKS_TAG to "
+           "point at a fork / pinned release. Then `M-x my/bootstrap'.")
+   :warning)))
 #+end_src
