@@ -387,22 +387,74 @@ ASYNC_TASKS_DST="$CONFIG_DIR/modules/10-tasks.el"
 # both stale outputs before fetching.
 rm -f "$CONFIG_DIR/modules/10-tasks.org" "$CONFIG_DIR/modules/10-tasks.elc"
 echo "==> Fetching async-tasks from $ASYNC_TASKS_REPO@$ASYNC_TASKS_TAG …"
-if curl -fsSL --retry 3 --max-time 30 -o "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_URL"; then
-  mv "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_DST"
-  # Stale .elc would shadow the freshly-fetched .el; nuke it.
-  rm -f "${ASYNC_TASKS_DST}c"
-  echo "    -> $ASYNC_TASKS_DST"
+# Fetch into a tmp file; only promote to the real location after we have
+# validated that the bytes actually look like async-tasks.el. curl with
+# `--retry 3` already covers transient network jitter; we add a content
+# check on top so HTML 404 pages, empty responses, or any other "200 OK
+# but the body isn't what we wanted" can never silently install bad code.
+ASYNC_TASKS_FETCH_RC=0
+curl -fsSL --retry 3 --max-time 60 -o "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_URL" || ASYNC_TASKS_FETCH_RC=$?
+
+ASYNC_TASKS_OK=0
+if [ "$ASYNC_TASKS_FETCH_RC" -eq 0 ] && [ -s "$ASYNC_TASKS_DST.tmp" ]; then
+  # Validate: first line MUST start with the expected commentary line,
+  # AND `(provide 'async-tasks)' must be present (sanity that we got the
+  # whole file, not a truncation). The two checks together catch every
+  # known failure mode short of a maliciously crafted GitHub response.
+  if head -1 "$ASYNC_TASKS_DST.tmp" | grep -q "^;;; async-tasks\.el ---" \
+     && grep -q "^(provide 'async-tasks)" "$ASYNC_TASKS_DST.tmp"; then
+    mv "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_DST"
+    rm -f "${ASYNC_TASKS_DST}c"
+    echo "    -> $ASYNC_TASKS_DST ($(wc -c < "$ASYNC_TASKS_DST") bytes)"
+    ASYNC_TASKS_OK=1
+  else
+    echo "ERROR: downloaded async-tasks.el failed content validation." >&2
+    echo "       (Expected first line to start with \";;; async-tasks.el ---\"" >&2
+    echo "        AND the file to contain \`(provide 'async-tasks)'.)" >&2
+    echo "       Got first line: $(head -1 "$ASYNC_TASKS_DST.tmp" 2>/dev/null)" >&2
+    echo "       URL:            $ASYNC_TASKS_URL" >&2
+    rm -f "$ASYNC_TASKS_DST.tmp"
+  fi
 else
   rm -f "$ASYNC_TASKS_DST.tmp"
+  echo "ERROR: curl failed to fetch async-tasks (exit code $ASYNC_TASKS_FETCH_RC)." >&2
+  echo "       URL: $ASYNC_TASKS_URL" >&2
+fi
+
+if [ "$ASYNC_TASKS_OK" -eq 0 ]; then
   if [ -f "$ASYNC_TASKS_DST" ]; then
-    echo "WARNING: async-tasks fetch failed; keeping existing copy at $ASYNC_TASKS_DST" >&2
+    # We have a previous good copy. Warn but continue — better to install
+    # with a slightly stale framework than to refuse to install at all.
+    echo "WARNING: keeping existing copy at $ASYNC_TASKS_DST" >&2
+    echo "         (size $(wc -c < "$ASYNC_TASKS_DST") bytes). Re-run install.sh" >&2
+    echo "         after restoring network connectivity to refresh." >&2
   else
-    echo "WARNING: async-tasks fetch failed AND no prior copy on disk." >&2
-    echo "         Bootstrap will run without the task framework — background" >&2
-    echo "         jobs (distro-config-update, daemon-install, …) will be no-ops." >&2
-    echo "         Check network / proxy and re-run install.sh." >&2
+    # No fallback. Refusing to continue is the only honest choice — without
+    # this file the bootstrap dep gate at the end of 20-bootstrap.el will
+    # skip the orchestrator, my/data-dir stays unset, and the next launch
+    # crashes a third-party package that reads my/data-dir at load time
+    # (gptel-agent-runtime hit exactly this; the symptom is a backtrace
+    # ending in `directory-file-name(nil)' that's mystifying to debug).
+    echo "" >&2
+    echo "FATAL: async-tasks could not be downloaded AND no on-disk copy exists." >&2
+    echo "       Install cannot continue safely — the bootstrap orchestrator" >&2
+    echo "       depends on this package being present at module-load time." >&2
+    echo "" >&2
+    echo "Recovery:" >&2
+    echo "  1. Check connectivity:  curl -fsSL $ASYNC_TASKS_URL > /dev/null" >&2
+    echo "  2. If your network is fine, the upstream repo may be wrong." >&2
+    echo "     Override:  EMACS_MAC_ASYNC_TASKS_REPO=other/fork bash install.sh" >&2
+    echo "  3. If you have a working copy from another Mac, drop it at:" >&2
+    echo "       $ASYNC_TASKS_DST" >&2
+    echo "     and re-run install.sh." >&2
+    echo "  4. As a last resort, fetch manually:" >&2
+    echo "       curl -fsSL --retry 3 -o $ASYNC_TASKS_DST \\\\" >&2
+    echo "         $ASYNC_TASKS_URL" >&2
+    echo "" >&2
+    exit 1
   fi
 fi
+unset ASYNC_TASKS_FETCH_RC ASYNC_TASKS_OK
 
 # 7. Daemon-aware launchers ------------------------------------------------
 #
