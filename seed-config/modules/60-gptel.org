@@ -91,8 +91,16 @@ model selection live in the next section of this file.
   :ensure (gptel-agent-runtime
            :host github
            :repo "deno1011/gptel-agent-runtime"
-           :branch "main"
-           :files (:defaults (:exclude "test" "docs" "scripts")))
+           :branch "main")
+  ;; No `:files' spec on purpose. elpaca's `:defaults' already globs
+  ;; `*.el' at the top of the repo (which is where every `gar-*.el'
+  ;; lives) and excludes the standard `*-tests.el' patterns. An
+  ;; explicit `(:exclude "test" "docs" "scripts")' tripped elpaca's
+  ;; recipe parser with a "Wrong type argument: stringp, nil" —
+  ;; bare directory names without globs hit an edge case in
+  ;; `:exclude'. The repo's `docs/' dir isn't a `.el' file so it
+  ;; isn't picked up anyway; `test/' and `scripts/' don't exist at
+  ;; the top level.
   :after gptel
   :demand t
   :config
