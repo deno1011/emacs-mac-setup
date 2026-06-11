@@ -126,6 +126,22 @@ for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
 done
 unset _BREW_SHELLENV_LINE _PROFILE
 
+# Run brew unattended for the rest of this script. Modern brew (4.5+)
+# pauses with "Press enter to continue" prompts on certain operations —
+# `brew tap' against a non-default tap, `brew install' against a formula
+# that has a caveats section, the "are you sure you want to proceed?"
+# prompt that fires when brew detects the user didn't explicitly trust
+# a tap. install.sh is invoked from a curl one-liner; there's nobody at
+# the keyboard to press enter. NONINTERACTIVE=1 is brew's documented
+# escape hatch and tells every subcommand to skip those prompts; the
+# accompanying HOMEBREW_NO_* vars stop brew from auto-updating itself
+# mid-script (which can stall for minutes on a fresh Mac) and from
+# emitting hint banners that would clutter the install log.
+export NONINTERACTIVE=1
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+export HOMEBREW_NO_ENV_HINTS=1
+
 # 2. emacs-plus ------------------------------------------------------------
 EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
 EMACS_BREW_ARGS="${EMACS_BREW_ARGS:---with-xwidgets}"
