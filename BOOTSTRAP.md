@@ -1,12 +1,12 @@
 # Bootstrap Subsystem Conventions
 
 This document covers rules that apply **only** to the bootstrap
-subsystem — the files matching `00.NNN_bootstrap-*.org` under
+subsystem — the files matching `00.LL.SS_bootstrap-*.org` under
 `emacs.d/config/modules/`. General code rules live in
 [`CONVENTIONS.md`](CONVENTIONS.md) and apply on top of everything
 here; subsystem rules never replace general rules, only add to them.
 
-If you are an AI agent editing a `00.NNN_bootstrap-*.org` file:
+If you are an AI agent editing a `00.LL.SS_bootstrap-*.org` file:
 **read `CONVENTIONS.md` first, then this file.**
 
 ---
@@ -38,17 +38,21 @@ and stay flat (per `CONVENTIONS.md` §2).
 ## 2. Three-layer architecture
 
 All bootstrap code is organized into three layers. Layers are
-physical file boundaries, not just conceptual groupings:
+physical file boundaries, not just conceptual groupings. **The layer
+is encoded in the filename** (see §3) so a file's role is visible
+without opening it.
 
 ```
-LAYER 3 — Business logic
-  One main file. Defines the public entry point the rest of the
-  system calls (`my/bootstrap`). Reads top-to-bottom like
-  pseudo-code: ensure A, ensure B, ensure C. No system calls, no
-  string-mangling — only calls into Layer 2.
-  Target size: 50–200 lines. Hard ceiling: 300.
+LAYER 1 — System primitives (filename prefix 00.01.NN)
+  One file per kind of resource (Keychain, git, process, file).
+  Each function wraps ONE system call (`security`, `git`,
+  `call-process`, `file-exists-p`). Returns `:ok` / `:error` with
+  a message. No business logic. No inter-file dependencies inside
+  Layer 1.
+  Target size: 30–100 lines per file. Hard ceiling: 150.
+  Loads FIRST (lowest numeric prefix in the bootstrap range).
 
-LAYER 2 — Domain operations
+LAYER 2 — Domain operations (filename prefix 00.02.NN)
   One file per domain concept (secrets, repo, identity, daemon, …).
   Each function describes ONE thing from the user's world: "is the
   data folder healthy?", "is the API key set?". Composes Layer-1
@@ -56,13 +60,13 @@ LAYER 2 — Domain operations
   Knows nothing about UI or user interaction.
   Target size: 50–150 lines per file. Hard ceiling: 200.
 
-LAYER 1 — System primitives
-  One file per kind of resource (Keychain, git, process, file).
-  Each function wraps ONE system call (`security`, `git`,
-  `call-process`, `file-exists-p`). Returns `:ok` / `:error` with
-  a message. No business logic. No inter-file dependencies inside
-  Layer 1.
-  Target size: 30–100 lines per file. Hard ceiling: 150.
+LAYER 3 — Business logic (filename prefix 00.03.NN)
+  One main file. Defines the public entry point the rest of the
+  system calls (`my/bootstrap`). Reads top-to-bottom like
+  pseudo-code: ensure A, ensure B, ensure C. No system calls, no
+  string-mangling — only calls into Layer 2.
+  Target size: 50–200 lines. Hard ceiling: 300.
+  Loads LAST (highest numeric prefix in the bootstrap range).
 ```
 
 **The strict rule: Layer N may only call Layer N−1.**
@@ -84,20 +88,33 @@ Tight per-file ceilings make the bundling impossible to repeat.
 
 ## 3. File numbering scheme
 
+The filename prefix has THREE numeric segments separated by dots:
+
 ```
-00.010_bootstrap-keychain.org    ← Layer 1 (loaded first)
-00.020_bootstrap-git.org         ← Layer 1
-00.030_bootstrap-process.org     ← Layer 1
-00.040_bootstrap-secrets.org     ← Layer 2
-00.050_bootstrap-repo.org        ← Layer 2
-00.060_bootstrap-identity.org    ← Layer 2
-00.100_bootstrap.org             ← Layer 3 (loaded last; main entry point)
+   00 . LL . SS _name.org
+   │    │    │
+   │    │    └── sub-index (01, 02, …) — order within the layer
+   │    └────── layer (01 = Layer 1, 02 = Layer 2, 03 = Layer 3)
+   └─────────── subsystem (00 = bootstrap; reserved for future
+                subsystems if they ever need this discipline)
+```
+
+Concrete layout for the bootstrap:
+
+```
+00.01.01_bootstrap-keychain.org    ← Layer 1, primitives, loaded first
+00.01.02_bootstrap-git.org         ← Layer 1
+00.01.03_bootstrap-process.org     ← Layer 1
+00.02.01_bootstrap-secrets.org     ← Layer 2, domain operations
+00.02.02_bootstrap-repo.org        ← Layer 2
+00.02.03_bootstrap-identity.org    ← Layer 2
+00.03.01_bootstrap.org             ← Layer 3, main entry, loaded last
 ```
 
 `config.org`'s discovery loop sorts files by `string<`, so:
 
 ```
-00.010 < 00.020 < 00.030 < 00.040 < 00.050 < 00.060 < 00.100 < 10-…
+00.01.01 < 00.01.02 < 00.01.03 < 00.02.01 < 00.02.02 < 00.02.03 < 00.03.01 < 10-…
 ```
 
 Every bootstrap-layer file loads before any feature module
@@ -106,9 +123,15 @@ primitives load before Layer-2 domain operations, which load
 before the Layer-3 main file. Each layer can `require` its
 dependencies via `provide` / `require` for explicit ordering.
 
-Sub-step files within one layer (rare) get intermediate numbers:
-`00.021_bootstrap-git-remote.org` would sit between
-`00.020_bootstrap-git.org` and `00.030_bootstrap-process.org`.
+Adding a new file within a layer just gets the next sub-index
+(`00.01.04_bootstrap-network.org`). Inserting a file between two
+existing ones is intentionally awkward — it forces a renumbering
+discussion instead of silent ambiguity.
+
+**The layer is visible in the filename. There is no other way to
+tell which layer a file belongs to.** A file at `00.02.NN_*` is
+Layer 2 by definition; if it acts like Layer 1 or Layer 3, the
+filename is wrong, not the rule.
 
 ---
 
@@ -219,7 +242,7 @@ the old form-widget worked, etc.) but never loaded into Emacs.
 
 The matching tangled output `20-bootstrap.el` is deleted at the
 same time. If the rewrite ever needs to be reverted (it won't, but
-in principle), the procedure is: delete the new `00.NNN_*` files,
+in principle), the procedure is: delete the new `00.LL.SS_*` files,
 rename `20-bootstrap.org.old` back to `20-bootstrap.org`, re-tangle.
 
 ---
