@@ -88,13 +88,12 @@ Doesn't touch files. Safe to call interactively."
         (message "wiki: created %s" d)))))
 
 ;; Data-dir.el gate (RESTORED): on first-launch the form (which runs
-;; from `my/bootstrap' on `emacs-startup-hook') hasn't been submitted
-;; yet, so `my/wiki-base-dir' is built against the init.el `~/emacs/'
-;; default. Skip ensure-tree until data-dir.el exists — otherwise we'd
-;; mkdir `~/emacs/wiki/emacs/' before the user has chosen a data root.
-;; After form Save + restart, the gate passes and the tree lands under
-;; the chosen data folder.
-(when (file-exists-p (expand-file-name "data-dir.el" user-emacs-directory))
+;; Only run when bootstrap has converged — `my/wiki-base-dir' is nil
+;; until the (when (my/bootstrap-ready-p) (setq …)) above populates
+;; it. `(my/bootstrap-ready-p)' is the new design's gate; the legacy
+;; `(file-exists-p data-dir.el)' check it replaced is gone because
+;; the new bootstrap does not write data-dir.el.
+(when (my/bootstrap-ready-p)
   (my/wiki-ensure-tree))
 #+end_src
 
