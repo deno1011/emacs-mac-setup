@@ -172,6 +172,18 @@ if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
     brew tap "$EMACS_TAP"
   fi
 
+  # Mark the tap trusted. Homebrew 6.0 added a per-tap "trust" gate:
+  # without explicit trust, `brew install' from a non-core tap prints
+  # a multi-line warning ("The following taps are not trusted: …")
+  # and silently *ignores* formulae from that tap. On a fresh Mac
+  # that means the very next `brew install d12frosted/emacs-plus/…'
+  # would error with "no such formula" instead of installing
+  # emacs-plus@30. `brew trust --tap' writes the tap into the
+  # per-user trust list at ~/.homebrew/trust.json (or under
+  # $XDG_CONFIG_HOME if set). The subcommand only exists on brew
+  # 6.0+; for older brew the `|| true' makes this a clean no-op.
+  brew trust --tap "$EMACS_TAP" 2>/dev/null || true
+
   # Install via the FULLY-QUALIFIED formula path so brew never has to
   # guess which tap the recipe came from. Equivalent to `brew install
   # d12frosted/emacs-plus/emacs-plus@30 --with-xwidgets'.
