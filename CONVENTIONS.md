@@ -29,10 +29,22 @@ When a user says "looks good, freeze it", that means:
 
 ---
 
-## 2. Layered architecture
+## 2. Layered architecture (bootstrap subsystem only)
 
-All non-trivial subsystems follow a three-layer model. Layers are physical
-file boundaries, not just conceptual:
+**Scope of this section:** the three-layer model below applies specifically
+to the **bootstrap subsystem** (`00.NNN_bootstrap-*.org` files). It does
+NOT apply to the feature modules (`30-core.org`, `40-org.org`,
+`50-apple-reminders.org`, etc.), which are intentionally flatter — see
+§2a below.
+
+The reason for the difference: bootstrap is provisioning code that must
+be idempotent, race-free, and survivable across partial failures. That
+discipline pays for the extra structure. Feature modules are
+configuration code that runs once at Emacs startup, doesn't manage
+external state, and benefits from being readable top-to-bottom without
+indirection.
+
+Layers are physical file boundaries, not just conceptual:
 
 ```
 LAYER 3 — Business logic
@@ -85,19 +97,72 @@ the bootstrap's public Layer-3 surface (currently `my/data-dir` and
 
 ---
 
+## 2a. Feature modules (the flat default)
+
+Feature modules — anything outside the bootstrap subsystem — follow a
+deliberately flat structure: one concern per file, top-to-bottom, with
+no internal layering. A typical feature module is:
+
+```
+;;; 40-org.org — Org-mode, agenda, GTD, capture, LaTeX
+;;
+;; Top section: `defvar' / `defcustom' for module-level configuration.
+;; Middle section: `use-package' blocks for each integration
+;;                 (org, org-agenda, org-capture, org-roam, ...).
+;; Bottom section: helper `defun's used only by this module.
+```
+
+This is readable in one sitting and matches how Elisp users expect
+configuration modules to look. Internal helpers still use the
+double-dash naming (`my/org--ensure-dir`) so the public/private
+distinction is preserved, but the file does not partition itself into
+layers — there are no "system primitives" inside a feature module
+because the system primitives it needs already live in the bootstrap.
+
+**When a feature module DOES warrant internal layering:**
+
+If a feature module grows past ~500 lines AND has a clearly stratified
+internal structure (external API calls + caching + UI), it MAY adopt
+the same three-layer model internally. In that case, keep the layers
+inside a single file (grouped by `;;; --- Layer N ---` comment
+banners) — do NOT split the feature module into multiple files unless
+the layers are independently testable.
+
+The bar for internal layering inside a feature module is high:
+"this file is getting hard to navigate" is not enough. The threshold
+is "I keep introducing bugs because state from the top of the file
+leaks into helpers at the bottom in non-obvious ways."
+
+---
+
 ## 3. One module per file
 
-Every `.org` (or vendored `.el`) module owns exactly one concern. If a file
-needs to grow past ~200 lines for one concern, consider splitting the
-concern into sub-concerns first. Large files defeat the point of the layer
-model: they bury implicit cross-dependencies that the next reader (human or
-AI) has no way to spot.
+Every `.org` (or vendored `.el`) module owns exactly one concern. The
+size targets differ between bootstrap and feature modules:
+
+| File kind | Target size | Hard ceiling |
+|---|---|---|
+| Bootstrap Layer 1 / Layer 2 | 30–150 lines | 200 |
+| Bootstrap Layer 3 (main) | 50–200 lines | 300 |
+| Feature module (`30-core.org`, `40-org.org`, …) | grows with the configured tool | none — they may be 1000+ lines if the tool has many integration points |
+
+For bootstrap files: passing the hard ceiling means the concern is
+probably two concerns wearing one hat — split.
+
+For feature modules: size alone is not a problem. The signals that DO
+warrant splitting are (a) multiple maintainers stepping on each other's
+edits, (b) repeated bugs caused by state-leakage between top and bottom
+of the file, or (c) the file taking longer than 60 seconds to mentally
+re-orient on. Until one of those triggers fires, leave the feature
+module flat.
 
 **Antipattern we are explicitly moving away from:** the legacy
 `20-bootstrap.org` at ~4000 lines, bundling Keychain primitives, Bitwarden
 CLI, git-crypt, GitHub identity, a widget-based form, an orchestrator, and
 starter-data generation in one file. That structure produced the race
-conditions and silent failures that motivated this rewrite.
+conditions and silent failures that motivated this rewrite. The
+antipattern is the bundling of independent concerns, not the line count
+on its own.
 
 ---
 
