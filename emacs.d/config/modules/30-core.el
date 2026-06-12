@@ -4,6 +4,7 @@
 
 (defvar my/config-dir)
 (defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (defvar pixel-scroll-precision-use-momentum)
 (defvar org-show-following-heading)
 (defvar org-show-hierarchy-above)
@@ -313,8 +314,12 @@
               ;; a git repository (or any of the parent directories):
               ;; .git'. Cosmetic but noisy. Once bootstrap clones the
               ;; repo, `.git/' exists and future saves commit cleanly.
+              ;; Guard on `(stringp my/data-dir)' rather than truthiness:
+              ;; while bootstrap is in skeleton state `my/data-dir' holds
+              ;; the `:not-resolved' symbol, which is truthy but would
+              ;; crash `file-truename'.
               (when (and buffer-file-name
-                         my/data-dir
+                         (stringp my/data-dir)
                          (string-prefix-p
                           (file-name-as-directory (file-truename my/data-dir))
                           (file-truename buffer-file-name))
@@ -324,6 +329,10 @@
 
 (defun my/beorg-sync ()
   "Mirror my/data-dir/data/org/ to beorg's iCloud folder."
+  (unless (my/bootstrap-ready-p)
+    (user-error "beorg-sync: bootstrap not ready, my/data-dir is %S. \
+Fix the bootstrap (see *Warnings*) and retry"
+                my/data-dir))
   (let ((org-d (file-name-as-directory
                 (expand-file-name "data/org" my/data-dir)))
         (beorg (expand-file-name

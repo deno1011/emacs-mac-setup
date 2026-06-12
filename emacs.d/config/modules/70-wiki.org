@@ -11,6 +11,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (require 'subr-x)
 
 (defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (defvar my/gptel-backends)
 (defvar gptel-backend)
 (defvar gptel-directives)
@@ -32,10 +33,19 @@ LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 * Wiki Root and Preferences
 
 #+begin_src emacs-lisp
-(defvar my/wiki-base-dir (expand-file-name "wiki/emacs/" my/data-dir)
+(defvar my/wiki-base-dir nil
   "Root of the Emacs-knowledge LLM Wiki. Derived from `my/data-dir' so
 the wiki lives inside whatever GH_REPO the user chose at install time
-(~/emacs/ by default; ~/emacs-data/ etc. for custom installs).")
+(~/emacs/ by default; ~/emacs-data/ etc. for custom installs).
+
+Initialised to nil at defvar time because `my/data-dir' may still
+be the `:not-resolved' sentinel when this module loads (bootstrap
+not yet converged). The `setq' below populates it when bootstrap
+is ready; otherwise it stays nil and downstream wiki helpers
+short-circuit on `(stringp my/wiki-base-dir)' checks.")
+
+(when (my/bootstrap-ready-p)
+  (setq my/wiki-base-dir (expand-file-name "wiki/emacs/" my/data-dir)))
 
 (defvar my/wiki-preferred-model nil
   "Label in `my/gptel-backends' used for wiki sessions opened by the

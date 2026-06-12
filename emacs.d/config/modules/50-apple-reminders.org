@@ -10,6 +10,7 @@ macOS only (JXA/osascript required).
 ;;; 50-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (defvar org-apple-reminders-sync-file)
 (defvar org-apple-reminders-auto-sync-interval)
 (defvar org-apple-reminders-included-lists)
@@ -61,7 +62,8 @@ delete, …), so no manual =global-set-key= calls are needed.
 ;; or the form's typed value, whichever the probe settled). The
 ;; `:config' setq below resolves directly to ~/CHOSEN-REPO/data/org/
 ;; reminders.org without any restart dance.
-(when (eq system-type 'darwin)
+(when (and (eq system-type 'darwin)
+           (my/bootstrap-ready-p))
   (use-package org-apple-reminders
     :ensure (org-apple-reminders
              :host github

@@ -10,6 +10,7 @@
 (require 'org-inlinetask)
 
 (defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (defvar org-state)
 (defvar org-agenda-sticky)
 (defvar org-inlinetask-export)
@@ -38,15 +39,20 @@
 (use-package org
   :ensure nil
   :config
-  (setq org-directory (expand-file-name "data/org/" my/data-dir)
-        org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
-        ;; org-agenda-files is set later by the tag-driven scanner —
-        ;; see the "Agenda — Tag-Driven File Discovery" section. This
-        ;; placeholder is overridden by my/refresh-agenda-files at the
-        ;; end of this file's load, and again by gtd-config.el if it
-        ;; appends specific files.
-        org-agenda-files (list (expand-file-name "data/org/" my/data-dir))
-        org-confirm-babel-evaluate nil
+  ;; Path-dependent settings: only when bootstrap settled `my/data-dir'
+  ;; to a real string. While bootstrap is in skeleton state or has
+  ;; halted on a required failure, leave these at the Org defaults so
+  ;; opening a .org file still works for editing.
+  (when (my/bootstrap-ready-p)
+    (setq org-directory (expand-file-name "data/org/" my/data-dir)
+          org-default-notes-file (expand-file-name "data/org/inbox.org" my/data-dir)
+          ;; org-agenda-files is set later by the tag-driven scanner —
+          ;; see the "Agenda — Tag-Driven File Discovery" section. This
+          ;; placeholder is overridden by my/refresh-agenda-files at the
+          ;; end of this file's load, and again by gtd-config.el if it
+          ;; appends specific files.
+          org-agenda-files (list (expand-file-name "data/org/" my/data-dir))))
+  (setq org-confirm-babel-evaluate nil
         org-startup-indented t
         org-startup-folded t
         org-hide-emphasis-markers t
@@ -178,7 +184,8 @@
         ("NEXT"      ("WAITING") ("CANCELLED") ("HOLD"))
         ("DONE"      ("WAITING") ("CANCELLED") ("HOLD"))))
 
-(let ((org-d (expand-file-name "data/org/" my/data-dir)))
+(when (my/bootstrap-ready-p)
+ (let ((org-d (expand-file-name "data/org/" my/data-dir)))
   (setq org-capture-templates
         `(("i" "Inbox"     entry (file ,(expand-file-name "inbox.org"  org-d))
            "* %?\n%U\n")
@@ -196,7 +203,7 @@
           ("p" "Phone"     entry (file ,(expand-file-name "refile.org" org-d))
            "* PHONE %? :PHONE:\n%U" :clock-in t :clock-resume t)
           ("h" "Habit"     entry (file ,(expand-file-name "refile.org" org-d))
-           "* NEXT %?\n%U\n%a\nSCHEDULED: %(format-time-string \"%<<%Y-%m-%d %a .+1d/3d>>\")\n:PROPERTIES:\n:STYLE: habit\n:REPEAT_TO_STATE: NEXT\n:END:\n"))))
+           "* NEXT %?\n%U\n%a\nSCHEDULED: %(format-time-string \"%<<%Y-%m-%d %a .+1d/3d>>\")\n:PROPERTIES:\n:STYLE: habit\n:REPEAT_TO_STATE: NEXT\n:END:\n")))))
 
 (setq org-refile-targets '((nil :maxlevel . 9)
                             (org-agenda-files :maxlevel . 9)))
@@ -912,7 +919,8 @@ Run after adding new directories or moving files around."
 (setq org-agenda-skip-scheduled-if-done t)
 (setq org-agenda-skip-timestamp-if-done t)
 (setq org-agenda-include-diary nil)
-(setq org-agenda-diary-file (expand-file-name "data/org/diary.org" my/data-dir))
+(when (my/bootstrap-ready-p)
+  (setq org-agenda-diary-file (expand-file-name "data/org/diary.org" my/data-dir)))
 (setq org-agenda-insert-diary-extract-time t)
 (setq org-agenda-text-search-extra-files '(agenda-archives))
 (setq org-agenda-repeating-timestamp-show-all t)
@@ -1231,23 +1239,28 @@ the response hook + advice already handle execution."
 (appt-activate t)
 (run-at-time "24:01" nil 'bh/org-agenda-to-appt)
 
-(use-package org-roam
-  :ensure t
-  :demand t
-  :init (setq org-roam-v2-ack t)
-  :custom
-  ;; Derive from my/data-dir so the wiki lives inside whatever GH_REPO
-  ;; the user chose at install time (~/emacs/ by default;
-  ;; ~/emacs-data/ etc. for custom installs).
-  (org-roam-directory (expand-file-name "wiki/emacs" my/data-dir))
-  (org-roam-db-location (expand-file-name "wiki/emacs/.org-roam.db" my/data-dir))
-  (org-roam-completion-everywhere t)
-  :bind (("C-c n l" . org-roam-buffer-toggle)
-         ("C-c n f" . org-roam-node-find)
-         ("C-c n i" . org-roam-node-insert)
-         ("C-c n c" . org-roam-capture))
-  :config
-  (org-roam-db-autosync-mode))
+;; org-roam's `:custom' block evaluates its values at use-package
+;; expansion time, which would crash on the `:not-resolved' sentinel.
+;; Wrapping the entire use-package keeps org-roam OFF when bootstrap
+;; failed — the user can still edit Org files, just no wiki / roam DB.
+(when (my/bootstrap-ready-p)
+  (use-package org-roam
+    :ensure t
+    :demand t
+    :init (setq org-roam-v2-ack t)
+    :custom
+    ;; Derive from my/data-dir so the wiki lives inside whatever GH_REPO
+    ;; the user chose at install time (~/emacs/ by default;
+    ;; ~/emacs-data/ etc. for custom installs).
+    (org-roam-directory (expand-file-name "wiki/emacs" my/data-dir))
+    (org-roam-db-location (expand-file-name "wiki/emacs/.org-roam.db" my/data-dir))
+    (org-roam-completion-everywhere t)
+    :bind (("C-c n l" . org-roam-buffer-toggle)
+           ("C-c n f" . org-roam-node-find)
+           ("C-c n i" . org-roam-node-insert)
+           ("C-c n c" . org-roam-capture))
+    :config
+    (org-roam-db-autosync-mode)))
 
 (use-package org-roam-ui
   :ensure t
