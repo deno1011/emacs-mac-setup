@@ -146,6 +146,29 @@ bytes — base64-encoded Keychain values are well under 4 KB."
                                 (or (cdr sa) (user-login-name))))
                         svc-acc-pairs))
          (n      (length pairs))
+         ;; Each subshell composes its full output line into a shell
+         ;; variable FIRST (`v' = keychain value, `b' = base64 of v),
+         ;; then writes the whole `INDEX\tBASE64\n' string with a
+         ;; single `printf' call. Earlier versions used three
+         ;; separate writes per subshell (printf the index+tab, pipe
+         ;; v through base64 | tr, printf a newline) and relied on
+         ;; PIPE_BUF atomicity to keep the line intact — but
+         ;; PIPE_BUF only guarantees individual writes < 512 bytes
+         ;; are atomic, NOT a sequence of writes from the same
+         ;; subshell. When 7-11 subshells run in parallel under
+         ;; macOS scheduling pressure (post-install, fresh Emacs
+         ;; boot, elpaca building), their three-write sequences
+         ;; interleave: subshell A writes "0\t", subshell B writes
+         ;; "1\tEFGH\n" in full, then A finishes "ABCD\n" — the
+         ;; parent sees "0\t1\tEFGH\nABCD\n" and parses one corrupt
+         ;; line + one orphan, dropping two values and shifting
+         ;; another. Symptom on the bootstrap probe: bw-email nil,
+         ;; bw-master holding the email, GitHubRepo nil,
+         ;; GitHubFullname holding the repo name — exactly because
+         ;; alternate-indexed writes got eaten by their neighbors.
+         ;; One printf per subshell makes the line atomic (total
+         ;; size well under 512 bytes for any plausible Keychain
+         ;; secret, including OAuth tokens and base64 keys).
          (script
           (concat
            "set +e\n"
@@ -153,7 +176,7 @@ bytes — base64-encoded Keychain values are well under 4 KB."
              (mapconcat
               (lambda (sa)
                 (cl-incf i)
-                (format "( v=$(security find-generic-password -a %s -s %s -w 2>/dev/null); printf '%d\\t'; printf '%%s' \"${v:-}\" | base64 | tr -d '\\n'; printf '\\n' ) &"
+                (format "( v=$(security find-generic-password -a %s -s %s -w 2>/dev/null); b=$(printf '%%s' \"${v:-}\" | base64 | tr -d '\\n'); printf '%d\\t%%s\\n' \"$b\" ) &"
                         (shell-quote-argument (cdr sa))
                         (shell-quote-argument (car sa))
                         i))
