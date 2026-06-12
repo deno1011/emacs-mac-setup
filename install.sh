@@ -116,21 +116,40 @@ for _PROFILE in "$HOME/.zprofile" "$HOME/.bash_profile"; do
 done
 unset _BREW_SHELLENV_LINE _PROFILE
 
-# Run brew unattended for the rest of this script. Modern brew (4.5+)
-# pauses with "Press enter to continue" prompts on certain operations —
-# `brew tap' against a non-default tap, `brew install' against a formula
-# that has a caveats section, the "are you sure you want to proceed?"
-# prompt that fires when brew detects the user didn't explicitly trust
-# a tap. install.sh is invoked from a curl one-liner; there's nobody at
-# the keyboard to press enter. NONINTERACTIVE=1 is brew's documented
-# escape hatch and tells every subcommand to skip those prompts; the
-# accompanying HOMEBREW_NO_* vars stop brew from auto-updating itself
-# mid-script (which can stall for minutes on a fresh Mac) and from
-# emitting hint banners that would clutter the install log.
+# Run brew unattended for the rest of this script. Modern brew pauses
+# with prompts on several operations — `brew tap' against a non-default
+# tap, `brew install' against a formula with a caveats section, and
+# (new in brew 6.0) a default-on "ask mode" that previews the install
+# plan and asks "Do you want to proceed with the installation? [y/n]"
+# before downloading anything. install.sh is invoked from a curl
+# one-liner; there's nobody at the keyboard to press enter, so every
+# such pause must be suppressed:
+#
+#   NONINTERACTIVE                — brew's blanket "don't ask, don't
+#                                   wait" flag (skips press-enter,
+#                                   tap-trust nags, caveats pause).
+#   HOMEBREW_NO_AUTO_UPDATE       — stops brew from `brew update'-ing
+#                                   itself mid-script (can stall for
+#                                   minutes on a fresh Mac).
+#   HOMEBREW_NO_INSTALL_CLEANUP   — skip `brew cleanup' after install,
+#                                   which can run for a long time.
+#   HOMEBREW_NO_ENV_HINTS         — silence the post-install "hint"
+#                                   banners that would clutter the log.
+#   HOMEBREW_NO_ASK               — opt out of brew 6.0's new
+#                                   default-on ask mode. NONINTERACTIVE
+#                                   alone does NOT cover this: in brew
+#                                   6.0 the install plan confirmation
+#                                   is a separate, opt-in gate, and
+#                                   only `HOMEBREW_NO_ASK=1' (or
+#                                   `--yes' on the install command)
+#                                   skips it. Without this, the curl
+#                                   one-liner hangs at "Do you want to
+#                                   proceed with the installation?".
 export NONINTERACTIVE=1
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_INSTALL_CLEANUP=1
 export HOMEBREW_NO_ENV_HINTS=1
+export HOMEBREW_NO_ASK=1
 
 # 2. emacs-plus ------------------------------------------------------------
 EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
