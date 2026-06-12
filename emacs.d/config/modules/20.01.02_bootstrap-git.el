@@ -4,6 +4,8 @@
 ;;   (my/git-clone URL DEST)            → :ok or (:error STDERR-STRING)
 ;;   (my/git-remote-url DIR)            → string URL, or nil
 ;;   (my/git-remote-set-url DIR URL)    → :ok or (:error STDERR-STRING)
+;;   (my/git-config-get NAME)           → string value, or nil
+;;   (my/git-config-set NAME VALUE)     → :ok or (:error STDERR-STRING)
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   (none)
@@ -14,19 +16,19 @@
 (defun my/git-clone (url dest)
   "Clone URL into DEST using `git clone'.
 
-Returns :ok on success, or (:error STDERR-STRING) on failure
-(non-zero exit). DEST must not exist or must be an empty
-directory — git refuses otherwise. Caller is responsible for
-making that determination."
-  (let ((stderr-buf (generate-new-buffer " *my/git-clone stderr*")))
+Returns :ok on success, or (:error MSG) on failure (non-zero
+exit), where MSG is the combined stdout+stderr of git. DEST
+must not exist or must be an empty directory — git refuses
+otherwise. Caller is responsible for making that determination."
+  (let ((buf (generate-new-buffer " *my/git-clone*")))
     (unwind-protect
-        (let ((exit (call-process "git" nil (list nil stderr-buf) nil
+        (let ((exit (call-process "git" nil buf nil
                                   "clone" "--" url dest)))
           (if (zerop exit)
               :ok
-            `(:error ,(with-current-buffer stderr-buf
+            `(:error ,(with-current-buffer buf
                         (string-trim (buffer-string))))))
-      (kill-buffer stderr-buf))))
+      (kill-buffer buf))))
 
 (defun my/git-remote-url (dir)
   "Return the origin remote URL of the git repository at DIR.
@@ -51,18 +53,47 @@ the URL carries on disk."
   "Set the origin remote of the git repo at DIR to URL.
 
 Wraps `git -C DIR remote set-url origin URL'. Returns :ok on
-success, (:error STDERR-STRING) on non-zero exit. Used by Layer 2
-to strip a token from the clone URL after the initial clone
+success, (:error MSG) on non-zero exit. Used by Layer 2 to
+strip a token from the clone URL after the initial clone
 succeeded."
-  (let ((stderr-buf (generate-new-buffer " *my/git-remote-set-url stderr*")))
+  (let ((buf (generate-new-buffer " *my/git-remote-set-url*")))
     (unwind-protect
-        (let ((exit (call-process "git" nil (list nil stderr-buf) nil
+        (let ((exit (call-process "git" nil buf nil
                                   "-C" dir "remote" "set-url" "origin" url)))
           (if (zerop exit)
               :ok
-            `(:error ,(with-current-buffer stderr-buf
+            `(:error ,(with-current-buffer buf
                         (string-trim (buffer-string))))))
-      (kill-buffer stderr-buf))))
+      (kill-buffer buf))))
+
+(defun my/git-config-get (name)
+  "Return the global git config setting NAME (string), or nil.
+
+Wraps `git config --global --get NAME'. Returns the trimmed
+value on success, nil when the setting is not present or the
+subprocess exits non-zero."
+  (let ((stdout-buf (generate-new-buffer " *my/git-config-get*")))
+    (unwind-protect
+        (let ((exit (call-process "git" nil (list stdout-buf nil) nil
+                                  "config" "--global" "--get" name)))
+          (when (zerop exit)
+            (with-current-buffer stdout-buf
+              (let ((s (string-trim (buffer-string))))
+                (if (string-empty-p s) nil s)))))
+      (kill-buffer stdout-buf))))
+
+(defun my/git-config-set (name value)
+  "Set the global git config NAME to VALUE.
+Returns :ok on success, (:error MSG) on non-zero exit."
+  (let ((buf (generate-new-buffer " *my/git-config-set*")))
+    (unwind-protect
+        (let ((exit (call-process "git" nil buf nil
+                                  "config" "--global" name value)))
+          (if (zerop exit)
+              :ok
+            `(:error ,(with-current-buffer buf
+                        (string-trim (buffer-string))))))
+      (kill-buffer buf))))
 
 (provide 'my-bootstrap-git)
 ;;; 20.01.02_bootstrap-git.el ends here
