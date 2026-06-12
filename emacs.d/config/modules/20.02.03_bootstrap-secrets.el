@@ -3,6 +3,9 @@
 ;; Public API (callable from Layer 3):
 ;;   (my/api-key-fetch--from-secrets KEY-NAME) → string or nil
 ;;   (my/secrets-ensure-readable)              → :done / (:error MSG)
+;;   (my/api-key-known-names)                  → list of strings
+;;   (my/api-key-store KEY-NAME VALUE)         → :ok / (:error MSG)
+;;   (my/api-key-set--interactive)             → :ok / nil
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/secrets--api-key-fields
@@ -12,8 +15,10 @@
 ;;
 ;; Depends on (Layer 1):
 ;;   my/keychain-get                    ← 20.01.01_bootstrap-keychain
+;;   my/keychain-set                    ← 20.01.01_bootstrap-keychain
 
 (declare-function my/keychain-get "20.01.01_bootstrap-keychain")
+(declare-function my/keychain-set "20.01.01_bootstrap-keychain")
 
 (defconst my/secrets--service "emacs_credentials"
   "macOS Keychain service holding all bootstrap-relevant secrets.")
@@ -104,6 +109,65 @@ OR mark it permanently skipped (gptel will report \
                  my/secrets--service
                  my/secrets--service
                  my/secrets--skipped-sentinel))))))
+
+(defun my/api-key-known-names ()
+  "Return the supported API-key Keychain accounts as a list of
+strings (e.g. \"OPENAI_API_KEY\", \"ANTHROPIC_API_KEY\", …).
+
+Layer 3's `my/api-key-set' uses this list to drive
+completing-read so the user can only type a key name the
+secrets module knows about. Returns a fresh copy so callers
+can mutate it without affecting the constant."
+  (copy-sequence my/secrets--api-key-fields))
+
+(defun my/api-key-store (key-name value)
+  "Set Keychain entry for KEY-NAME to VALUE.
+
+VALUE is normalised:
+  - nil or empty string → stored as the __SKIPPED__ sentinel
+    (the user's explicit opt-out signal)
+  - any other string    → stored verbatim
+
+Returns :ok / (:error MSG) from the underlying Layer-1
+`my/keychain-set'. Does not validate KEY-NAME against the
+known-names list — caller is responsible for that, which
+the interactive entry point does via completing-read."
+  (let ((normalized
+         (cond
+          ((or (null value) (string-empty-p value))
+           my/secrets--skipped-sentinel)
+          (t value))))
+    (my/keychain-set my/secrets--service key-name normalized)))
+
+(defun my/api-key-set--interactive ()
+  "Interactive form to set or rotate one API key.
+
+Two prompts:
+  1. Key name (completing-read over `my/api-key-known-names',
+     `confirm' mode so the user can also type a custom name —
+     useful if a new backend was added to the gptel config
+     before the secrets list caught up).
+  2. Value (`read-passwd' so the entry does not echo).
+
+An empty value is taken as \"mark this backend permanently
+skipped\" — the entry is stored as the __SKIPPED__ sentinel.
+
+Returns :ok on a successful store, nil on (:error …) (caller
+can chain). The result is also surfaced through `message' so
+the user sees confirmation in the echo area."
+  (interactive)
+  (let* ((known  (my/api-key-known-names))
+         (key    (completing-read "Set API key: " known nil 'confirm))
+         (prompt (format "Value for %s (empty = mark __SKIPPED__): " key))
+         (value  (read-passwd prompt))
+         (result (my/api-key-store key value)))
+    (cond
+     ((eq result :ok)
+      (message "my/api-key-set: %s stored." key)
+      :ok)
+     (t
+      (message "my/api-key-set failed for %s: %s" key (cadr result))
+      nil))))
 
 (provide 'my-bootstrap-secrets)
 ;;; 20.02.03_bootstrap-secrets.el ends here

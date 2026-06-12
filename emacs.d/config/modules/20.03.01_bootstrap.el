@@ -22,11 +22,12 @@
 ;;   my/data-dir-resolve             ← 20.02.NN_bootstrap-repo
 ;;   my/api-key-fetch--from-secrets  ← 20.02.NN_bootstrap-secrets
 
-(declare-function my/secrets-ensure-readable        "20.02.NN_bootstrap-secrets")
-(declare-function my/repo-ensure-cloned             "20.02.NN_bootstrap-repo")
-(declare-function my/identity-ensure-loaded         "20.02.NN_bootstrap-identity")
-(declare-function my/data-dir-resolve               "20.02.NN_bootstrap-repo")
-(declare-function my/api-key-fetch--from-secrets    "20.02.NN_bootstrap-secrets")
+(declare-function my/secrets-ensure-readable        "20.02.03_bootstrap-secrets")
+(declare-function my/repo-ensure-cloned             "20.02.02_bootstrap-repo-clone")
+(declare-function my/identity-ensure-loaded         "20.02.04_bootstrap-identity")
+(declare-function my/data-dir-resolve               "20.02.01_bootstrap-repo")
+(declare-function my/api-key-fetch--from-secrets    "20.02.03_bootstrap-secrets")
+(declare-function my/api-key-set--interactive       "20.02.03_bootstrap-secrets")
 
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.
@@ -170,10 +171,19 @@ surface a setup instruction to the user."
 
 (defun my/api-key-set ()
   "Interactively store a new value for one of the configured API keys.
-Stub until Layer 2's secrets module lands. Reports the pending
-state instead of pretending to succeed."
+
+Layer-3 entry point. Delegates to Layer-2's
+`my/api-key-set--interactive' when it is loaded; falls back to
+a pending-state message when the secrets module is missing
+(skeleton / partial load state). The interactive prompt loop,
+the completion list, and the Keychain write all live in
+Layer 2."
   (interactive)
-  (message "my/api-key-set: pending — Layer-2 secrets module not yet written"))
+  (cond
+   ((fboundp 'my/api-key-set--interactive)
+    (my/api-key-set--interactive))
+   (t (message
+       "my/api-key-set: pending — Layer-2 secrets module not loaded"))))
 
 (defun my/bootstrap ()
   "Run the bootstrap subsystem to bring Emacs to a ready state.
