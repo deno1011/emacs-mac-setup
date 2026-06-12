@@ -73,6 +73,12 @@ delete, …), so no manual =global-set-key= calls are needed.
     (setq org-apple-reminders-sync-file
           (expand-file-name "data/org/reminders.org" my/data-dir))
 
+    ;; Self-ensure the sync-file's parent directory exists. A freshly
+    ;; cloned data repo may not carry data/org/ yet, and `org-apple-
+    ;; reminders-setup' registers timers that touch this path. Idempotent.
+    (let ((d (file-name-directory org-apple-reminders-sync-file)))
+      (unless (file-directory-p d) (make-directory d t)))
+
     ;; nil = sync all Apple Reminders lists (the default — not restricted).
     ;; Set to a list of names to restrict, or pick interactively with `C-c r i'.
     (setq org-apple-reminders-included-lists nil)
