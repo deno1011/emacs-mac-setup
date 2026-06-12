@@ -99,34 +99,34 @@ The filename prefix has THREE numeric segments separated by dots:
                 subsystems if they ever need this discipline)
 ```
 
-Concrete layout for the bootstrap:
+`config.org`'s discovery loop sorts files by `string<`, which gives
+the load order:
 
 ```
-00.01.01_bootstrap-keychain.org    ← Layer 1, primitives, loaded first
-00.01.02_bootstrap-git.org         ← Layer 1
-00.01.03_bootstrap-process.org     ← Layer 1
-00.02.01_bootstrap-secrets.org     ← Layer 2, domain operations
-00.02.02_bootstrap-repo.org        ← Layer 2
-00.02.03_bootstrap-identity.org    ← Layer 2
-00.03.01_bootstrap.org             ← Layer 3, main entry, loaded last
+00.01.NN  →  00.02.NN  →  00.03.NN  →  10-…  →  20-…  →  …
 ```
 
-`config.org`'s discovery loop sorts files by `string<`, so:
+Layer-1 primitives load before Layer-2 domain operations, which load
+before the Layer-3 main file, which loads before any feature module
+(`10-…`, `20-…`, etc.). Each file `provide`s its feature; consumers
+in higher layers `require` it. The declarative `require` graph
+documents dependencies on top of the numeric ordering.
+
+**Example shape** (illustrative, not prescriptive — the actual files
+in each layer emerge from the rewrite as we identify the concerns):
 
 ```
-00.01.01 < 00.01.02 < 00.01.03 < 00.02.01 < 00.02.02 < 00.02.03 < 00.03.01 < 10-…
+00.01.01_bootstrap-<resource-1>.org    ← Layer 1 primitive
+00.01.02_bootstrap-<resource-2>.org    ← Layer 1 primitive
+00.02.01_bootstrap-<domain-1>.org      ← Layer 2 domain operation
+00.02.02_bootstrap-<domain-2>.org      ← Layer 2 domain operation
+00.03.01_bootstrap.org                 ← Layer 3 main entry
 ```
 
-Every bootstrap-layer file loads before any feature module
-(`10-…`, `20-…`, `30-…`, etc.), and within the bootstrap, Layer-1
-primitives load before Layer-2 domain operations, which load
-before the Layer-3 main file. Each layer can `require` its
-dependencies via `provide` / `require` for explicit ordering.
-
-Adding a new file within a layer just gets the next sub-index
-(`00.01.04_bootstrap-network.org`). Inserting a file between two
-existing ones is intentionally awkward — it forces a renumbering
-discussion instead of silent ambiguity.
+Adding a new file within a layer takes the next sub-index
+(`00.02.NN+1_…`). Inserting a file between two existing ones is
+intentionally awkward — it forces a renumbering discussion instead
+of silent ambiguity.
 
 **The layer is visible in the filename. There is no other way to
 tell which layer a file belongs to.** A file at `00.02.NN_*` is

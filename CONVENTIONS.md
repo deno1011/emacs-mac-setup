@@ -130,7 +130,9 @@ missing declaration produces "the function `my/foo-bar' is not known
 to be defined" at compile time, which is our signal that someone
 called across file boundaries without declaring the dependency.
 
-Example at the top of a file that uses another module's public API:
+Example at the top of a file that uses another module's public API
+(filenames here are illustrative; use whatever module names actually
+exist in the repo):
 
 ```elisp
 (declare-function my/keychain-get "00.01.01_bootstrap-keychain")
