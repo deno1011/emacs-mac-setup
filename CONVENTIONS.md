@@ -16,7 +16,7 @@ this one:
 
 | Subsystem | Document |
 |---|---|
-| Bootstrap (`00.LL.SS_bootstrap-*.org`) | [`BOOTSTRAP.md`](BOOTSTRAP.md) |
+| Bootstrap (`20.LL.SS_bootstrap-*.org`) | [`BOOTSTRAP.md`](BOOTSTRAP.md) |
 
 The general rules below apply to every file in the repo. Subsystem
 documents add extra requirements on top — never replace the general
@@ -135,8 +135,8 @@ Example at the top of a file that uses another module's public API
 exist in the repo):
 
 ```elisp
-(declare-function my/keychain-get "00.01.01_bootstrap-keychain")
-(declare-function my/keychain-set "00.01.01_bootstrap-keychain")
+(declare-function my/keychain-get "20.01.01_bootstrap-keychain")
+(declare-function my/keychain-set "20.01.01_bootstrap-keychain")
 ```
 
 **Calling a `--`-prefixed symbol from another file is forbidden.**

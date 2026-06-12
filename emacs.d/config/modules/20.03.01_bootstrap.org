@@ -1,0 +1,252 @@
+#+TITLE: Bootstrap Layer 3 — Business logic / orchestrator
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+* Module
+:PROPERTIES:
+:header-args: :tangle yes
+:END:
+
+This is the Layer-3 main entry of the bootstrap subsystem (see
+[[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]]). It defines the public
+contract — exactly two symbols — that the feature modules
+(=30-core=, =40-org=, =50-apple-reminders=, =60-gptel=, =70-wiki=,
+=80-gtd=) depend on:
+
+  - =my/data-dir= — string path of the user's data folder
+  - =my/api-key-fetch= — function returning a credential or nil
+
+It also owns the interactive entry point =M-x my/bootstrap=, which
+orchestrates the Layer-2 ~ensure-*~ operations in the correct order
+and reports a structured result.
+
+This file CALLS DOWN ONLY: every operation in =my/bootstrap= is a
+call into a Layer-2 function. There is no system access here (no
+=call-process=, no =security=, no =git=, no filesystem mutation).
+Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 the strict
+rule is "Layer N may only call Layer N−1".
+
+** Skeleton state
+
+At the moment this file is the FIRST piece of the bootstrap rewrite.
+Layer 2 (the ~my/*-ensure-*~ functions called below) does not yet
+exist. The skeleton handles that gracefully:
+
+  - On =M-x my/bootstrap=, each Layer-2 call is guarded with
+    ~fboundp~. Missing functions surface as a single explicit
+    ~(:error "pending: ...")~ telling the user which Layer-2
+    function is still pending.
+
+  - =my/data-dir= falls back to whatever ~init.el~ set as default
+    (~user-emacs-directory~). The Layer-2 resolver that will later
+    update it is not yet written.
+
+  - =my/api-key-fetch= returns ~nil~ until the Layer-2 secrets
+    file lands. Feature modules that read API keys (gptel) will
+    behave as if no key were configured — visible failure mode,
+    not silent corruption.
+
+This intermediate state is acceptable for the duration of the
+rewrite. Removing the ~fboundp~ guards is the explicit signal
+that Layer 2 is complete.
+
+* File header (mandatory per CONVENTIONS.md §3)
+
+#+begin_src emacs-lisp :tangle yes
+;;; 20.03.01_bootstrap.el --- Bootstrap Layer 3 main entry -*- lexical-binding: t -*-
+;;
+;; Public API (callable from any feature module):
+;;   my/data-dir                            ← defvar, string path
+;;   (my/api-key-fetch KEY-NAME)            → string or nil
+;;   (my/api-key-set)                       ← interactive rotator (not yet wired)
+;;   (my/bootstrap)                         ← interactive orchestrator
+;;
+;; Internal (DO NOT call from other files; prefix with `--'):
+;;   my/bootstrap--ensure-steps             ← list of (LABEL . FN-SYMBOL) pairs
+;;   my/bootstrap--run-step                 ← runs one ensure-* with fboundp gate
+;;   my/bootstrap--format-result            ← aggregates Layer-2 results
+;;
+;; Depends on (Layer 2 — declared, not yet implemented):
+;;   my/secrets-ensure-readable      ← 20.02.NN_bootstrap-secrets
+;;   my/repo-ensure-cloned           ← 20.02.NN_bootstrap-repo
+;;   my/identity-ensure-loaded       ← 20.02.NN_bootstrap-identity
+;;   my/data-dir-resolve             ← 20.02.NN_bootstrap-repo
+;;   my/api-key-fetch--from-secrets  ← 20.02.NN_bootstrap-secrets
+#+end_src
+
+* Forward declarations
+
+These tell the byte-compiler about Layer-2 functions that don't yet
+exist on disk. Once the Layer-2 files land, the ~declare-function~
+forms keep their warnings turned off and document the cross-file
+dependency graph.
+
+#+begin_src emacs-lisp :tangle yes
+(declare-function my/secrets-ensure-readable        "20.02.NN_bootstrap-secrets")
+(declare-function my/repo-ensure-cloned             "20.02.NN_bootstrap-repo")
+(declare-function my/identity-ensure-loaded         "20.02.NN_bootstrap-identity")
+(declare-function my/data-dir-resolve               "20.02.NN_bootstrap-repo")
+(declare-function my/api-key-fetch--from-secrets    "20.02.NN_bootstrap-secrets")
+#+end_src
+
+* Public variables
+
+The variable =my/data-dir= is the canonical data folder path that
+every feature module reads. It is bound here to ~user-emacs-directory~
+as a safe load-time default. Once Layer 2's ~my/data-dir-resolve~
+exists, it is invoked at the end of this file's load to replace the
+default with the Keychain-resolved path. Until then, feature modules
+see =~/.emacs.d/= as the data directory — wrong, but harmless (they
+create their subdirectories there and the user notices immediately).
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/data-dir
+  (file-name-as-directory (expand-file-name user-emacs-directory))
+  "Absolute path of the user's data folder.
+Initialised here to `user-emacs-directory' as a safe default.
+Resolved to the real value (from Keychain) by
+`my/data-dir-resolve' once the Layer-2 repo module lands.
+
+Read by every feature module that stores data under a
+user-configurable directory (30-core, 40-org, 50-apple-reminders,
+60-gptel, 70-wiki, 80-gtd). The contract with these modules is
+in BOOTSTRAP.md §4.")
+#+end_src
+
+* Internal state
+
+The orchestrator reads this list top-to-bottom. Adding a new
+ensure-* step means appending a pair here AND writing the Layer-2
+function it points at — nothing else in this file changes.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/bootstrap--ensure-steps
+  '(("data-folder resolution"  . my/data-dir-resolve)
+    ("data-folder clone"       . my/repo-ensure-cloned)
+    ("github identity"         . my/identity-ensure-loaded)
+    ("secrets readable"        . my/secrets-ensure-readable))
+  "Ordered list of (LABEL . FUNCTION-SYMBOL) for the orchestrator.
+Each FUNCTION-SYMBOL points at a Layer-2 function expected to
+return :done / :skip / (:error MSG). Functions not yet bound
+report as pending; see `my/bootstrap--run-step'.")
+#+end_src
+
+* Internal helpers
+
+Defined before the public ~my/bootstrap~ so the byte-compiler sees
+their definitions when compiling the orchestrator body.
+
+** =my/bootstrap--run-step=
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/bootstrap--run-step (step)
+  "Run STEP — a (LABEL . FUNCTION-SYMBOL) pair — and return
+(LABEL . RESULT) where RESULT is :done, :skip, or (:error MSG).
+
+If the function is not bound (Layer 2 hasn't written it yet),
+RESULT is (:error \"pending: <function-name> not yet defined\").
+This is an honest report, not a silent skip — the user sees the
+exact reason the step did not run."
+  (let* ((label (car step))
+         (fn    (cdr step)))
+    (cons label
+          (if (fboundp fn)
+              (condition-case err
+                  (funcall fn)
+                (error `(:error ,(format "uncaught signal: %s"
+                                         (error-message-string err)))))
+            `(:error ,(format "pending: %s not yet defined" fn))))))
+#+end_src
+
+** =my/bootstrap--format-result=
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/bootstrap--format-result (results)
+  "Render RESULTS (a list of (LABEL . OUTCOME) cells) as a single
+human-readable line for the *Messages* buffer."
+  (mapconcat
+   (lambda (cell)
+     (let ((label   (car cell))
+           (outcome (cdr cell)))
+       (format "%s=%s"
+               label
+               (cond ((eq outcome :done) "done")
+                     ((eq outcome :skip) "skip")
+                     ((and (consp outcome) (eq (car outcome) :error))
+                      (format "error(%s)" (cadr outcome)))
+                     (t (format "?(%s)" outcome))))))
+   results
+   "; "))
+#+end_src
+
+* Public functions
+
+** =my/api-key-fetch= — the credential reader feature modules call
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/api-key-fetch (key-name)
+  "Return the credential for KEY-NAME (a string like \"OPENAI_API_KEY\").
+Returns nil if the secret is not configured.
+
+Delegates to Layer 2's `my/api-key-fetch--from-secrets' when
+present. While Layer 2 is being built this function returns nil
+unconditionally, which is the correct behaviour for feature
+modules: they treat a missing key as \"no backend configured\" and
+surface a setup instruction to the user."
+  (if (fboundp 'my/api-key-fetch--from-secrets)
+      (my/api-key-fetch--from-secrets key-name)
+    nil))
+#+end_src
+
+** =my/api-key-set= — interactive credential rotator
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/api-key-set ()
+  "Interactively store a new value for one of the configured API keys.
+Stub until Layer 2's secrets module lands. Reports the pending
+state instead of pretending to succeed."
+  (interactive)
+  (message "my/api-key-set: pending — Layer-2 secrets module not yet written"))
+#+end_src
+
+** =my/bootstrap= — the orchestrator
+
+The body is a flat list of Layer-2 ~ensure-*~ calls in dependency
+order via ~my/bootstrap--ensure-steps~. Each step is run through
+~my/bootstrap--run-step~ which gates on ~fboundp~ and collects a
+~(STEP-LABEL . RESULT)~ pair. The final aggregated message tells
+the user exactly which steps ran, which were skipped because
+Layer 2 is pending, and which failed.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/bootstrap ()
+  "Run the bootstrap subsystem to bring Emacs to a ready state.
+Idempotent: every Layer-2 ensure-* is required to return
+:done / :skip / (:error MSG) and to be safely re-runnable.
+
+Currently a skeleton: most steps are not yet implemented in
+Layer 2 and will report (:error \"pending\") until they land."
+  (interactive)
+  (let ((results (mapcar #'my/bootstrap--run-step my/bootstrap--ensure-steps)))
+    (message "Bootstrap: %s" (my/bootstrap--format-result results))
+    results))
+#+end_src
+
+* Load-time hook — resolve =my/data-dir= if Layer 2 is ready
+
+Once Layer 2's ~my/data-dir-resolve~ exists, this block updates
+=my/data-dir= as soon as this file finishes loading. Until then
+the value stays at the ~init.el~ default.
+
+#+begin_src emacs-lisp :tangle yes
+(when (fboundp 'my/data-dir-resolve)
+  (let ((result (my/data-dir-resolve)))
+    (when (and (consp result) (eq (car result) :ok))
+      (setq my/data-dir (file-name-as-directory (cadr result))))))
+#+end_src
+
+* Module footer
+
+#+begin_src emacs-lisp :tangle yes
+(provide 'my-bootstrap)
+;;; 20.03.01_bootstrap.el ends here
+#+end_src

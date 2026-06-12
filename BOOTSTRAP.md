@@ -1,12 +1,12 @@
 # Bootstrap Subsystem Conventions
 
 This document covers rules that apply **only** to the bootstrap
-subsystem — the files matching `00.LL.SS_bootstrap-*.org` under
+subsystem — the files matching `20.LL.SS_bootstrap-*.org` under
 `emacs.d/config/modules/`. General code rules live in
 [`CONVENTIONS.md`](CONVENTIONS.md) and apply on top of everything
 here; subsystem rules never replace general rules, only add to them.
 
-If you are an AI agent editing a `00.LL.SS_bootstrap-*.org` file:
+If you are an AI agent editing a `20.LL.SS_bootstrap-*.org` file:
 **read `CONVENTIONS.md` first, then this file.**
 
 ---
@@ -43,7 +43,7 @@ is encoded in the filename** (see §3) so a file's role is visible
 without opening it.
 
 ```
-LAYER 1 — System primitives (filename prefix 00.01.NN)
+LAYER 1 — System primitives (filename prefix 20.01.NN)
   One file per kind of resource (Keychain, git, process, file).
   Each function wraps ONE system call (`security`, `git`,
   `call-process`, `file-exists-p`). Returns `:ok` / `:error` with
@@ -52,7 +52,7 @@ LAYER 1 — System primitives (filename prefix 00.01.NN)
   Target size: 30–100 lines per file. Hard ceiling: 150.
   Loads FIRST (lowest numeric prefix in the bootstrap range).
 
-LAYER 2 — Domain operations (filename prefix 00.02.NN)
+LAYER 2 — Domain operations (filename prefix 20.02.NN)
   One file per domain concept (secrets, repo, identity, daemon, …).
   Each function describes ONE thing from the user's world: "is the
   data folder healthy?", "is the API key set?". Composes Layer-1
@@ -60,7 +60,7 @@ LAYER 2 — Domain operations (filename prefix 00.02.NN)
   Knows nothing about UI or user interaction.
   Target size: 50–150 lines per file. Hard ceiling: 200.
 
-LAYER 3 — Business logic (filename prefix 00.03.NN)
+LAYER 3 — Business logic (filename prefix 20.03.NN)
   One main file. Defines the public entry point the rest of the
   system calls (`my/bootstrap`). Reads top-to-bottom like
   pseudo-code: ensure A, ensure B, ensure C. No system calls, no
@@ -91,45 +91,48 @@ Tight per-file ceilings make the bundling impossible to repeat.
 The filename prefix has THREE numeric segments separated by dots:
 
 ```
-   00 . LL . SS _name.org
+   20 . LL . SS _name.org
    │    │    │
    │    │    └── sub-index (01, 02, …) — order within the layer
    │    └────── layer (01 = Layer 1, 02 = Layer 2, 03 = Layer 3)
-   └─────────── subsystem (00 = bootstrap; reserved for future
-                subsystems if they ever need this discipline)
+   └─────────── subsystem (20 = bootstrap; sits between the
+                pre-init modules at 00- / 10- and the feature
+                modules at 30- and beyond)
 ```
 
 `config.org`'s discovery loop sorts files by `string<`, which gives
 the load order:
 
 ```
-00.01.NN  →  00.02.NN  →  00.03.NN  →  10-…  →  20-…  →  …
+00-…  →  10-…  →  20.01.NN  →  20.02.NN  →  20.03.NN  →  30-…  →  …
 ```
 
-Layer-1 primitives load before Layer-2 domain operations, which load
-before the Layer-3 main file, which loads before any feature module
-(`10-…`, `20-…`, etc.). Each file `provide`s its feature; consumers
-in higher layers `require` it. The declarative `require` graph
+The bootstrap subsystem loads AFTER `00-startfirst.org` (theme,
+elpaca) and `10-tasks.el` (async-tasks framework), and BEFORE the
+feature modules at `30-` and up. Within the bootstrap, Layer-1
+primitives load first, then Layer-2 domain operations, then the
+Layer-3 main file. Each file `provide`s its feature; consumers in
+higher layers `require` it. The declarative `require` graph
 documents dependencies on top of the numeric ordering.
 
 **Example shape** (illustrative, not prescriptive — the actual files
 in each layer emerge from the rewrite as we identify the concerns):
 
 ```
-00.01.01_bootstrap-<resource-1>.org    ← Layer 1 primitive
-00.01.02_bootstrap-<resource-2>.org    ← Layer 1 primitive
-00.02.01_bootstrap-<domain-1>.org      ← Layer 2 domain operation
-00.02.02_bootstrap-<domain-2>.org      ← Layer 2 domain operation
-00.03.01_bootstrap.org                 ← Layer 3 main entry
+20.01.01_bootstrap-<resource-1>.org    ← Layer 1 primitive
+20.01.02_bootstrap-<resource-2>.org    ← Layer 1 primitive
+20.02.01_bootstrap-<domain-1>.org      ← Layer 2 domain operation
+20.02.02_bootstrap-<domain-2>.org      ← Layer 2 domain operation
+20.03.01_bootstrap.org                 ← Layer 3 main entry
 ```
 
 Adding a new file within a layer takes the next sub-index
-(`00.02.NN+1_…`). Inserting a file between two existing ones is
+(`20.02.NN+1_…`). Inserting a file between two existing ones is
 intentionally awkward — it forces a renumbering discussion instead
 of silent ambiguity.
 
 **The layer is visible in the filename. There is no other way to
-tell which layer a file belongs to.** A file at `00.02.NN_*` is
+tell which layer a file belongs to.** A file at `20.02.NN_*` is
 Layer 2 by definition; if it acts like Layer 1 or Layer 3, the
 filename is wrong, not the rule.
 
@@ -242,7 +245,7 @@ the old form-widget worked, etc.) but never loaded into Emacs.
 
 The matching tangled output `20-bootstrap.el` is deleted at the
 same time. If the rewrite ever needs to be reverted (it won't, but
-in principle), the procedure is: delete the new `00.LL.SS_*` files,
+in principle), the procedure is: delete the new `20.LL.SS_*` files,
 rename `20-bootstrap.org.old` back to `20-bootstrap.org`, re-tangle.
 
 ---
