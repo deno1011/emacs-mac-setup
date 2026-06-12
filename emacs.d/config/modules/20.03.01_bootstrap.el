@@ -1,15 +1,19 @@
 ;;; 20.03.01_bootstrap.el --- Bootstrap Layer 3 main entry -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from any feature module):
-;;   my/data-dir                            ← defvar, string path
+;;   my/data-dir                            ← defvar, string path OR :not-resolved
 ;;   (my/api-key-fetch KEY-NAME)            → string or nil
 ;;   (my/api-key-set)                       ← interactive rotator (not yet wired)
 ;;   (my/bootstrap)                         ← interactive orchestrator
+;;   (my/bootstrap-ready-p)                 → t when bootstrap converged
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
-;;   my/bootstrap--ensure-steps             ← list of (LABEL . FN-SYMBOL) pairs
+;;   my/bootstrap--ensure-steps             ← list of (LABEL FN REQUIRED) triples
+;;   my/bootstrap--failed-p                 ← non-nil after a required failure
 ;;   my/bootstrap--run-step                 ← runs one ensure-* with fboundp gate
 ;;   my/bootstrap--format-result            ← aggregates Layer-2 results
+;;   my/bootstrap--halt                     ← emits warning + message + signals
+;;   my/bootstrap--repair-hint              ← per-step repair hint fallback
 ;;
 ;; Depends on (Layer 2 — declared, not yet implemented):
 ;;   my/secrets-ensure-readable      ← 20.02.NN_bootstrap-secrets
@@ -24,53 +28,68 @@
 (declare-function my/data-dir-resolve               "20.02.NN_bootstrap-repo")
 (declare-function my/api-key-fetch--from-secrets    "20.02.NN_bootstrap-secrets")
 
-(defvar my/data-dir
-  (file-name-as-directory (expand-file-name user-emacs-directory))
-  "Absolute path of the user's data folder.
-Initialised here to `user-emacs-directory' as a safe default.
-Resolved to the real value (from Keychain) by
-`my/data-dir-resolve' once the Layer-2 repo module lands.
+(defvar my/data-dir :not-resolved
+  "Absolute path of the user's data folder, or `:not-resolved'.
+Until the Layer-2 resolver runs successfully this is the symbol
+`:not-resolved'. Any feature module that uses it without first
+checking `my/bootstrap-ready-p' will type-error on its first
+`expand-file-name' call — by design, see this module's docstring
+under \"Why the :not-resolved sentinel\".
 
 Read by every feature module that stores data under a
 user-configurable directory (30-core, 40-org, 50-apple-reminders,
 60-gptel, 70-wiki, 80-gtd). The contract with these modules is
 in BOOTSTRAP.md §4.")
 
+(defvar my/bootstrap--failed-p nil
+  "Non-nil after a required Layer-2 step has returned (:error …).
+Reset to nil at the START of every `my/bootstrap' run, then set
+to t the moment a required step fails. Read by
+`my/bootstrap-ready-p' which is the public predicate feature
+modules consult.")
+
 (defvar my/bootstrap--ensure-steps
-  '(("data-folder resolution"  . my/data-dir-resolve)
-    ("data-folder clone"       . my/repo-ensure-cloned)
-    ("github identity"         . my/identity-ensure-loaded)
-    ("secrets readable"        . my/secrets-ensure-readable))
-  "Ordered list of (LABEL . FUNCTION-SYMBOL) for the orchestrator.
-Each FUNCTION-SYMBOL points at a Layer-2 function expected to
-return :done / :skip / (:error MSG). Functions not yet bound
-report as pending; see `my/bootstrap--run-step'.")
+  '(("data-folder resolution"  my/data-dir-resolve        t)
+    ("data-folder clone"       my/repo-ensure-cloned      t)
+    ("github identity"         my/identity-ensure-loaded  nil)
+    ("secrets readable"        my/secrets-ensure-readable nil))
+  "Ordered list of (LABEL FUNCTION-SYMBOL REQUIRED) triples.
+LABEL is a short human-readable name for the *Warnings* buffer.
+FUNCTION-SYMBOL is a Layer-2 function expected to return
+:done / :skip / (:error MSG). REQUIRED is t for steps whose
+failure halts the bootstrap, nil for steps whose failure is
+logged but does not halt.")
 
 (defun my/bootstrap--run-step (step)
-  "Run STEP — a (LABEL . FUNCTION-SYMBOL) pair — and return
-(LABEL . RESULT) where RESULT is :done, :skip, or (:error MSG).
+  "Run STEP — a (LABEL FN REQUIRED) triple — and return
+(LABEL REQUIRED RESULT) where RESULT is :done, :skip, or
+(:error MSG). The REQUIRED flag is passed through so the
+caller can decide whether to halt.
 
 If the function is not bound (Layer 2 hasn't written it yet),
-RESULT is (:error \"pending: <function-name> not yet defined\").
-This is an honest report, not a silent skip — the user sees the
-exact reason the step did not run."
-  (let* ((label (car step))
-         (fn    (cdr step)))
-    (cons label
-          (if (fboundp fn)
-              (condition-case err
+RESULT is (:error \"pending: <fn> not yet defined\"). This is
+an honest report, not a silent skip — the user sees the exact
+reason the step did not run."
+  (let* ((label    (nth 0 step))
+         (fn       (nth 1 step))
+         (required (nth 2 step))
+         (result
+          (cond
+           ((not (fboundp fn))
+            `(:error ,(format "pending: %s not yet defined" fn)))
+           (t (condition-case err
                   (funcall fn)
                 (error `(:error ,(format "uncaught signal: %s"
-                                         (error-message-string err)))))
-            `(:error ,(format "pending: %s not yet defined" fn))))))
+                                         (error-message-string err)))))))))
+    (list label required result)))
 
 (defun my/bootstrap--format-result (results)
-  "Render RESULTS (a list of (LABEL . OUTCOME) cells) as a single
-human-readable line for the *Messages* buffer."
+  "Render RESULTS (a list of (LABEL REQUIRED OUTCOME) triples) as a
+single human-readable line for the *Messages* buffer."
   (mapconcat
-   (lambda (cell)
-     (let ((label   (car cell))
-           (outcome (cdr cell)))
+   (lambda (triple)
+     (let ((label   (nth 0 triple))
+           (outcome (nth 2 triple)))
        (format "%s=%s"
                label
                (cond ((eq outcome :done) "done")
@@ -80,6 +99,61 @@ human-readable line for the *Messages* buffer."
                      (t (format "?(%s)" outcome))))))
    results
    "; "))
+
+(defun my/bootstrap--repair-hint (fn)
+  "Return a one-paragraph human repair hint for FN, the Layer-2
+symbol of the step that failed. The actual error message from
+the step is used verbatim by `my/bootstrap--halt'; this hint
+adds the SPECIFIC next-action for cases that don't carry one."
+  (cond
+   ((not (fboundp fn))
+    (format "Layer-2 module that implements `%s' is not yet on disk.
+This is expected during the rewrite from the legacy
+20-bootstrap.org. See BOOTSTRAP.md for the layer status."
+            fn))
+   (t "See the WHY message above for the specific cause. The
+Layer-2 step is responsible for stating the concrete repair
+command in its error payload.")))
+
+(defun my/bootstrap--halt (label fn err-msg)
+  "Surface a required-step failure and abort the orchestrator.
+LABEL is the human step name. FN is the Layer-2 function symbol.
+ERR-MSG is the (:error MSG) payload from the step.
+
+Emits a `display-warning' at :emergency level with a structured
+WHAT / WHY / FIX block, plus a one-line `message' nudge pointing
+at *Warnings*. Sets `my/bootstrap--failed-p' to t and signals an
+error so the load-time auto-fire stops cleanly."
+  (setq my/bootstrap--failed-p t)
+  (display-warning
+   'emacs-setup
+   (format
+    "Bootstrap halted at required step: %s
+
+WHY: %s
+
+FIX: %s
+
+After fixing, run  M-x my/bootstrap  to retry.
+
+Feature modules that depend on `my/data-dir' will NOT execute
+correctly until this step succeeds. See BOOTSTRAP.md §5 for the
+public-contract details."
+    label err-msg (my/bootstrap--repair-hint fn))
+   :emergency)
+  (message "Bootstrap halted at %s — see *Warnings* for repair instructions" label)
+  (error "Bootstrap halted at %s: %s" label err-msg))
+
+(defun my/bootstrap-ready-p ()
+  "Return t when bootstrap has converged: no required step failed
+AND `my/data-dir' resolves to a real string path.
+
+Feature modules that depend on `my/data-dir' should wrap their
+configuration in `(when (my/bootstrap-ready-p) …)' so they
+short-circuit gracefully on bootstrap failure instead of
+type-erroring on the `:not-resolved' sentinel."
+  (and (not my/bootstrap--failed-p)
+       (stringp my/data-dir)))
 
 (defun my/api-key-fetch (key-name)
   "Return the credential for KEY-NAME (a string like \"OPENAI_API_KEY\").
@@ -106,17 +180,32 @@ state instead of pretending to succeed."
 Idempotent: every Layer-2 ensure-* is required to return
 :done / :skip / (:error MSG) and to be safely re-runnable.
 
-Currently a skeleton: most steps are not yet implemented in
-Layer 2 and will report (:error \"pending\") until they land."
+Halts on the first required-step failure (per BOOTSTRAP.md §5.5)
+with a *Warnings* popup and a one-line *Messages* nudge. Non-
+required failures are collected and surfaced in the final
+message but do not halt the loop."
   (interactive)
-  (let ((results (mapcar #'my/bootstrap--run-step my/bootstrap--ensure-steps)))
+  (setq my/bootstrap--failed-p nil)
+  (let (results)
+    (catch 'halt
+      (dolist (step my/bootstrap--ensure-steps)
+        (let* ((triple   (my/bootstrap--run-step step))
+               (label    (nth 0 triple))
+               (required (nth 1 triple))
+               (outcome  (nth 2 triple)))
+          (push triple results)
+          (when (and required
+                     (consp outcome)
+                     (eq (car outcome) :error))
+            (my/bootstrap--halt label (nth 1 step) (cadr outcome))
+            (throw 'halt nil)))))
+    (setq results (nreverse results))
     (message "Bootstrap: %s" (my/bootstrap--format-result results))
     results))
 
-(when (fboundp 'my/data-dir-resolve)
-  (let ((result (my/data-dir-resolve)))
-    (when (and (consp result) (eq (car result) :ok))
-      (setq my/data-dir (file-name-as-directory (cadr result))))))
+(condition-case _err
+    (my/bootstrap)
+  (error nil))
 
 (provide 'my-bootstrap)
 ;;; 20.03.01_bootstrap.el ends here
