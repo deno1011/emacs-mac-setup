@@ -28,6 +28,15 @@
 (defvar my/doctor--checks nil
   "List of check thunks. Each returns a plist; see `my/doctor--render'.")
 
+;; Reset on every file load. Each `my/doctor-define-check' below `push'es
+;; to this list, so reloading the file (manually via M-x load-file, or
+;; via `my/-load-module' on a stale .elc rebuild) would otherwise leave
+;; the previous registration in place AND add the new one — every check
+;; would run twice (or N times after N reloads), with the older closure
+;; capturing the old code. Force-reset here so the list always matches
+;; exactly the defcheck calls that follow.
+(setq my/doctor--checks nil)
+
 (defmacro my/doctor-define-check (label-string &rest body)
   "Register a doctor check that displays as LABEL-STRING.
 BODY runs every time the user invokes `my/doctor' and must return
