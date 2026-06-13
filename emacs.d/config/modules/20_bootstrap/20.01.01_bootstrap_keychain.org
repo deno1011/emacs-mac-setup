@@ -11,11 +11,11 @@ Each function here wraps a single =security= invocation, returns
 a straightforward value (string or nil), and avoids any business
 logic.
 
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer 1 has
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer 1 has
 no inter-file dependencies inside Layer 1, makes no calls upward,
 and stays well under the 150-line ceiling.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.01.01_bootstrap_keychain.el --- Bootstrap Layer 1 Keychain primitives -*- lexical-binding: t -*-

@@ -22,7 +22,7 @@ they do NOT halt the bootstrap. A Mac without gh installed, or
 with a revoked token, still boots fine; the user just learns
 they need to run a shell command.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.02.04_bootstrap_identity.el --- Bootstrap Layer 2 identity -*- lexical-binding: t -*-

@@ -12,7 +12,7 @@ keychain primitives. The function is the second required step in
 the orchestrator's list and only runs after =my/data-dir-resolve=
 has put a real string path into =my/data-dir=.
 
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 this Layer-2
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 this Layer-2
 file returns =:done= / =:skip= / =(:error MSG)= and is idempotent.
 
 ** Operating decision table
@@ -29,7 +29,7 @@ file returns =:done= / =:skip= / =(:error MSG)= and is idempotent.
 Cloning never overwrites an existing folder's contents; the user
 keeps full control over conflict resolution.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.02.02_bootstrap_repo_clone.el --- Bootstrap Layer 2 repo clone -*- lexical-binding: t -*-

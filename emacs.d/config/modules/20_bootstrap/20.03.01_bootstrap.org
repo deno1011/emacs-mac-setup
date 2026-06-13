@@ -7,7 +7,7 @@
 :END:
 
 This is the Layer-3 main entry of the bootstrap subsystem (see
-[[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]]). It defines the public
+[[file:BOOTSTRAP.md][BOOTSTRAP.md]]). It defines the public
 contract — exactly two symbols plus a readiness predicate — that
 the feature modules (=30-core=, =40-org=, =50-apple-reminders=,
 =60-gptel=, =70-wiki=, =80-gtd=) depend on:
@@ -25,7 +25,7 @@ BEFORE the discovery loop continues on to the feature modules.
 This file CALLS DOWN ONLY: every operation in =my/bootstrap= is a
 call into a Layer-2 function. There is no system access here (no
 =call-process=, no =security=, no =git=, no filesystem mutation).
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 the strict
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 the strict
 rule is "Layer N may only call Layer N−1".
 
 ** Required vs optional steps
@@ -91,7 +91,7 @@ exist. The skeleton handles that as a required failure:
 This intermediate broken state is acceptable for the duration of
 the rewrite.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.03.01_bootstrap.el --- Bootstrap Layer 3 main entry -*- lexical-binding: t -*-

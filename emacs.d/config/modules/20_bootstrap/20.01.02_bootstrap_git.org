@@ -12,10 +12,10 @@ existing checkout. Each function wraps a single subprocess (or
 a single file read), returns a tagged result, and contains no
 business logic.
 
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer 1
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer 1
 has no inter-Layer-1 dependencies and no calls upward.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.01.02_bootstrap_git.el --- Bootstrap Layer 1 git primitives -*- lexical-binding: t -*-

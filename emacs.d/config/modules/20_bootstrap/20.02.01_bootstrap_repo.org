@@ -17,13 +17,13 @@ not perform git operations directly — those will land in a
 Layer-1 git-primitives file and a follow-up Layer-2
 =my/repo-ensure-cloned=.
 
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer-2
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer-2
 returns =:done= / =:skip= / =(:error MSG)=. It MAY mutate the
 state it is responsible for ensuring (here:
 =my/data-dir=); it does NOT mutate state owned by other
 Layer-2 modules.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.02.01_bootstrap_repo.el --- Bootstrap Layer 2 repo / data-dir -*- lexical-binding: t -*-

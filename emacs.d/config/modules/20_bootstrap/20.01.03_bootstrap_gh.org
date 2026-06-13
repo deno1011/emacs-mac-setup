@@ -11,11 +11,11 @@ identity step needs: querying authentication state and logging in
 with a stored token. Each function wraps a single =gh= subprocess
 and returns a tagged result.
 
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 this file
+Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 this file
 has no business logic, no inter-Layer-1 dependencies, and no
 calls upward.
 
-* File header (mandatory per CONVENTIONS.md §3)
+* File header (mandatory per `../../CONVENTIONS.md` §5)
 
 #+begin_src emacs-lisp :tangle yes
 ;;; 20.01.03_bootstrap_gh.el --- Bootstrap Layer 1 gh CLI primitives -*- lexical-binding: t -*-
