@@ -1,0 +1,343 @@
+#+TITLE: Doctor — health check command
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+#+begin_src emacs-lisp
+;;; 90_doctor.el --- Health check command -*- lexical-binding: t; -*-
+
+(require 'subr-x)
+(require 'cl-lib)
+
+;; Forward declarations for symbols owned by bootstrap. Doctor uses
+;; them defensively via `fboundp' / `boundp' so it works even when
+;; bootstrap halted on a required-step failure (which is the case
+;; where the user most needs the doctor).
+(defvar my/data-dir)
+(declare-function my/bootstrap-ready-p             "20.03.01_bootstrap")
+(declare-function my/bootstrap--all-credential-descriptors "20.03.01_bootstrap")
+(declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
+(declare-function my/git-remote-url                "20.01.02_bootstrap_git")
+(declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
+#+end_src
+
+* Why a doctor
+
+A user-facing "is everything OK?" command modelled on =doom doctor=.
+Runs a battery of checks across the install — toolchain, configuration
+state, Keychain entries, external CLIs — and renders the result in a
+dedicated *Doctor* buffer. Each failed check carries a literal shell
+command the user can paste into Terminal to fix the situation.
+
+This is **protection layer four** (see the install.sh comments and
+=early-init.el='s env-snapshot block for layers one and three). It
+turns the silent kinds of failures — wrong PATH, missing libgccjit,
+revoked GitHub token, drifted Keychain schema — into something
+visible and immediately actionable.
+
+The command is intentionally lazy: it does not run at startup. The
+user invokes =M-x my/doctor= when something feels off, or after a
+big upgrade.
+
+* Public API
+
+#+begin_src emacs-lisp :tangle yes
+;;; Public API (callable from M-x or feature modules):
+;;;
+;;;   (my/doctor)          → interactive; renders *Doctor* buffer
+;;;   (my/doctor-rerun)    → interactive; recomputes if buffer is open
+;;;
+;;; Internal (DO NOT call from other files):
+;;;
+;;;   my/doctor--checks    → list of check thunks
+;;;   my/doctor--run-check → invoke one thunk with error catching
+;;;   my/doctor--render    → format the result list into the buffer
+#+end_src
+
+* Check registry
+
+Each check is a thunk that returns a plist:
+
+#+begin_quote
+=(:label STRING :status :ok|:warn|:fail :detail STRING :fix STRING-OR-NIL)=
+#+end_quote
+
+Order of registration matches the displayed order: toolchain first,
+then bootstrap state, then credentials, then external services.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/doctor--checks nil
+  "List of check thunks. Each returns a plist; see `my/doctor--render'.")
+#+end_src
+
+#+begin_src emacs-lisp :tangle yes
+(defmacro my/doctor-define-check (label-string &rest body)
+  "Register a doctor check that displays as LABEL-STRING.
+BODY runs every time the user invokes `my/doctor' and must return
+a plist with :status (:ok / :warn / :fail), optionally :detail
+and :fix. The :label is supplied by this macro."
+  (declare (indent 1))
+  `(push (lambda ()
+           (condition-case err
+               (let ((result (progn ,@body)))
+                 (plist-put result :label ,label-string))
+             (error
+              (list :label ,label-string
+                    :status :fail
+                    :detail (format "check signalled: %S" err)))))
+         my/doctor--checks))
+#+end_src
+
+* Toolchain checks
+
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "Homebrew on PATH"
+  (cond
+   ((executable-find "brew")
+    (list :status :ok :detail (executable-find "brew")))
+   (t
+    (list :status :fail
+          :detail "brew not in PATH"
+          :fix "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""))))
+
+(my/doctor-define-check "gcc-15 (for libgccjit)"
+  (let ((gcc (executable-find "gcc-15")))
+    (cond
+     (gcc (list :status :ok :detail gcc))
+     (t   (list :status :fail
+                :detail "gcc-15 not in PATH"
+                :fix "brew install gcc")))))
+
+(my/doctor-define-check "libgccjit installed"
+  (let ((lib "/opt/homebrew/lib/gcc/current/libgccjit.dylib"))
+    (cond
+     ((file-exists-p lib) (list :status :ok :detail lib))
+     (t (list :status :fail
+              :detail "libgccjit.dylib not present at the standard brew path"
+              :fix "brew install libgccjit")))))
+
+(my/doctor-define-check "native-compilation available"
+  (cond
+   ((and (fboundp 'native-comp-available-p) (native-comp-available-p))
+    (list :status :ok :detail "native-comp-available-p returned t"))
+   (t (list :status :fail
+            :detail "native-comp not available in this Emacs build"
+            :fix "Reinstall emacs-plus@30: brew reinstall d12frosted/emacs-plus/emacs-plus@30 --with-xwidgets"))))
+
+(my/doctor-define-check "LIBRARY_PATH for libgccjit"
+  (let ((lp (getenv "LIBRARY_PATH")))
+    (cond
+     ((null lp)
+      (list :status :fail
+            :detail "LIBRARY_PATH not set; libgccjit will not find gcc helpers"
+            :fix "Re-run install.sh to regenerate ~/.emacs.d/env-snapshot.el"))
+     ((string-match-p "gcc" lp)
+      (list :status :ok :detail lp))
+     (t
+      (list :status :warn
+            :detail (format "LIBRARY_PATH set but no gcc path inside: %s" lp)
+            :fix "Re-run install.sh to regenerate ~/.emacs.d/env-snapshot.el")))))
+
+(my/doctor-define-check "eln-cache writable"
+  (let ((cache (expand-file-name "eln-cache" user-emacs-directory)))
+    (cond
+     ((and (file-directory-p cache) (file-writable-p cache))
+      (list :status :ok :detail cache))
+     ((not (file-directory-p cache))
+      (list :status :warn
+            :detail "eln-cache directory does not exist (it will be created on first JIT compile)"))
+     (t (list :status :fail
+              :detail (format "eln-cache exists but is not writable: %s" cache)
+              :fix (format "chmod -R u+w %s" cache))))))
+#+end_src
+
+* Bootstrap state
+
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "Bootstrap converged (my/bootstrap-ready-p)"
+  (cond
+   ((not (fboundp 'my/bootstrap-ready-p))
+    (list :status :fail
+          :detail "my/bootstrap-ready-p is not defined — bootstrap module did not load"
+          :fix "Check ~/.emacs.d/config/modules/20_bootstrap/ for missing files; re-run install.sh"))
+   ((not (my/bootstrap-ready-p))
+    (list :status :fail
+          :detail "my/bootstrap-ready-p returned nil — a required step failed"
+          :fix "M-x my/bootstrap to re-run and inspect the *Warnings* buffer for the failed step"))
+   (t (list :status :ok :detail "my/bootstrap-ready-p = t"))))
+
+(my/doctor-define-check "my/data-dir is a real path"
+  (cond
+   ((not (boundp 'my/data-dir))
+    (list :status :fail :detail "my/data-dir is unbound"))
+   ((not (stringp my/data-dir))
+    (list :status :fail
+          :detail (format "my/data-dir = %S (still the not-resolved sentinel)" my/data-dir)
+          :fix "Set Keychain entry GitHubRepo, then M-x my/bootstrap"))
+   ((not (file-directory-p my/data-dir))
+    (list :status :fail
+          :detail (format "%s does not exist on disk" my/data-dir)
+          :fix "M-x my/bootstrap will clone it once GitHubRepo and GitHubUsername are set"))
+   (t (list :status :ok :detail my/data-dir))))
+
+(my/doctor-define-check "data folder is a git clone of the expected repo"
+  (cond
+   ((not (and (boundp 'my/data-dir) (stringp my/data-dir) (file-directory-p my/data-dir)))
+    (list :status :warn :detail "skipped — my/data-dir not ready"))
+   ((not (file-directory-p (expand-file-name ".git" my/data-dir)))
+    (list :status :fail
+          :detail (format "%s is not a git repo" my/data-dir)
+          :fix "M-x my/bootstrap will clone if the folder is empty; otherwise rename it manually"))
+   ((not (fboundp 'my/git-remote-url))
+    (list :status :warn :detail "skipped — bootstrap git Layer 1 not loaded"))
+   (t (let ((origin (my/git-remote-url my/data-dir)))
+        (cond
+         (origin (list :status :ok :detail origin))
+         (t (list :status :warn
+                  :detail "could not read .git/config origin")))))))
+#+end_src
+
+* Credentials (Keychain coverage)
+
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "Keychain credentials configured"
+  (cond
+   ((not (fboundp 'my/bootstrap--all-credential-descriptors))
+    (list :status :warn :detail "skipped — credential registry not loaded"))
+   (t
+    (let* ((descs (my/bootstrap--all-credential-descriptors))
+           (rows (mapcar
+                  (lambda (d)
+                    (let* ((acct (plist-get d :account))
+                           (val  (when (fboundp 'my/keychain-get)
+                                   (my/keychain-get "emacs_credentials" acct)))
+                           (skipped? (and (stringp val)
+                                          (string= val "__SKIPPED__")))
+                           (required? (not (plist-get d :allow-skip))))
+                      (cons acct (cond
+                                  ((and (null val) required?) :missing-required)
+                                  ((null val)                 :missing-optional)
+                                  (skipped?                    :skipped)
+                                  (t                           :set)))))
+                  descs))
+           (missing-req (cl-count :missing-required rows :key #'cdr))
+           (missing-opt (cl-count :missing-optional rows :key #'cdr))
+           (skipped     (cl-count :skipped rows :key #'cdr))
+           (set-count   (cl-count :set rows :key #'cdr))
+           (detail (format "set=%d  skipped=%d  missing-optional=%d  missing-required=%d"
+                           set-count skipped missing-opt missing-req)))
+      (cond
+       ((> missing-req 0)
+        (list :status :fail
+              :detail (concat detail " — required entries missing: "
+                              (mapconcat #'identity
+                                         (mapcar #'car
+                                                 (cl-remove-if-not
+                                                  (lambda (r) (eq (cdr r) :missing-required))
+                                                  rows))
+                                         ", "))
+              :fix "M-x my/credential-set"))
+       ((> missing-opt 0)
+        (list :status :warn
+              :detail (concat detail " — optional entries missing: "
+                              (mapconcat #'identity
+                                         (mapcar #'car
+                                                 (cl-remove-if-not
+                                                  (lambda (r) (eq (cdr r) :missing-optional))
+                                                  rows))
+                                         ", "))))
+       (t (list :status :ok :detail detail)))))))
+#+end_src
+
+* External services
+
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "gh CLI authenticated"
+  (cond
+   ((not (fboundp 'my/gh-auth-status))
+    (list :status :warn :detail "skipped — gh Layer 1 not loaded"))
+   (t (let ((status (my/gh-auth-status)))
+        (cond
+         ((eq status :ok)
+          (list :status :ok :detail "gh auth status returned :ok"))
+         ((eq status :no-gh)
+          (list :status :fail
+                :detail "gh CLI not installed"
+                :fix "brew install gh"))
+         ((eq status :not-authenticated)
+          (list :status :fail
+                :detail "gh is installed but no user is logged in"
+                :fix "M-x my/bootstrap (will use Keychain GitHubToken automatically) — or run: gh auth login"))
+         (t (list :status :warn
+                  :detail (format "unexpected gh-auth-status result: %S" status))))))))
+#+end_src
+
+* Runner + rendering
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/doctor--run-check (thunk)
+  "Invoke THUNK and return its result. The thunk itself wraps in
+condition-case (see `my/doctor-define-check'), so signalled errors
+become (:status :fail :detail …) entries rather than propagating."
+  (funcall thunk))
+
+(defun my/doctor--status-glyph (status)
+  "Return the leading glyph for STATUS."
+  (cond ((eq status :ok)   "✓")
+        ((eq status :warn) "⚠")
+        ((eq status :fail) "✗")
+        (t                  "?")))
+
+(defun my/doctor--render (results)
+  "Render RESULTS into the *Doctor* buffer and pop to it."
+  (let ((buf (get-buffer-create "*Doctor*"))
+        (ok    (cl-count :ok    results :key (lambda (r) (plist-get r :status))))
+        (warn  (cl-count :warn  results :key (lambda (r) (plist-get r :status))))
+        (fail  (cl-count :fail  results :key (lambda (r) (plist-get r :status)))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "Emacs Doctor — %s\n" (format-time-string "%Y-%m-%d %H:%M")))
+        (insert "================\n\n")
+        (insert (format "Summary: %d OK · %d warnings · %d failures\n\n" ok warn fail))
+        (dolist (r results)
+          (insert (format "%s  %s"
+                          (my/doctor--status-glyph (plist-get r :status))
+                          (plist-get r :label)))
+          (let ((detail (plist-get r :detail)))
+            (when (and detail (not (string-empty-p detail)))
+              (insert (format "  —  %s" detail))))
+          (insert "\n")
+          (let ((fix (plist-get r :fix)))
+            (when fix
+              (insert (format "       FIX:  %s\n" fix)))))
+        (insert "\n")
+        (insert (substitute-command-keys
+                 "Re-run with `\\[my/doctor-rerun]'.  Set credentials with `M-x my/credential-set'.\n")))
+      (read-only-mode 1)
+      (goto-char (point-min)))
+    (display-buffer buf '((display-buffer-pop-up-window)))))
+#+end_src
+
+* Public entry points
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/doctor ()
+  "Run every registered health check and render *Doctor*."
+  (interactive)
+  (let ((results (mapcar #'my/doctor--run-check
+                         (reverse my/doctor--checks))))
+    (my/doctor--render results)))
+
+(defun my/doctor-rerun ()
+  "Re-run the doctor in the currently displayed *Doctor* buffer."
+  (interactive)
+  (my/doctor))
+#+end_src
+
+* Provide
+
+#+begin_src emacs-lisp :tangle yes
+(provide '90_doctor)
+;;; 90_doctor.el ends here
+#+end_src

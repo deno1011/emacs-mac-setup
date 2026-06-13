@@ -13,6 +13,25 @@
 (setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
       gc-cons-percentage 0.6)
 
+;; ENV SNAPSHOT — `doom env'-style protection against LaunchAgent /
+;; brew services losing the user's shell environment.
+;;
+;; install.sh writes ~/.emacs.d/env-snapshot.el on every install. It
+;; captures PATH, LIBRARY_PATH, MANPATH, INFOPATH from the install
+;; shell (which has brew shellenv sourced + the user's profile read).
+;; This file restores those vars into the running Emacs process BEFORE
+;; any package, any module, any native-comp invocation can need them.
+;;
+;; Without this, a fresh daemon launched by emacs-plus@30's
+;; LaunchAgent on login sees only the macOS LaunchAgent default env
+;; — no /opt/homebrew/bin, no LIBRARY_PATH, no nothing from ~/.zshrc.
+;; The hardcoded block below this one still provides a minimum LIBRARY_PATH
+;; floor for the libgccjit / gcc-driver case even when the snapshot is
+;; missing.
+(let ((snapshot (expand-file-name "env-snapshot.el" user-emacs-directory)))
+  (when (file-readable-p snapshot)
+    (load snapshot nil 'nomessage 'nosuffix)))
+
 ;; native-comp needs the brew gcc + libgccjit on LIBRARY_PATH at runtime
 ;; so libgccjit can locate gcc's internal helpers (crt0.o, libgcc.a, ...).
 ;; A daemonized Emacs launched via LaunchAgent or `brew services start'
