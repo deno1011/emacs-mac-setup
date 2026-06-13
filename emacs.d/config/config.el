@@ -1,43 +1,3 @@
-#+TITLE: Emacs Configuration
-#+STARTUP: overview
-
-Loaded by: [[file:~/.emacs.d/init.el][init.el]]
-Modules:   [[file:modules/][modules/]]
-
-* Orchestration
-
-This file is the entry point that =init.el= loads. It knows ONE thing:
-that modules live in [[file:modules/][modules/]] next to this file, discovered by
-listing the directory. It does not enumerate them.
-
-** Convention
-
-- =modules/NN-name.org= — module file. =NN= is a numeric prefix that
-  decides load order; smaller loads first (so =20-bootstrap.org= runs
-  ahead of everything by virtue of its prefix). Leave gaps between
-  numbers (10, 20, 30) so future modules can insert without renumbering.
-- =modules/NN-name.disabled.org= — disabled by rename. The file stays
-  on disk but the discovery loop skips it.
-- =local.org= (next to this file) — per-Mac overrides; loads LAST so it
-  can override any module. Optional and untracked.
-
-** Discovery
-
-A single sorted directory listing of [[file:modules/][modules/]] drives the load order;
-the numeric prefix on each filename does the work. =20-bootstrap.org=
-runs first because =10= sorts before =20=, not because any code here
-names it explicitly.
-
-** Byte-compile cache
-
-Each module load prefers the byte-compiled =.elc= when it is newer than
-the =.org= source — that path is just =load=, no Org parse, no tangle,
-no compile. Cost per module on a steady-state launch drops from
-~50-350 ms (Org parse + tangle + compile + load) to ~10 ms (=.elc=
-load only). When the =.org= is newer than the =.elc=, the module
-re-tangles + re-compiles itself transparently.
-
-#+begin_src elisp :tangle yes
 (defvar my/modules-dir
   (expand-file-name "modules/" my/config-dir)
   "Directory holding the literate (.org) and vendored (.el) modules
@@ -165,4 +125,3 @@ to `directory-files', skipping `.', `..', `.DS_Store', etc."
 ;; in place, and `org-agenda-files', `org-apple-reminders-sync-file',
 ;; etc. resolve to the chosen path on the FIRST launch. Nothing left
 ;; to do on `emacs-startup-hook'.
-#+end_src
