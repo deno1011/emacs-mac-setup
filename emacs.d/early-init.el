@@ -13,6 +13,29 @@
 (setq gc-cons-threshold  (* 256 1024 1024)   ; 256 MB during init
       gc-cons-percentage 0.6)
 
+;; native-comp needs the brew gcc + libgccjit on LIBRARY_PATH at runtime
+;; so libgccjit can locate gcc's internal helpers (crt0.o, libgcc.a, ...).
+;; A daemonized Emacs launched via LaunchAgent or `brew services start'
+;; does NOT inherit a shell's PATH/LIBRARY_PATH, and emacs-plus@30 does
+;; not bake the paths into the binary. Without this block, every
+;; .eln compile under ~/.emacs.d/eln-cache/ triggers
+;;   ⛔ Warning (native-compiler): libgccjit.so: error: error invoking gcc driver
+;; and the affected lisp file silently falls back to interpreted lisp.
+;;
+;; Apple Silicon brew prefix is /opt/homebrew; Intel Mac would be
+;; /usr/local. Hardcoded here to keep early-init fast (no `brew --prefix'
+;; subprocess on every Emacs start).
+(when (eq system-type 'darwin)
+  (let ((extra-lib-paths
+         (mapconcat #'identity
+                    '("/opt/homebrew/opt/gcc/lib/gcc/current"
+                      "/opt/homebrew/opt/libgccjit/lib/gcc/current")
+                    ":")))
+    (setenv "LIBRARY_PATH"
+            (if (getenv "LIBRARY_PATH")
+                (concat extra-lib-paths ":" (getenv "LIBRARY_PATH"))
+              extra-lib-paths))))
+
 ;; UTF-8 EVERYWHERE, set at the earliest possible moment. macOS's
 ;; LANG can default to a non-UTF-8 codepage in some scenarios
 ;; (LaunchAgents, brew services without a login shell, etc.), and the
