@@ -237,8 +237,14 @@ and :fix. The :label is supplied by this macro."
            (rows (mapcar
                   (lambda (d)
                     (let* ((acct (plist-get d :account))
+                           ;; Each descriptor may carry its own Keychain
+                           ;; service via :service. Default to
+                           ;; emacs_credentials. Git-crypt keys live in
+                           ;; their own service per
+                           ;; `20.02.05_bootstrap_git_crypt'.
+                           (svc  (or (plist-get d :service) "emacs_credentials"))
                            (val  (when (fboundp 'my/keychain-get)
-                                   (my/keychain-get "emacs_credentials" acct)))
+                                   (my/keychain-get svc acct)))
                            (skipped? (and (stringp val)
                                           (string= val "__SKIPPED__")))
                            (required? (not (plist-get d :allow-skip))))
