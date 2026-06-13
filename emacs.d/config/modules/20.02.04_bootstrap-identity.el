@@ -1,7 +1,8 @@
 ;;; 20.02.04_bootstrap-identity.el --- Bootstrap Layer 2 identity -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
-;;   (my/identity-ensure-loaded)        → :done / :skip / (:error MSG)
+;;   (my/identity-ensure-loaded)              → :done / :skip / (:error MSG)
+;;   (my/identity-credential-descriptors)     → list of descriptor plists
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/identity--service
@@ -140,6 +141,26 @@ absent. Both surface as concrete shell repair commands."
                  ";\n\n")))
      (done :done)
      (t :skip))))
+
+(defun my/identity-credential-descriptors ()
+  "Return descriptor plists for credentials this module owns.
+
+All three are optional from the identity step's perspective
+(it skips its sub-steps when a Keychain entry is missing or
+blank), so allow-skip = t on each. GitHubToken is also
+listed by Layer 2 repo-clone; Layer 3 dedupes by :account."
+  (list (list :account my/identity--account-fullname
+              :label "Git config user.name (display name)"
+              :secret nil
+              :allow-skip t)
+        (list :account my/identity--account-email
+              :label "Git config user.email"
+              :secret nil
+              :allow-skip t)
+        (list :account my/identity--account-token
+              :label "GitHub personal access token (for gh CLI)"
+              :secret t
+              :allow-skip t)))
 
 (provide 'my-bootstrap-identity)
 ;;; 20.02.04_bootstrap-identity.el ends here

@@ -6,6 +6,9 @@
 ;;   (my/api-key-known-names)                  → list of strings
 ;;   (my/api-key-store KEY-NAME VALUE)         → :ok / (:error MSG)
 ;;   (my/api-key-set--interactive)             → :ok / nil
+;;   (my/api-key-credential-descriptors)       → list of descriptor plists
+;;   (my/credential-store ACCT VALUE &optional ALLOW-SKIP)
+;;                                             → :ok / (:error MSG)
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/secrets--api-key-fields
@@ -168,6 +171,40 @@ the user sees confirmation in the echo area."
      (t
       (message "my/api-key-set failed for %s: %s" key (cadr result))
       nil))))
+
+(defun my/api-key-credential-descriptors ()
+  "Return descriptor plists for every API key this module manages.
+
+Each plist has the shape:
+  (:account ACCT :label LBL :secret t :allow-skip t)
+
+Consumed by Layer 3's unified `my/credential-set' form, which
+collects descriptors from every Layer-2 module."
+  (mapcar (lambda (account)
+            (list :account account
+                  :label (format "API key — %s" account)
+                  :secret t
+                  :allow-skip t))
+          my/secrets--api-key-fields))
+
+(defun my/credential-store (account value &optional allow-skip)
+  "Store VALUE in `emacs_credentials/ACCOUNT' on the Keychain.
+
+When ALLOW-SKIP is non-nil and VALUE is nil or the empty string,
+the entry is written as the `__SKIPPED__' sentinel — the
+user's explicit opt-out signal. When ALLOW-SKIP is nil and
+VALUE is empty, the call refuses with (:error \"value required\")
+without touching the Keychain.
+
+Returns :ok / (:error MSG)."
+  (cond
+   ((or (null value) (string-empty-p value))
+    (cond
+     (allow-skip
+      (my/keychain-set my/secrets--service account
+                       my/secrets--skipped-sentinel))
+     (t '(:error "value required (this credential cannot be left empty)"))))
+   (t (my/keychain-set my/secrets--service account value))))
 
 (provide 'my-bootstrap-secrets)
 ;;; 20.02.03_bootstrap-secrets.el ends here

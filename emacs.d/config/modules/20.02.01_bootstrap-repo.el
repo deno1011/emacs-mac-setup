@@ -2,6 +2,7 @@
 ;;
 ;; Public API (callable from Layer 3):
 ;;   (my/data-dir-resolve)                  → :done / :skip / (:error MSG)
+;;   (my/repo-credential-descriptors)       → list of one descriptor plist
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/data-dir-resolve--build-path        ← helper: repo-name → absolute path
@@ -74,6 +75,18 @@ command to add or rewrite the Keychain entry."
         (cond
          ((equal my/data-dir path) :skip)
          (t (setq my/data-dir path) :done)))))))
+
+(defun my/repo-credential-descriptors ()
+  "Return descriptor plists for the credentials this module owns.
+
+Returns a one-element list because the repo module only owns
+`GitHubRepo' (the user-chosen repo / data-folder name). The
+field is required: empty values are refused, no
+`__SKIPPED__' sentinel is allowed."
+  (list (list :account my/data-dir-resolve--keychain-account
+              :label "Repo / data-folder name (e.g. emacs)"
+              :secret nil
+              :allow-skip nil)))
 
 (provide 'my-bootstrap-repo)
 ;;; 20.02.01_bootstrap-repo.el ends here

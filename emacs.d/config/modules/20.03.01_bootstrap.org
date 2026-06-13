@@ -99,7 +99,8 @@ the rewrite.
 ;; Public API (callable from any feature module):
 ;;   my/data-dir                            ← defvar, string path OR :not-resolved
 ;;   (my/api-key-fetch KEY-NAME)            → string or nil
-;;   (my/api-key-set)                       ← interactive rotator (not yet wired)
+;;   (my/api-key-set)                       ← interactive: API keys only
+;;   (my/credential-set)                    ← interactive: any bootstrap credential
 ;;   (my/bootstrap)                         ← interactive orchestrator
 ;;   (my/bootstrap-ready-p)                 → t when bootstrap converged
 ;;
@@ -127,12 +128,17 @@ forms keep their warnings turned off and document the cross-file
 dependency graph.
 
 #+begin_src emacs-lisp :tangle yes
-(declare-function my/secrets-ensure-readable        "20.02.03_bootstrap-secrets")
-(declare-function my/repo-ensure-cloned             "20.02.02_bootstrap-repo-clone")
-(declare-function my/identity-ensure-loaded         "20.02.04_bootstrap-identity")
-(declare-function my/data-dir-resolve               "20.02.01_bootstrap-repo")
-(declare-function my/api-key-fetch--from-secrets    "20.02.03_bootstrap-secrets")
-(declare-function my/api-key-set--interactive       "20.02.03_bootstrap-secrets")
+(declare-function my/secrets-ensure-readable            "20.02.03_bootstrap-secrets")
+(declare-function my/repo-ensure-cloned                 "20.02.02_bootstrap-repo-clone")
+(declare-function my/identity-ensure-loaded             "20.02.04_bootstrap-identity")
+(declare-function my/data-dir-resolve                   "20.02.01_bootstrap-repo")
+(declare-function my/api-key-fetch--from-secrets        "20.02.03_bootstrap-secrets")
+(declare-function my/api-key-set--interactive           "20.02.03_bootstrap-secrets")
+(declare-function my/credential-store                   "20.02.03_bootstrap-secrets")
+(declare-function my/repo-credential-descriptors        "20.02.01_bootstrap-repo")
+(declare-function my/repo-clone-credential-descriptors  "20.02.02_bootstrap-repo-clone")
+(declare-function my/api-key-credential-descriptors     "20.02.03_bootstrap-secrets")
+(declare-function my/identity-credential-descriptors    "20.02.04_bootstrap-identity")
 #+end_src
 
 * Public variables
@@ -354,13 +360,88 @@ Layer-3 entry point. Delegates to Layer-2's
 a pending-state message when the secrets module is missing
 (skeleton / partial load state). The interactive prompt loop,
 the completion list, and the Keychain write all live in
-Layer 2."
+Layer 2.
+
+See also `my/credential-set' for the unified form that covers
+GitHub credentials in addition to API keys."
   (interactive)
   (cond
    ((fboundp 'my/api-key-set--interactive)
     (my/api-key-set--interactive))
    (t (message
        "my/api-key-set: pending — Layer-2 secrets module not loaded"))))
+
+(defun my/bootstrap--all-credential-descriptors ()
+  "Collect descriptor plists from every Layer-2 module that exposes
+its credentials, deduplicated by `:account'. Order of preference:
+repo → repo-clone → identity → secrets. The first occurrence of
+each account wins so the label closest to the owning REQ step is
+shown."
+  (let ((seen (make-hash-table :test 'equal))
+        (out '()))
+    (dolist (fn '(my/repo-credential-descriptors
+                  my/repo-clone-credential-descriptors
+                  my/identity-credential-descriptors
+                  my/api-key-credential-descriptors))
+      (when (fboundp fn)
+        (dolist (d (funcall fn))
+          (let ((acct (plist-get d :account)))
+            (unless (gethash acct seen)
+              (puthash acct t seen)
+              (push d out))))))
+    (nreverse out)))
+
+(defun my/credential-set ()
+  "Interactively set or rotate any bootstrap-managed credential.
+
+Collects descriptors from every loaded Layer-2 module
+(`my/<domain>-credential-descriptors'), presents a single
+completing-read menu over all of them, then prompts for the
+value — `read-passwd' for secrets, `read-string' otherwise.
+
+Empty input:
+  - if the descriptor's :allow-skip is t, the entry is stored
+    as the `__SKIPPED__' sentinel (opt-out)
+  - if :allow-skip is nil, the call refuses with a message
+    and no Keychain mutation
+
+After a successful store, suggests `M-x my/bootstrap' to
+re-run the orchestrator so the change takes effect on
+already-running Emacs."
+  (interactive)
+  (cond
+   ((not (fboundp 'my/credential-store))
+    (message
+     "my/credential-set: pending — Layer-2 secrets module not loaded"))
+   (t
+    (let* ((descriptors (my/bootstrap--all-credential-descriptors))
+           (by-label    (mapcar (lambda (d)
+                                  (cons (plist-get d :label) d))
+                                descriptors))
+           (label       (completing-read "Set credential: "
+                                         (mapcar #'car by-label)
+                                         nil t))
+           (descriptor  (cdr (assoc label by-label)))
+           (account     (plist-get descriptor :account))
+           (secret?     (plist-get descriptor :secret))
+           (skip?       (plist-get descriptor :allow-skip))
+           (hint        (cond
+                         (skip? " (empty = mark __SKIPPED__)")
+                         (t     " (required)")))
+           (prompt      (format "%s%s: " label hint))
+           (value       (if secret?
+                            (read-passwd prompt)
+                          (read-string prompt)))
+           (result      (my/credential-store account value skip?)))
+      (cond
+       ((eq result :ok)
+        (message "my/credential-set: %s stored — run M-x my/bootstrap to apply"
+                 account)
+        :ok)
+       (t
+        (message "my/credential-set: %s NOT stored: %s"
+                 account (cadr result))
+        nil))))))
 #+end_src
 
 ** =my/bootstrap= — the orchestrator

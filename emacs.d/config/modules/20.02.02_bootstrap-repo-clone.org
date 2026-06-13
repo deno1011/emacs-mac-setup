@@ -35,7 +35,8 @@ keeps full control over conflict resolution.
 ;;; 20.02.02_bootstrap-repo-clone.el --- Bootstrap Layer 2 repo clone -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
-;;   (my/repo-ensure-cloned)            → :done / :skip / (:error MSG)
+;;   (my/repo-ensure-cloned)               → :done / :skip / (:error MSG)
+;;   (my/repo-clone-credential-descriptors) → list of descriptor plists
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/repo-ensure-cloned--url-matches-p
@@ -246,6 +247,29 @@ FIX: rename or remove %s manually, then run M-x my/bootstrap."
            ;; Folder missing or empty — clone
            (t
             (my/repo-ensure-cloned--do-clone user repo expected-url))))))))))
+#+end_src
+
+** =my/repo-clone-credential-descriptors= — descriptors for the unified form
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/repo-clone-credential-descriptors ()
+  "Return descriptor plists for credentials this module owns.
+
+  - GitHubUsername  REQUIRED (clone URL builder needs it)
+  - GitHubToken     optional (private repos only; allow-skip)
+
+Note: GitHubToken is also consumed by Layer 2 identity for
+`gh auth login'. Its descriptor is exposed here because the
+repo-clone step is where the token-missing failure first
+surfaces; Layer 3's unified form deduplicates by :account."
+  (list (list :account my/repo-ensure-cloned--account-user
+              :label "GitHub username (login)"
+              :secret nil
+              :allow-skip nil)
+        (list :account my/repo-ensure-cloned--account-token
+              :label "GitHub personal access token (private repos)"
+              :secret t
+              :allow-skip t)))
 #+end_src
 
 * Module footer
