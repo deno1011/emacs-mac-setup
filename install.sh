@@ -639,18 +639,31 @@ find "$EMACS_D/config/modules" -name "*.elc" -delete 2>/dev/null
 EMACS_BIN="$(brew --prefix emacs-plus@30 2>/dev/null)/bin/emacs"
 [ -x "$EMACS_BIN" ] || EMACS_BIN="$(command -v emacs)"
 if [ -x "$EMACS_BIN" ]; then
+  # Pass the elisp through a tempfile heredoc, NOT inline `--eval '…'`.
+  # The intended regex `\.el\'` (end-of-string anchor inside an Elisp
+  # string) contains a literal single quote. Bash cannot escape a
+  # single quote inside a `'…'`-delimited string, so an inline
+  # --eval ' … "\\.el\\'" … ' is parsed as a stream of fragments and
+  # the install aborts with `syntax error near unexpected token '('`.
+  # The heredoc `<<'ELISP'` is single-quoted so the body is taken
+  # verbatim with no shell substitution or quoting at all.
+  AOT_TMPEL="$(mktemp -t emacs-aot-XXXXXX).el"
+  cat > "$AOT_TMPEL" <<'ELISP'
+(progn
+  (require 'bytecomp)
+  (setq byte-compile-warnings nil)
+  (dolist (f (directory-files-recursively
+              (expand-file-name "config/modules/" user-emacs-directory)
+              "\\.el\\'"))
+    (byte-compile-file f)))
+ELISP
   "$EMACS_BIN" --batch -Q \
     -L "$EMACS_D/config/modules" \
     -L "$EMACS_D/config/modules/20_bootstrap" \
-    --eval '(progn
-              (require (quote bytecomp))
-              (setq byte-compile-warnings nil)
-              (dolist (f (directory-files-recursively
-                          (expand-file-name "config/modules/" user-emacs-directory)
-                          "\\.el\\'"))
-                (byte-compile-file f)))' 2>/dev/null && \
+    -l "$AOT_TMPEL" 2>/dev/null && \
     echo "    AOT byte-compile: done" || \
     echo "    AOT byte-compile: skipped (will compile lazily on first launch)"
+  rm -f "$AOT_TMPEL"
 else
   echo "    AOT byte-compile: skipped — emacs binary not found"
 fi
