@@ -187,24 +187,30 @@ collects descriptors from every Layer-2 module."
                   :allow-skip t))
           my/secrets--api-key-fields))
 
-(defun my/credential-store (account value &optional allow-skip)
-  "Store VALUE in `emacs_credentials/ACCOUNT' on the Keychain.
+(defun my/credential-store (account value &optional allow-skip service)
+  "Store VALUE in `SERVICE/ACCOUNT' on the Keychain.
 
-When ALLOW-SKIP is non-nil and VALUE is nil or the empty string,
-the entry is written as the `__SKIPPED__' sentinel — the
-user's explicit opt-out signal. When ALLOW-SKIP is nil and
-VALUE is empty, the call refuses with (:error \"value required\")
-without touching the Keychain.
+SERVICE defaults to `emacs_credentials' when nil. Other Layer-2
+modules that own a different Keychain service (currently
+`20.02.05_bootstrap_git_crypt' with `emacs-git-crypt-key') pass
+their own service via the descriptor's `:service' key, which
+Layer 3's `my/credential-set' forwards to this function.
+
+When ALLOW-SKIP is non-nil and VALUE is nil or empty, the entry
+is written as the `__SKIPPED__' sentinel — the user's explicit
+opt-out signal. When ALLOW-SKIP is nil and VALUE is empty, the
+call refuses with (:error \"value required\") without touching
+the Keychain.
 
 Returns :ok / (:error MSG)."
-  (cond
-   ((or (null value) (string-empty-p value))
+  (let ((svc (or service my/secrets--service)))
     (cond
-     (allow-skip
-      (my/keychain-set my/secrets--service account
-                       my/secrets--skipped-sentinel))
-     (t '(:error "value required (this credential cannot be left empty)"))))
-   (t (my/keychain-set my/secrets--service account value))))
+     ((or (null value) (string-empty-p value))
+      (cond
+       (allow-skip
+        (my/keychain-set svc account my/secrets--skipped-sentinel))
+       (t '(:error "value required (this credential cannot be left empty)"))))
+     (t (my/keychain-set svc account value)))))
 
 (provide 'my-bootstrap-secrets)
 ;;; 20.02.03_bootstrap_secrets.el ends here

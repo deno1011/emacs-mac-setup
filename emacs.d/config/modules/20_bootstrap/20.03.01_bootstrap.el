@@ -34,6 +34,8 @@
 (declare-function my/repo-clone-credential-descriptors  "20.02.02_bootstrap_repo_clone")
 (declare-function my/api-key-credential-descriptors     "20.02.03_bootstrap_secrets")
 (declare-function my/identity-credential-descriptors    "20.02.04_bootstrap_identity")
+(declare-function my/git-crypt-ensure-unlocked          "20.02.05_bootstrap_git_crypt")
+(declare-function my/git-crypt-credential-descriptors   "20.02.05_bootstrap_git_crypt")
 
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.
@@ -56,10 +58,11 @@ to t the moment a required step fails. Read by
 modules consult.")
 
 (defvar my/bootstrap--ensure-steps
-  '(("data-folder resolution"  my/data-dir-resolve        t)
-    ("data-folder clone"       my/repo-ensure-cloned      t)
-    ("github identity"         my/identity-ensure-loaded  nil)
-    ("secrets readable"        my/secrets-ensure-readable nil))
+  '(("data-folder resolution"  my/data-dir-resolve            t)
+    ("data-folder clone"       my/repo-ensure-cloned          t)
+    ("git-crypt unlock"        my/git-crypt-ensure-unlocked   t)
+    ("github identity"         my/identity-ensure-loaded      nil)
+    ("secrets readable"        my/secrets-ensure-readable     nil))
   "Ordered list of (LABEL FUNCTION-SYMBOL REQUIRED) triples.
 LABEL is a short human-readable name for the *Warnings* buffer.
 FUNCTION-SYMBOL is a Layer-2 function expected to return
@@ -205,6 +208,7 @@ shown."
     (dolist (fn '(my/repo-credential-descriptors
                   my/repo-clone-credential-descriptors
                   my/identity-credential-descriptors
+                  my/git-crypt-credential-descriptors
                   my/api-key-credential-descriptors))
       (when (fboundp fn)
         (dolist (d (funcall fn))
@@ -246,6 +250,7 @@ already-running Emacs."
                                          nil t))
            (descriptor  (cdr (assoc label by-label)))
            (account     (plist-get descriptor :account))
+           (service     (plist-get descriptor :service))   ;; nil = default
            (secret?     (plist-get descriptor :secret))
            (skip?       (plist-get descriptor :allow-skip))
            (hint        (cond
@@ -255,7 +260,7 @@ already-running Emacs."
            (value       (if secret?
                             (read-passwd prompt)
                           (read-string prompt)))
-           (result      (my/credential-store account value skip?)))
+           (result      (my/credential-store account value skip? service)))
       (cond
        ((eq result :ok)
         (message "my/credential-set: %s stored — run M-x my/bootstrap to apply"

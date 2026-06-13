@@ -355,7 +355,10 @@ become (:status :fail :detail …) entries rather than propagating."
   (interactive)
   (let ((results (mapcar #'my/doctor--run-check
                          (reverse my/doctor--checks))))
-    (my/doctor--render results)))
+    (my/doctor--render results)
+    ;; Explicit nil return so M-x echo area shows nothing instead of
+    ;; the display-buffer's window object (`#<window 11 on *Doctor*>`).
+    nil))
 
 (defun my/doctor-rerun ()
   "Re-run the doctor in the currently displayed *Doctor* buffer."
