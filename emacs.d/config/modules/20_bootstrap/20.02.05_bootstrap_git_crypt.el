@@ -73,11 +73,14 @@ Then run M-x my/bootstrap."))
           ,(format "Repo %s uses git-crypt but no key is stored at
 Keychain %s/%s.
 
-If you have the keyfile on another machine:
+If you have the keyfile on another machine, copy it here and run:
 
-  base64 < /path/to/keyfile | tr -d '\\n' | xargs -0 -I{} \\
-    security add-generic-password \\
-      -s %s -a '%s' -w '{}'
+  security add-generic-password -U \\
+    -s %s -a '%s' \\
+    -w \"$(base64 < /path/to/keyfile | tr -d '\\n')\"
+
+Or paste the base64 string via M-x my/credential-set and pick
+the `git-crypt key for <repo>' entry.
 
 If you do NOT have the key, the encrypted files cannot be
 recovered. Cloning the repo again will not help. See the
