@@ -67,10 +67,14 @@ module are logged but do not abort the overall config load.
                                    such files run first in the
                                    discovery loop's `string<' order.
 
+  .elc newer than source         → load .elc directly (~10 ms)
+  .org with .el sibling newer    → byte-compile the .el + load
+                                   (skip tangle — saves the org-babel
+                                   parse pass when .el is already
+                                   current; ~50 ms)
   .org source                    → tangle to .el + byte-compile + load
-  .el  source (no `!' prefix)    → byte-compile + load
-  .elc current                   → load directly (~10 ms), no tangle /
-                                   compile"
+                                   (slow path, 50-350 ms)
+  .el  source (no `!' prefix)    → byte-compile + load"
   (let* ((base (file-name-sans-extension path))
          (el   (concat base ".el"))
          (elc  (concat el  "c"))
@@ -82,11 +86,22 @@ module are logged but do not abort the overall config load.
          ;; Source-load (no byte-compile, no .elc).
          (source-load?
           (load path nil 'nomessage))
-         ;; .elc current relative to whichever source file we got — load.
+         ;; Tier 1: .elc fresh against source we got — load directly.
          ((and (file-exists-p elc)
                (file-newer-than-file-p elc path))
           (load elc nil 'nomessage))
-         ;; Literate source → tangle then byte-compile then load.
+         ;; Tier 2 (literate source only): .el already exists AND is
+         ;; newer than the .org — skip the tangle pass, just byte-
+         ;; compile + load. Hits frequently right after install.sh
+         ;; rsyncs a fresh checkout (mtimes preserved from the repo,
+         ;; .el committed alongside .org, .elc not shipped) and after
+         ;; an eln-cache wipe.
+         ((and org?
+               (file-exists-p el)
+               (file-newer-than-file-p el path))
+          (byte-compile-file el)
+          (load (if (file-exists-p elc) elc el) nil 'nomessage))
+         ;; Tier 3 (literate source): tangle then byte-compile then load.
          (org?
           (require 'ob-tangle)
           (org-babel-tangle-file path el)
