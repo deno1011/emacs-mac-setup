@@ -1,24 +1,4 @@
-#+TITLE: Bootstrap Layer 1 — gh CLI primitives
-#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
-
-* Module
-:PROPERTIES:
-:header-args: :tangle yes
-:END:
-
-Layer-1 primitives for the two GitHub CLI operations the bootstrap
-identity step needs: querying authentication state and logging in
-with a stored token. Each function wraps a single =gh= subprocess
-and returns a tagged result.
-
-Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 this file
-has no business logic, no inter-Layer-1 dependencies, and no
-calls upward.
-
-* File header (mandatory per CONVENTIONS.md §3)
-
-#+begin_src emacs-lisp :tangle yes
-;;; 20.01.03_bootstrap-gh.el --- Bootstrap Layer 1 gh CLI primitives -*- lexical-binding: t -*-
+;;; 20.01.03_bootstrap_gh.el --- Bootstrap Layer 1 gh CLI primitives -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 2):
 ;;   (my/gh-auth-status)                → :ok / :not-authenticated /
@@ -30,13 +10,7 @@ calls upward.
 ;;
 ;; Depends on:
 ;;   external binary `gh' (Homebrew: `brew install gh').
-#+end_src
 
-* Public functions
-
-** =my/gh-auth-status= — query gh authentication state
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/gh-auth-status ()
   "Return the gh CLI's current authentication state.
 
@@ -68,11 +42,7 @@ success."
              (t `(:error ,(with-current-buffer buf
                             (string-trim (buffer-string)))))))
         (kill-buffer buf))))))
-#+end_src
 
-** =my/gh-auth-login-with-token= — non-interactive gh login
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/gh-auth-login-with-token (token)
   "Authenticate the gh CLI with TOKEN.
 
@@ -95,11 +65,6 @@ temp file is wiped via `unwind-protect' even on failure."
                           (string-trim (buffer-string)))))))
       (when (file-exists-p stdin-tmp) (delete-file stdin-tmp))
       (kill-buffer buf))))
-#+end_src
 
-* Module footer
-
-#+begin_src emacs-lisp :tangle yes
 (provide 'my-bootstrap-gh)
-;;; 20.01.03_bootstrap-gh.el ends here
-#+end_src
+;;; 20.01.03_bootstrap_gh.el ends here

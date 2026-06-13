@@ -77,7 +77,7 @@ LAYER 3 — Business logic (filename prefix 20.03.NN)
   abstraction is wrong — stop and discuss.
 
 **Why these specific ceilings:** the bootstrap rewrite is a
-reaction to the legacy `20-bootstrap.org` at ~4000 lines, which
+reaction to the legacy `20_bootstrap.org` at ~4000 lines, which
 silently bundled Keychain primitives, Bitwarden integration,
 git-crypt handling, GitHub identity, a form widget, the
 orchestrator, and starter-data generation. That structure produced
@@ -107,8 +107,8 @@ the load order:
 00-…  →  10-…  →  20.01.NN  →  20.02.NN  →  20.03.NN  →  30-…  →  …
 ```
 
-The bootstrap subsystem loads AFTER `00-startfirst.org` (theme,
-elpaca) and `10-tasks.el` (async-tasks framework), and BEFORE the
+The bootstrap subsystem loads AFTER `00_startfirst.org` (theme,
+elpaca) and `10_tasks.el` (async-tasks framework), and BEFORE the
 feature modules at `30-` and up. Within the bootstrap, Layer-1
 primitives load first, then Layer-2 domain operations, then the
 Layer-3 main file. Each file `provide`s its feature; consumers in
@@ -119,10 +119,10 @@ documents dependencies on top of the numeric ordering.
 in each layer emerge from the rewrite as we identify the concerns):
 
 ```
-20.01.01_bootstrap-<resource-1>.org    ← Layer 1 primitive
-20.01.02_bootstrap-<resource-2>.org    ← Layer 1 primitive
-20.02.01_bootstrap-<domain-1>.org      ← Layer 2 domain operation
-20.02.02_bootstrap-<domain-2>.org      ← Layer 2 domain operation
+20.01.01_bootstrap_<resource-1>.org    ← Layer 1 primitive
+20.01.02_bootstrap_<resource-2>.org    ← Layer 1 primitive
+20.02.01_bootstrap_<domain-1>.org      ← Layer 2 domain operation
+20.02.02_bootstrap_<domain-2>.org      ← Layer 2 domain operation
 20.03.01_bootstrap.org                 ← Layer 3 main entry
 ```
 
@@ -145,8 +145,8 @@ Emacs configuration:
 
 | Symbol | Type | Used by |
 |---|---|---|
-| `my/data-dir` | string (existing directory path) | `30-core.org`, `40-org.org`, `50-apple-reminders.org`, `60-gptel.org`, `70-wiki.org`, `80-gtd.org` (~40 call sites) |
-| `my/api-key-fetch` | function `(KEY-NAME) → string or nil` | `60-gptel.org` (6 call sites) |
+| `my/data-dir` | string (existing directory path) | `30_core.org`, `40_org.org`, `50_apple_reminders.org`, `60_gptel.org`, `70_wiki.org`, `80_gtd.org` (~40 call sites) |
+| `my/api-key-fetch` | function `(KEY-NAME) → string or nil` | `60_gptel.org` (6 call sites) |
 
 Everything else inside the bootstrap is implementation detail.
 Feature modules do NOT see, reference, or depend on:
@@ -237,16 +237,16 @@ code-style requirements from `CONVENTIONS.md` apply on top):
 
 ## 7. Legacy file
 
-During the rewrite, the old `emacs.d/config/modules/20-bootstrap.org`
-is renamed to `20-bootstrap.org.old`. The `.old` suffix removes the
+During the rewrite, the old `emacs.d/config/modules/20_bootstrap.org`
+is renamed to `20_bootstrap.org.old`. The `.old` suffix removes the
 `.org` extension that `config.org`'s discovery loop matches on, so
 the file is preserved on disk for reference (history, lookup of how
 the old form-widget worked, etc.) but never loaded into Emacs.
 
-The matching tangled output `20-bootstrap.el` is deleted at the
+The matching tangled output `20_bootstrap.el` is deleted at the
 same time. If the rewrite ever needs to be reverted (it won't, but
 in principle), the procedure is: delete the new `20.LL.SS_*` files,
-rename `20-bootstrap.org.old` back to `20-bootstrap.org`, re-tangle.
+rename `20_bootstrap.org.old` back to `20_bootstrap.org`, re-tangle.
 
 ---
 
@@ -255,7 +255,7 @@ rename `20-bootstrap.org.old` back to `20-bootstrap.org`, re-tangle.
 For the avoidance of doubt, these specific legacy patterns are
 explicitly NOT to be reintroduced:
 
-- A monolithic `20-bootstrap.org` file at >500 lines.
+- A monolithic `20_bootstrap.org` file at >500 lines.
 - A `my/-bootstrap-probe-data` plist or any equivalent shared
   mutable cache filled at startup and consumed by later steps.
 - A widget-based interactive form spanning ~500 lines for setup —

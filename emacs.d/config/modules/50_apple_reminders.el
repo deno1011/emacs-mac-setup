@@ -1,4 +1,4 @@
-;;; 50-apple-reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
+;;; 50_apple_reminders.el --- Apple Reminders bridge -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")

@@ -1,4 +1,4 @@
-;;; 20.01.01_bootstrap-keychain.el --- Bootstrap Layer 1 Keychain primitives -*- lexical-binding: t -*-
+;;; 20.01.01_bootstrap_keychain.el --- Bootstrap Layer 1 Keychain primitives -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from any Layer-2 file):
 ;;   (my/keychain-get SERVICE ACCOUNT)            → string value, or nil
@@ -59,4 +59,4 @@ command; not appropriate for high-frequency or remote use."
       (kill-buffer buf))))
 
 (provide 'my-bootstrap-keychain)
-;;; 20.01.01_bootstrap-keychain.el ends here
+;;; 20.01.01_bootstrap_keychain.el ends here

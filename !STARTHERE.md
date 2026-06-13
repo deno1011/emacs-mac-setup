@@ -50,7 +50,7 @@ The form only re-opens if something is missing.
 |---|---|---|
 | `emacs-plus@30` | `/Applications/Emacs Plus.app` | Homebrew |
 | Literate config | `~/.emacs.d/config/` | this repo (refreshed by `install.sh`) |
-| `async-tasks` framework | `~/.emacs.d/config/modules/10-tasks.el` | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) (vendored by install.sh) |
+| `async-tasks` framework | `~/.emacs.d/config/modules/10_tasks.el` | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) (vendored by install.sh) |
 | Personal data (agenda, wiki, TOUR.org) | `~/emacs-data/` (or whatever Repo name you picked) | your private GitHub repo |
 | Bitwarden master + email | macOS Keychain (`emacs_credentials` service) | Bitwarden |
 | GitHub PAT + API keys | Bitwarden item `emacs_credentials`, mirrored to Keychain | Bitwarden |
@@ -133,12 +133,12 @@ you can keep a fully custom setup that survives distro updates.
 The literate config lives in numbered modules under
 `~/.emacs.d/config/modules/`. `!00_startfirst.el` bootstraps elpaca
 (source-loaded — never byte-compiled, because elpaca's macros need to
-be defined before they're used in the same file). `00-startfirst.org`
-sets the dark theme and fullscreen. `10-tasks.el` is the
-async-tasks framework (vendored from upstream). `20-bootstrap.org`
+be defined before they're used in the same file). `00_startfirst.org`
+sets the dark theme and fullscreen. `10_tasks.el` is the
+async-tasks framework (vendored from upstream). `20_bootstrap.org`
 defines every credential primitive, the setup form, and the orchestrator
 that runs once at the end of its own load — so by the time
-`30-core.org` / `40-org.org` / etc. tangle, `my/data-dir` is final and
+`30_core.org` / `40_org.org` / etc. tangle, `my/data-dir` is final and
 all module-level paths resolve correctly.
 
 The orchestrator's job is to make every subsequent launch silent. It

@@ -1,4 +1,4 @@
-;;; 00-startfirst.el --- Earliest module: theme + frame setup -*- lexical-binding: t; -*-
+;;; 00_startfirst.el --- Earliest module: theme + frame setup -*- lexical-binding: t; -*-
 
 ;; Built-in dark theme — no install required.
 (load-theme 'modus-vivendi t)

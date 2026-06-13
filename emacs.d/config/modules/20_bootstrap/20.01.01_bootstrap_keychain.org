@@ -18,7 +18,7 @@ and stays well under the 150-line ceiling.
 * File header (mandatory per CONVENTIONS.md §3)
 
 #+begin_src emacs-lisp :tangle yes
-;;; 20.01.01_bootstrap-keychain.el --- Bootstrap Layer 1 Keychain primitives -*- lexical-binding: t -*-
+;;; 20.01.01_bootstrap_keychain.el --- Bootstrap Layer 1 Keychain primitives -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from any Layer-2 file):
 ;;   (my/keychain-get SERVICE ACCOUNT)            → string value, or nil
@@ -93,5 +93,5 @@ command; not appropriate for high-frequency or remote use."
 
 #+begin_src emacs-lisp :tangle yes
 (provide 'my-bootstrap-keychain)
-;;; 20.01.01_bootstrap-keychain.el ends here
+;;; 20.01.01_bootstrap_keychain.el ends here
 #+end_src

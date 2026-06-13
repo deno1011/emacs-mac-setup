@@ -4,7 +4,7 @@
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp
-;;; 40-org.el --- Org mode configuration -*- lexical-binding: t; -*-
+;;; 40_org.el --- Org mode configuration -*- lexical-binding: t; -*-
 
 (require 'org)
 (require 'org-agenda)

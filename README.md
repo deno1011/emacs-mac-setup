@@ -37,15 +37,15 @@ emacs-mac-setup/
         ├── config.org                # discovery loop + my/-load-module
         └── modules/
             ├── !00_startfirst.el     # source-loaded elpaca bootstrap (no byte-compile)
-            ├── 00-startfirst.org / .el   # dark theme + fullscreen
-            ├── 10-tasks.el           # async-tasks framework (vendored from deno1011/async-tasks)
-            ├── 20-bootstrap.org / .el    # credentials + form + orchestrator
-            ├── 30-core.org / .el     # base Emacs, completion, magit
-            ├── 40-org.org / .el      # org-mode, agenda, GTD, capture, LaTeX
-            ├── 50-apple-reminders.org / .el
-            ├── 60-gptel.org / .el    # gptel + gptel-agent-runtime + provider backends
-            ├── 70-wiki.org / .el     # LLM-Wiki helpers
-            └── 80-gtd.org / .el      # GTD overlay
+            ├── 00_startfirst.org / .el   # dark theme + fullscreen
+            ├── 10_tasks.el           # async-tasks framework (vendored from deno1011/async-tasks)
+            ├── 20_bootstrap.org / .el    # credentials + form + orchestrator
+            ├── 30_core.org / .el     # base Emacs, completion, magit
+            ├── 40_org.org / .el      # org-mode, agenda, GTD, capture, LaTeX
+            ├── 50_apple_reminders.org / .el
+            ├── 60_gptel.org / .el    # gptel + gptel-agent-runtime + provider backends
+            ├── 70_wiki.org / .el     # LLM-Wiki helpers
+            └── 80_gtd.org / .el      # GTD overlay
 ```
 
 Both `.org` and `.el` are tracked. The `.el` is the tangled output of
@@ -61,7 +61,7 @@ macros are already in scope.
 | Layer | Owned by | Source of truth | Sync mechanism |
 |---|---|---|---|
 | Distro code (`emacs.d/` — including the `config/` subdir that lands at `~/.emacs.d/config/`) | this repo | upstream `git` | `install.sh` → `rsync` |
-| `async-tasks` framework | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) | upstream git | `install.sh` → `curl` → `~/.emacs.d/config/modules/10-tasks.el` |
+| `async-tasks` framework | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) | upstream git | `install.sh` → `curl` → `~/.emacs.d/config/modules/10_tasks.el` |
 | Per-Mac credentials | Bitwarden + macOS Keychain | Bitwarden item `emacs_credentials` | bootstrap orchestrator syncs Keychain → BW on form save; probe rehydrates Keychain from BW when needed |
 | Per-user data (agenda, wiki) | the user's private GitHub repo | git | bootstrap clones once; `M-x my/repo-sync-now` for explicit pull |
 | Per-Mac runtime state (custom.el, eln-cache) | `~/.emacs.d/` | local | not synced |
@@ -75,9 +75,9 @@ bootstrap. It clones elpaca, builds `elpaca-use-package`, and blocks
 on `(elpaca-wait)` until both are available. Subsequent modules can
 then use `(use-package … :ensure …)` with the elpaca recipe form.
 
-`00-startfirst.org` paints the dark theme. `10-tasks.el` (vendored
+`00_startfirst.org` paints the dark theme. `10_tasks.el` (vendored
 async-tasks) installs the task framework's session marker and orphan
-cleanup. `20-bootstrap.org` defines every credential primitive, the
+cleanup. `20_bootstrap.org` defines every credential primitive, the
 setup form, the orchestrator, and the eight orchestrator steps:
 
 1. **probe-credentials** — read Keychain; if complete, skip the form
@@ -89,9 +89,9 @@ setup form, the orchestrator, and the eight orchestrator steps:
 7. **authenticate-gh** — `gh auth login` from BW token if needed
 8. **finalize** — lock BW, log summary
 
-The orchestrator runs as the last form of `20-bootstrap.el` so
-`my/data-dir` is final before `30-core` / `40-org` / etc. tangle. By
-the time `40-org.org`'s `:config` runs `(setq org-agenda-files …)`
+The orchestrator runs as the last form of `20_bootstrap.el` so
+`my/data-dir` is final before `30_core` / `40_org` / etc. tangle. By
+the time `40_org.org`'s `:config` runs `(setq org-agenda-files …)`
 relative to `my/data-dir`, the data folder is already cloned + seeded.
 
 ### Auto-update on every launch

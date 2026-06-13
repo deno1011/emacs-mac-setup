@@ -11,7 +11,7 @@ The actual GTD configuration lives in =~/emacs/data/org/gtd-config.el=
 if the file exists it loads, otherwise it no-ops cleanly.
 
 #+begin_src emacs-lisp :tangle yes
-;;; 80-gtd.el --- GTD overlay loader -*- lexical-binding: t; -*-
+;;; 80_gtd.el --- GTD overlay loader -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")

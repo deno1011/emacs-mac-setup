@@ -13,7 +13,7 @@ listing the directory. It does not enumerate them.
 ** Convention
 
 - =modules/NN-name.org= — module file. =NN= is a numeric prefix that
-  decides load order; smaller loads first (so =20-bootstrap.org= runs
+  decides load order; smaller loads first (so =20_bootstrap.org= runs
   ahead of everything by virtue of its prefix). Leave gaps between
   numbers (10, 20, 30) so future modules can insert without renumbering.
 - =modules/NN-name.disabled.org= — disabled by rename. The file stays
@@ -24,7 +24,7 @@ listing the directory. It does not enumerate them.
 ** Discovery
 
 A single sorted directory listing of [[file:modules/][modules/]] drives the load order;
-the numeric prefix on each filename does the work. =20-bootstrap.org=
+the numeric prefix on each filename does the work. =20_bootstrap.org=
 runs first because =10= sorts before =20=, not because any code here
 names it explicitly.
 
@@ -137,8 +137,8 @@ For each entry encountered:
   - anything else           → skipped (README.md, .DS_Store, etc.)
 
 Sort order across files and subdirectories means a top-level
-subdir `20_bootstrap/' loads after `10-tasks.el' and before
-`30-core.org' — the directory's name participates in the same
+subdir `20_bootstrap/' loads after `10_tasks.el' and before
+`30_core.org' — the directory's name participates in the same
 `string<' comparison as sibling files. Within the subdir, the
 same rule applies recursively.
 
@@ -171,11 +171,11 @@ to `directory-files', skipping `.', `..', `.DS_Store', etc."
 (let ((local (expand-file-name "local.org" my/config-dir)))
   (when (file-exists-p local) (my/-load-module local)))
 
-;; Bootstrap is invoked synchronously at the END of the 20-bootstrap
-;; module's own tangled block (see Step 9 of modules/20-bootstrap.org)
+;; Bootstrap is invoked synchronously at the END of the 20_bootstrap
+;; module's own tangled block (see Step 9 of modules/20_bootstrap.org)
 ;; so the form opens — and `my/data-dir' is settled, the data repo is
 ;; cloned, and starter content is generated — BEFORE the discovery
-;; loop continues on to 30-core / 40-org / 50-apple-reminders / etc.
+;; loop continues on to 30_core / 40_org / 50_apple_reminders / etc.
 ;; This way every subsequent module loads with the final `my/data-dir'
 ;; in place, and `org-agenda-files', `org-apple-reminders-sync-file',
 ;; etc. resolve to the chosen path on the FIRST launch. Nothing left

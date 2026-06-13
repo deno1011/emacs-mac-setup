@@ -1,4 +1,4 @@
-;;; 20.01.02_bootstrap-git.el --- Bootstrap Layer 1 git primitives -*- lexical-binding: t -*-
+;;; 20.01.02_bootstrap_git.el --- Bootstrap Layer 1 git primitives -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 2):
 ;;   (my/git-clone URL DEST)            → :ok or (:error STDERR-STRING)
@@ -96,4 +96,4 @@ Returns :ok on success, (:error MSG) on non-zero exit."
       (kill-buffer buf))))
 
 (provide 'my-bootstrap-git)
-;;; 20.01.02_bootstrap-git.el ends here
+;;; 20.01.02_bootstrap_git.el ends here

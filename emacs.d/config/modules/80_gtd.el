@@ -1,4 +1,4 @@
-;;; 80-gtd.el --- GTD overlay loader -*- lexical-binding: t; -*-
+;;; 80_gtd.el --- GTD overlay loader -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")

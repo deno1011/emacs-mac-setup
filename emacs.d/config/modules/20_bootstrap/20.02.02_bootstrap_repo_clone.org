@@ -32,7 +32,7 @@ keeps full control over conflict resolution.
 * File header (mandatory per CONVENTIONS.md §3)
 
 #+begin_src emacs-lisp :tangle yes
-;;; 20.02.02_bootstrap-repo-clone.el --- Bootstrap Layer 2 repo clone -*- lexical-binding: t -*-
+;;; 20.02.02_bootstrap_repo_clone.el --- Bootstrap Layer 2 repo clone -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
 ;;   (my/repo-ensure-cloned)               → :done / :skip / (:error MSG)
@@ -45,10 +45,10 @@ keeps full control over conflict resolution.
 ;;   my/repo-ensure-cloned--strip-token-from-remote
 ;;
 ;; Depends on (Layer 1):
-;;   my/keychain-get        ← 20.01.01_bootstrap-keychain
-;;   my/git-clone           ← 20.01.02_bootstrap-git
-;;   my/git-remote-url      ← 20.01.02_bootstrap-git
-;;   my/git-remote-set-url  ← 20.01.02_bootstrap-git
+;;   my/keychain-get        ← 20.01.01_bootstrap_keychain
+;;   my/git-clone           ← 20.01.02_bootstrap_git
+;;   my/git-remote-url      ← 20.01.02_bootstrap_git
+;;   my/git-remote-set-url  ← 20.01.02_bootstrap_git
 ;;
 ;; Forward-declared variables (owned by Layer 3):
 ;;   my/data-dir            ← 20.03.01_bootstrap
@@ -58,10 +58,10 @@ keeps full control over conflict resolution.
 
 #+begin_src emacs-lisp :tangle yes
 (defvar my/data-dir)
-(declare-function my/keychain-get        "20.01.01_bootstrap-keychain")
-(declare-function my/git-clone           "20.01.02_bootstrap-git")
-(declare-function my/git-remote-url      "20.01.02_bootstrap-git")
-(declare-function my/git-remote-set-url  "20.01.02_bootstrap-git")
+(declare-function my/keychain-get        "20.01.01_bootstrap_keychain")
+(declare-function my/git-clone           "20.01.02_bootstrap_git")
+(declare-function my/git-remote-url      "20.01.02_bootstrap_git")
+(declare-function my/git-remote-set-url  "20.01.02_bootstrap_git")
 #+end_src
 
 * Internal constants
@@ -276,5 +276,5 @@ surfaces; Layer 3's unified form deduplicates by :account."
 
 #+begin_src emacs-lisp :tangle yes
 (provide 'my-bootstrap-repo-clone)
-;;; 20.02.02_bootstrap-repo-clone.el ends here
+;;; 20.02.02_bootstrap_repo_clone.el ends here
 #+end_src

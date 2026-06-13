@@ -1,4 +1,4 @@
-;;; 40-org.el --- Org mode configuration -*- lexical-binding: t; -*-
+;;; 40_org.el --- Org mode configuration -*- lexical-binding: t; -*-
 
 (require 'org)
 (require 'org-agenda)

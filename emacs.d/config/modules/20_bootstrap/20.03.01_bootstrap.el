@@ -23,17 +23,17 @@
 ;;   my/data-dir-resolve             ← 20.02.NN_bootstrap-repo
 ;;   my/api-key-fetch--from-secrets  ← 20.02.NN_bootstrap-secrets
 
-(declare-function my/secrets-ensure-readable            "20.02.03_bootstrap-secrets")
-(declare-function my/repo-ensure-cloned                 "20.02.02_bootstrap-repo-clone")
-(declare-function my/identity-ensure-loaded             "20.02.04_bootstrap-identity")
-(declare-function my/data-dir-resolve                   "20.02.01_bootstrap-repo")
-(declare-function my/api-key-fetch--from-secrets        "20.02.03_bootstrap-secrets")
-(declare-function my/api-key-set--interactive           "20.02.03_bootstrap-secrets")
-(declare-function my/credential-store                   "20.02.03_bootstrap-secrets")
-(declare-function my/repo-credential-descriptors        "20.02.01_bootstrap-repo")
-(declare-function my/repo-clone-credential-descriptors  "20.02.02_bootstrap-repo-clone")
-(declare-function my/api-key-credential-descriptors     "20.02.03_bootstrap-secrets")
-(declare-function my/identity-credential-descriptors    "20.02.04_bootstrap-identity")
+(declare-function my/secrets-ensure-readable            "20.02.03_bootstrap_secrets")
+(declare-function my/repo-ensure-cloned                 "20.02.02_bootstrap_repo_clone")
+(declare-function my/identity-ensure-loaded             "20.02.04_bootstrap_identity")
+(declare-function my/data-dir-resolve                   "20.02.01_bootstrap_repo")
+(declare-function my/api-key-fetch--from-secrets        "20.02.03_bootstrap_secrets")
+(declare-function my/api-key-set--interactive           "20.02.03_bootstrap_secrets")
+(declare-function my/credential-store                   "20.02.03_bootstrap_secrets")
+(declare-function my/repo-credential-descriptors        "20.02.01_bootstrap_repo")
+(declare-function my/repo-clone-credential-descriptors  "20.02.02_bootstrap_repo_clone")
+(declare-function my/api-key-credential-descriptors     "20.02.03_bootstrap_secrets")
+(declare-function my/identity-credential-descriptors    "20.02.04_bootstrap_identity")
 
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.

@@ -240,7 +240,7 @@ if [ -d "$SRC_DIR/.git" ]; then
   # Use `merge --ff-only origin/$BRANCH' rather than
   # `pull --ff-only origin $BRANCH'. The pull form does an *implicit*
   # second fetch on top of the explicit one above, and when the
-  # background bootstrap-distro-update task (see 20-bootstrap.org)
+  # background bootstrap-distro-update task (see 20_bootstrap.org)
   # races against this install run, the second fetch can leave
   # FETCH_HEAD with multiple "for-merge" entries — at which point
   # git aborts with `fatal: Cannot fast-forward to multiple branches.'
@@ -353,7 +353,7 @@ echo "==> Wrote $EMACS_D/distro-source.el (branch=$BRANCH)"
 # added a renaming step with no benefit.
 #
 # Policy matches `my/bootstrap-ensure-seed-config-files' in
-# emacs.d/config/modules/20-bootstrap.org: distro-tracked files
+# emacs.d/config/modules/20_bootstrap.org: distro-tracked files
 # are OVERWRITTEN on every install so fixes flow through.
 #
 # Users who want to FREEZE local config from distro updates (e.g.
@@ -402,10 +402,10 @@ fi
 # 6c. Vendor async-tasks from upstream into the modules directory ----------
 #
 # `async-tasks` is the standalone task framework formerly shipped inline as
-# 10-tasks.org. Source of truth is the public repo at
+# 10_tasks.org. Source of truth is the public repo at
 # https://github.com/deno1011/async-tasks; we fetch the latest tagged copy
 # (or main HEAD when no tag is pinned) and drop it as
-# `~/.emacs.d/config/modules/10-tasks.el` so it loads inline at module-load
+# `~/.emacs.d/config/modules/10_tasks.el` so it loads inline at module-load
 # time. No elpaca queue, no `(elpaca-wait)` cost on launch — and other
 # Emacs users can still install the same package independently from MELPA.
 #
@@ -414,12 +414,12 @@ fi
 ASYNC_TASKS_REPO="${EMACS_MAC_ASYNC_TASKS_REPO:-deno1011/async-tasks}"
 ASYNC_TASKS_TAG="${EMACS_MAC_ASYNC_TASKS_TAG:-main}"
 ASYNC_TASKS_URL="https://raw.githubusercontent.com/$ASYNC_TASKS_REPO/$ASYNC_TASKS_TAG/async-tasks.el"
-ASYNC_TASKS_DST="$CONFIG_DIR/modules/10-tasks.el"
-# Pre-2026 distro versions shipped this module inline as 10-tasks.org.
+ASYNC_TASKS_DST="$CONFIG_DIR/modules/10_tasks.el"
+# Pre-2026 distro versions shipped this module inline as 10_tasks.org.
 # If the user is upgrading from one of those, the .org would shadow our
 # freshly-vendored .el (the discovery loop prefers .org siblings). Wipe
 # both stale outputs before fetching.
-rm -f "$CONFIG_DIR/modules/10-tasks.org" "$CONFIG_DIR/modules/10-tasks.elc"
+rm -f "$CONFIG_DIR/modules/10_tasks.org" "$CONFIG_DIR/modules/10_tasks.elc"
 echo "==> Fetching async-tasks from $ASYNC_TASKS_REPO@$ASYNC_TASKS_TAG …"
 # Fetch into a tmp file; only promote to the real location after we have
 # validated that the bytes actually look like async-tasks.el. curl with
@@ -464,7 +464,7 @@ if [ "$ASYNC_TASKS_OK" -eq 0 ]; then
     echo "         after restoring network connectivity to refresh." >&2
   else
     # No fallback. Refusing to continue is the only honest choice — without
-    # this file the bootstrap dep gate at the end of 20-bootstrap.el will
+    # this file the bootstrap dep gate at the end of 20_bootstrap.el will
     # skip the orchestrator, my/data-dir stays unset, and the next launch
     # crashes a third-party package that reads my/data-dir at load time
     # (gptel-agent-runtime hit exactly this; the symptom is a backtrace
@@ -593,7 +593,7 @@ echo "  Secrets:     $SRC_DIR/emacs.d/secrets.el   (per-Mac, not in git)"
 echo ""
 echo "  First launch (init.el) loads $CONFIG_DIR/config.org, which"
 echo "  discovers and runs the modules in numeric order. The first module"
-echo "  (20-bootstrap.org) does:"
+echo "  (20_bootstrap.org) does:"
 echo "    1. Ask whether to use Bitwarden for secrets (recommended)"
 echo "    2. If yes — prompt for email + master, cache to macOS Keychain"
 echo "    3. Read or create the emacs_credentials Bitwarden item"

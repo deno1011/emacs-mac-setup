@@ -75,7 +75,7 @@ One concern per file. The numeric filename prefix decides load order
 
 | Signal | Why it's not enough |
 |---|---|
-| File is "long" (1000+ lines) | Length alone is fine. `40-org.org` is long because Org-mode has many integration points; splitting would scatter related configuration across files. |
+| File is "long" (1000+ lines) | Length alone is fine. `40_org.org` is long because Org-mode has many integration points; splitting would scatter related configuration across files. |
 | Single Aesthetic preference | The cost of a split is real (cross-file dependencies, two files to find things in). Splits need a reason. |
 
 The bar to introduce internal layering inside a single file is high:
@@ -135,8 +135,8 @@ Example at the top of a file that uses another module's public API
 exist in the repo):
 
 ```elisp
-(declare-function my/keychain-get "20.01.01_bootstrap-keychain")
-(declare-function my/keychain-set "20.01.01_bootstrap-keychain")
+(declare-function my/keychain-get "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-set "20.01.01_bootstrap_keychain")
 ```
 
 **Calling a `--`-prefixed symbol from another file is forbidden.**

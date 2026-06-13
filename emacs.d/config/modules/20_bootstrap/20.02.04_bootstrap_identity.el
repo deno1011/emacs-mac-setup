@@ -1,4 +1,4 @@
-;;; 20.02.04_bootstrap-identity.el --- Bootstrap Layer 2 identity -*- lexical-binding: t -*-
+;;; 20.02.04_bootstrap_identity.el --- Bootstrap Layer 2 identity -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
 ;;   (my/identity-ensure-loaded)              → :done / :skip / (:error MSG)
@@ -13,17 +13,17 @@
 ;;   my/identity--ensure-gh-auth
 ;;
 ;; Depends on (Layer 1):
-;;   my/keychain-get              ← 20.01.01_bootstrap-keychain
-;;   my/git-config-get            ← 20.01.02_bootstrap-git
-;;   my/git-config-set            ← 20.01.02_bootstrap-git
-;;   my/gh-auth-status            ← 20.01.03_bootstrap-gh
-;;   my/gh-auth-login-with-token  ← 20.01.03_bootstrap-gh
+;;   my/keychain-get              ← 20.01.01_bootstrap_keychain
+;;   my/git-config-get            ← 20.01.02_bootstrap_git
+;;   my/git-config-set            ← 20.01.02_bootstrap_git
+;;   my/gh-auth-status            ← 20.01.03_bootstrap_gh
+;;   my/gh-auth-login-with-token  ← 20.01.03_bootstrap_gh
 
-(declare-function my/keychain-get             "20.01.01_bootstrap-keychain")
-(declare-function my/git-config-get           "20.01.02_bootstrap-git")
-(declare-function my/git-config-set           "20.01.02_bootstrap-git")
-(declare-function my/gh-auth-status           "20.01.03_bootstrap-gh")
-(declare-function my/gh-auth-login-with-token "20.01.03_bootstrap-gh")
+(declare-function my/keychain-get             "20.01.01_bootstrap_keychain")
+(declare-function my/git-config-get           "20.01.02_bootstrap_git")
+(declare-function my/git-config-set           "20.01.02_bootstrap_git")
+(declare-function my/gh-auth-status           "20.01.03_bootstrap_gh")
+(declare-function my/gh-auth-login-with-token "20.01.03_bootstrap_gh")
 
 (defconst my/identity--service "emacs_credentials"
   "macOS Keychain service for bootstrap credentials.")
@@ -163,4 +163,4 @@ listed by Layer 2 repo-clone; Layer 3 dedupes by :account."
               :allow-skip t)))
 
 (provide 'my-bootstrap-identity)
-;;; 20.02.04_bootstrap-identity.el ends here
+;;; 20.02.04_bootstrap_identity.el ends here

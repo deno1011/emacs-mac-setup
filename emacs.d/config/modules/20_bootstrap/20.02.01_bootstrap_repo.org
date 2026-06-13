@@ -1,4 +1,32 @@
-;;; 20.02.01_bootstrap-repo.el --- Bootstrap Layer 2 repo / data-dir -*- lexical-binding: t -*-
+#+TITLE: Bootstrap Layer 2 — Data folder / repo domain operations
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+* Module
+:PROPERTIES:
+:header-args: :tangle yes
+:END:
+
+Layer-2 domain operations around the user's data folder
+(=my/data-dir=): resolving the path from cached credentials,
+and (in a later iteration) ensuring the repo is actually
+cloned to disk.
+
+This file calls down into Layer 1 only (currently
+=20.01.01_bootstrap_keychain= for =my/keychain-get=). It does
+not perform git operations directly — those will land in a
+Layer-1 git-primitives file and a follow-up Layer-2
+=my/repo-ensure-cloned=.
+
+Per [[file:../../../../BOOTSTRAP.md][BOOTSTRAP.md]] §2 Layer-2
+returns =:done= / =:skip= / =(:error MSG)=. It MAY mutate the
+state it is responsible for ensuring (here:
+=my/data-dir=); it does NOT mutate state owned by other
+Layer-2 modules.
+
+* File header (mandatory per CONVENTIONS.md §3)
+
+#+begin_src emacs-lisp :tangle yes
+;;; 20.02.01_bootstrap_repo.el --- Bootstrap Layer 2 repo / data-dir -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
 ;;   (my/data-dir-resolve)                  → :done / :skip / (:error MSG)
@@ -8,26 +36,51 @@
 ;;   my/data-dir-resolve--build-path        ← helper: repo-name → absolute path
 ;;
 ;; Depends on (Layer 1):
-;;   my/keychain-get                        ← 20.01.01_bootstrap-keychain
+;;   my/keychain-get                        ← 20.01.01_bootstrap_keychain
 ;;
 ;; Forward-declared variables (owned by Layer 3):
 ;;   my/data-dir                            ← 20.03.01_bootstrap
+#+end_src
 
+* Forward declarations
+
+#+begin_src emacs-lisp :tangle yes
 (defvar my/data-dir)
-(declare-function my/keychain-get "20.01.01_bootstrap-keychain")
+(declare-function my/keychain-get "20.01.01_bootstrap_keychain")
+#+end_src
 
+* Internal constants
+
+The Keychain coordinates are spelled out here once so the
+repair-instruction strings inside =my/data-dir-resolve= cannot
+drift from the actual lookup. If the schema ever changes, update
+both constants in lock-step.
+
+#+begin_src emacs-lisp :tangle yes
 (defconst my/data-dir-resolve--keychain-service "emacs_credentials"
   "macOS Keychain service name for bootstrap credentials.")
 
 (defconst my/data-dir-resolve--keychain-account "GitHubRepo"
   "macOS Keychain account name holding the data-folder repo name.")
+#+end_src
 
+* Internal helpers
+
+** =my/data-dir-resolve--build-path=
+
+#+begin_src emacs-lisp :tangle yes
 (defun my/data-dir-resolve--build-path (repo)
   "Return the absolute data-folder path for REPO (the user-chosen
 repo name like \"emacs\"). The folder lives directly under the
 user's home directory."
   (file-name-as-directory (expand-file-name repo "~/")))
+#+end_src
 
+* Public functions
+
+** =my/data-dir-resolve= — resolve =my/data-dir= from Keychain
+
+#+begin_src emacs-lisp :tangle yes
 (defun my/data-dir-resolve ()
   "Resolve `my/data-dir' from the macOS Keychain.
 
@@ -75,7 +128,11 @@ command to add or rewrite the Keychain entry."
         (cond
          ((equal my/data-dir path) :skip)
          (t (setq my/data-dir path) :done)))))))
+#+end_src
 
+** =my/repo-credential-descriptors= — descriptors for the unified form
+
+#+begin_src emacs-lisp :tangle yes
 (defun my/repo-credential-descriptors ()
   "Return descriptor plists for the credentials this module owns.
 
@@ -87,6 +144,11 @@ field is required: empty values are refused, no
               :label "Repo / data-folder name (e.g. emacs)"
               :secret nil
               :allow-skip nil)))
+#+end_src
 
+* Module footer
+
+#+begin_src emacs-lisp :tangle yes
 (provide 'my-bootstrap-repo)
-;;; 20.02.01_bootstrap-repo.el ends here
+;;; 20.02.01_bootstrap_repo.el ends here
+#+end_src

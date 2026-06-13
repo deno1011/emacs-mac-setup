@@ -1,43 +1,4 @@
-#+TITLE: Bootstrap Layer 2 — secrets (API keys) domain operations
-#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
-
-* Module
-:PROPERTIES:
-:header-args: :tangle yes
-:END:
-
-Layer-2 domain operations for the API-key secrets used by gptel
-and other LLM-facing feature modules. Single source of truth is
-the macOS Keychain (service =emacs_credentials=). No Bitwarden,
-no env-var fallback, no on-demand fetch — per BOOTSTRAP.md §5.3.
-
-Two public functions:
-
-  - =my/api-key-fetch--from-secrets= is the Layer-2 implementation
-    that Layer 3's =my/api-key-fetch= facade delegates to.
-  - =my/secrets-ensure-readable= is orchestrator step #4
-    (OPT): reports which API keys are missing entirely, without
-    halting the bootstrap.
-
-** The =__SKIPPED__= sentinel
-
-The user can mark an API key as permanently opted-out by setting
-its Keychain entry to the literal string =__SKIPPED__=. The
-sentinel value carries two semantics:
-
-  - To =my/api-key-fetch--from-secrets= it is "no key" — the
-    function returns nil, the same as a missing entry, so
-    gptel reports "no backend configured" without retrying.
-  - To =my/secrets-ensure-readable= it counts as "configured" —
-    the user made an explicit decision, no warning is emitted.
-
-This separation lets users actively opt out of e.g. OpenAI
-without the bootstrap step nagging them on every launch.
-
-* File header (mandatory per CONVENTIONS.md §3)
-
-#+begin_src emacs-lisp :tangle yes
-;;; 20.02.03_bootstrap-secrets.el --- Bootstrap Layer 2 secrets -*- lexical-binding: t -*-
+;;; 20.02.03_bootstrap_secrets.el --- Bootstrap Layer 2 secrets -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 3):
 ;;   (my/api-key-fetch--from-secrets KEY-NAME) → string or nil
@@ -56,23 +17,12 @@ without the bootstrap step nagging them on every launch.
 ;;   my/secrets--missing-keys
 ;;
 ;; Depends on (Layer 1):
-;;   my/keychain-get                    ← 20.01.01_bootstrap-keychain
-;;   my/keychain-set                    ← 20.01.01_bootstrap-keychain
-#+end_src
+;;   my/keychain-get                    ← 20.01.01_bootstrap_keychain
+;;   my/keychain-set                    ← 20.01.01_bootstrap_keychain
 
-* Forward declarations
+(declare-function my/keychain-get "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-set "20.01.01_bootstrap_keychain")
 
-#+begin_src emacs-lisp :tangle yes
-(declare-function my/keychain-get "20.01.01_bootstrap-keychain")
-(declare-function my/keychain-set "20.01.01_bootstrap-keychain")
-#+end_src
-
-* Internal constants
-
-The list of API-key Keychain accounts the secrets step inspects.
-Add a new entry here when a new LLM backend lands in gptel.
-
-#+begin_src emacs-lisp :tangle yes
 (defconst my/secrets--service "emacs_credentials"
   "macOS Keychain service holding all bootstrap-relevant secrets.")
 
@@ -89,13 +39,7 @@ Treated as `no key' by `my/api-key-fetch--from-secrets' and as
   "Keychain accounts each holding one LLM backend's API key.
 Read by `my/secrets-ensure-readable' for the status check.
 Add an entry here when a new gptel backend is wired up.")
-#+end_src
 
-* Internal helpers
-
-** =my/secrets--missing-keys=
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/secrets--missing-keys ()
   "Return the list of `my/secrets--api-key-fields' entries that
 have NO Keychain record at all (neither a real value nor the
@@ -105,13 +49,7 @@ an explicit decision for every supported backend."
    (lambda (key)
      (null (my/keychain-get my/secrets--service key)))
    my/secrets--api-key-fields))
-#+end_src
 
-* Public functions
-
-** =my/api-key-fetch--from-secrets= — Layer-3 facade delegate
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/api-key-fetch--from-secrets (key-name)
   "Return the active API key value for KEY-NAME, or nil.
 
@@ -132,11 +70,7 @@ of whether Layer 2 has loaded yet."
      ((null value) nil)
      ((string= value my/secrets--skipped-sentinel) nil)
      (t value))))
-#+end_src
 
-** =my/secrets-ensure-readable= — orchestrator step #4 (OPT)
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/secrets-ensure-readable ()
   "Verify every API-key field is either set or explicitly skipped.
 
@@ -178,11 +112,7 @@ OR mark it permanently skipped (gptel will report \
                  my/secrets--service
                  my/secrets--service
                  my/secrets--skipped-sentinel))))))
-#+end_src
 
-** =my/api-key-known-names= — list of supported backend keys
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/api-key-known-names ()
   "Return the supported API-key Keychain accounts as a list of
 strings (e.g. \"OPENAI_API_KEY\", \"ANTHROPIC_API_KEY\", …).
@@ -192,11 +122,7 @@ completing-read so the user can only type a key name the
 secrets module knows about. Returns a fresh copy so callers
 can mutate it without affecting the constant."
   (copy-sequence my/secrets--api-key-fields))
-#+end_src
 
-** =my/api-key-store= — write or rotate one API key
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/api-key-store (key-name value)
   "Set Keychain entry for KEY-NAME to VALUE.
 
@@ -215,11 +141,7 @@ the interactive entry point does via completing-read."
            my/secrets--skipped-sentinel)
           (t value))))
     (my/keychain-set my/secrets--service key-name normalized)))
-#+end_src
 
-** =my/api-key-set--interactive= — prompt-driven rotator form
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/api-key-set--interactive ()
   "Interactive form to set or rotate one API key.
 
@@ -249,11 +171,7 @@ the user sees confirmation in the echo area."
      (t
       (message "my/api-key-set failed for %s: %s" key (cadr result))
       nil))))
-#+end_src
 
-** =my/api-key-credential-descriptors= — descriptor list for the form
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/api-key-credential-descriptors ()
   "Return descriptor plists for every API key this module manages.
 
@@ -268,16 +186,7 @@ collects descriptors from every Layer-2 module."
                   :secret t
                   :allow-skip t))
           my/secrets--api-key-fields))
-#+end_src
 
-** =my/credential-store= — generic credential write
-
-Shared by Layer 3's unified credential form. Lives here because
-this module already owns the =__SKIPPED__= sentinel concept;
-other Layer-2 modules expose descriptors only and route writes
-through this function.
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/credential-store (account value &optional allow-skip)
   "Store VALUE in `emacs_credentials/ACCOUNT' on the Keychain.
 
@@ -296,11 +205,6 @@ Returns :ok / (:error MSG)."
                        my/secrets--skipped-sentinel))
      (t '(:error "value required (this credential cannot be left empty)"))))
    (t (my/keychain-set my/secrets--service account value))))
-#+end_src
 
-* Module footer
-
-#+begin_src emacs-lisp :tangle yes
 (provide 'my-bootstrap-secrets)
-;;; 20.02.03_bootstrap-secrets.el ends here
-#+end_src
+;;; 20.02.03_bootstrap_secrets.el ends here
