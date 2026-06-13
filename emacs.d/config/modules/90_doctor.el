@@ -103,6 +103,34 @@ and :fix. The :label is supplied by this macro."
               :detail (format "eln-cache exists but is not writable: %s" cache)
               :fix (format "chmod -R u+w %s" cache))))))
 
+(my/doctor-define-check "module .elc files consistent with .el"
+  ;; mtime-based: every .elc under modules/ should be at-or-after its
+  ;; sibling .el. When the .el is newer than .elc, the loader's
+  ;; tier-1 path is still safe (the new tier-1 check requires .elc
+  ;; newer than BOTH .org and .el), but the stale .elc means each
+  ;; next launch pays a re-compile cost. Flagging it here lets the
+  ;; user clean up proactively.
+  (let* ((dir (expand-file-name "config/modules/" user-emacs-directory))
+         (els (and (file-directory-p dir)
+                   (directory-files-recursively dir "\\.el\\'")))
+         (stale '()))
+    (dolist (el els)
+      (let ((elc (concat el "c")))
+        (when (and (file-exists-p elc)
+                   (file-newer-than-file-p el elc))
+          (push (file-relative-name el dir) stale))))
+    (cond
+     ((null els)
+      (list :status :warn :detail "no .el files found under modules/"))
+     ((null stale)
+      (list :status :ok :detail (format "%d .el ≥ .elc" (length els))))
+     (t (list :status :warn
+              :detail (format "%d stale .elc found: %s"
+                              (length stale)
+                              (mapconcat #'identity (cl-subseq stale 0 (min 3 (length stale))) ", "))
+              :fix (concat "find " dir " -name '*.elc' -delete  "
+                           "&& restart Emacs (the loader will recompile fresh)"))))))
+
 (my/doctor-define-check "Bootstrap converged (my/bootstrap-ready-p)"
   (cond
    ((not (fboundp 'my/bootstrap-ready-p))

@@ -86,9 +86,18 @@ module are logged but do not abort the overall config load.
          ;; Source-load (no byte-compile, no .elc).
          (source-load?
           (load path nil 'nomessage))
-         ;; Tier 1: .elc fresh against source we got — load directly.
+         ;; Tier 1: .elc fresh against EVERY source it could have been
+         ;; built from. For a literate `.org' file the loader receives,
+         ;; the `.elc' was actually byte-compiled from the tangled
+         ;; `.el' — so a fresh `.el' that hasn't been re-compiled to
+         ;; `.elc' would silently load STALE bytecode under a naive
+         ;; `elc > org' check. Require `.elc' to be newer than BOTH
+         ;; inputs.
          ((and (file-exists-p elc)
-               (file-newer-than-file-p elc path))
+               (file-newer-than-file-p elc path)
+               (or (not org?)
+                   (not (file-exists-p el))
+                   (file-newer-than-file-p elc el)))
           (load elc nil 'nomessage))
          ;; Tier 2 (literate source only): .el already exists AND is
          ;; newer than the .org — skip the tangle pass, just byte-

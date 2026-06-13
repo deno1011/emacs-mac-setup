@@ -27,10 +27,14 @@ module are logged but do not abort the overall config load.
                                    such files run first in the
                                    discovery loop's `string<' order.
 
+  .elc newer than source         → load .elc directly (~10 ms)
+  .org with .el sibling newer    → byte-compile the .el + load
+                                   (skip tangle — saves the org-babel
+                                   parse pass when .el is already
+                                   current; ~50 ms)
   .org source                    → tangle to .el + byte-compile + load
-  .el  source (no `!' prefix)    → byte-compile + load
-  .elc current                   → load directly (~10 ms), no tangle /
-                                   compile"
+                                   (slow path, 50-350 ms)
+  .el  source (no `!' prefix)    → byte-compile + load"
   (let* ((base (file-name-sans-extension path))
          (el   (concat base ".el"))
          (elc  (concat el  "c"))
@@ -42,11 +46,31 @@ module are logged but do not abort the overall config load.
          ;; Source-load (no byte-compile, no .elc).
          (source-load?
           (load path nil 'nomessage))
-         ;; .elc current relative to whichever source file we got — load.
+         ;; Tier 1: .elc fresh against EVERY source it could have been
+         ;; built from. For a literate `.org' file the loader receives,
+         ;; the `.elc' was actually byte-compiled from the tangled
+         ;; `.el' — so a fresh `.el' that hasn't been re-compiled to
+         ;; `.elc' would silently load STALE bytecode under a naive
+         ;; `elc > org' check. Require `.elc' to be newer than BOTH
+         ;; inputs.
          ((and (file-exists-p elc)
-               (file-newer-than-file-p elc path))
+               (file-newer-than-file-p elc path)
+               (or (not org?)
+                   (not (file-exists-p el))
+                   (file-newer-than-file-p elc el)))
           (load elc nil 'nomessage))
-         ;; Literate source → tangle then byte-compile then load.
+         ;; Tier 2 (literate source only): .el already exists AND is
+         ;; newer than the .org — skip the tangle pass, just byte-
+         ;; compile + load. Hits frequently right after install.sh
+         ;; rsyncs a fresh checkout (mtimes preserved from the repo,
+         ;; .el committed alongside .org, .elc not shipped) and after
+         ;; an eln-cache wipe.
+         ((and org?
+               (file-exists-p el)
+               (file-newer-than-file-p el path))
+          (byte-compile-file el)
+          (load (if (file-exists-p elc) elc el) nil 'nomessage))
+         ;; Tier 3 (literate source): tangle then byte-compile then load.
          (org?
           (require 'ob-tangle)
           (org-babel-tangle-file path el)
@@ -82,8 +106,8 @@ For each entry encountered:
   - anything else           → skipped (README.md, .DS_Store, etc.)
 
 Sort order across files and subdirectories means a top-level
-subdir `20_bootstrap/' loads after `10-tasks.el' and before
-`30-core.org' — the directory's name participates in the same
+subdir `20_bootstrap/' loads after `10_tasks.el' and before
+`30_core.org' — the directory's name participates in the same
 `string<' comparison as sibling files. Within the subdir, the
 same rule applies recursively.
 
@@ -116,11 +140,11 @@ to `directory-files', skipping `.', `..', `.DS_Store', etc."
 (let ((local (expand-file-name "local.org" my/config-dir)))
   (when (file-exists-p local) (my/-load-module local)))
 
-;; Bootstrap is invoked synchronously at the END of the 20-bootstrap
-;; module's own tangled block (see Step 9 of modules/20-bootstrap.org)
+;; Bootstrap is invoked synchronously at the END of the 20_bootstrap
+;; module's own tangled block (see Step 9 of modules/20_bootstrap.org)
 ;; so the form opens — and `my/data-dir' is settled, the data repo is
 ;; cloned, and starter content is generated — BEFORE the discovery
-;; loop continues on to 30-core / 40-org / 50-apple-reminders / etc.
+;; loop continues on to 30_core / 40_org / 50_apple_reminders / etc.
 ;; This way every subsequent module loads with the final `my/data-dir'
 ;; in place, and `org-agenda-files', `org-apple-reminders-sync-file',
 ;; etc. resolve to the chosen path on the FIRST launch. Nothing left

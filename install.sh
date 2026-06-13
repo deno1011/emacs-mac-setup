@@ -625,6 +625,17 @@ echo "    snapshot lines: $(wc -l < "$ENV_SNAP" | xargs)"
 # LIBRARY_PATH set by the env snapshot above). Triggering AOT native
 # would add 30-120 s to the install with diminishing returns.
 echo "==> AOT byte-compiling all modules (so first launch starts fast)"
+# Nuke every .elc under modules/ FIRST so the rebuild starts from a
+# clean slate. Without this, install.sh's mtime-based "only compile
+# when .el is newer than .elc" skip would leave stale .elc behind
+# whenever the rsync above transferred .el files with older mtimes
+# than the existing .elc (rsync preserves source mtimes; the older
+# .elc would survive even though its content is from a previous
+# distro version). The loader's tier-1 cache check would then load
+# the stale .elc on the next launch, with no error but with
+# silently-wrong code. Deleting and rebuilding is cheap and
+# guarantees correctness.
+find "$EMACS_D/config/modules" -name "*.elc" -delete 2>/dev/null
 EMACS_BIN="$(brew --prefix emacs-plus@30 2>/dev/null)/bin/emacs"
 [ -x "$EMACS_BIN" ] || EMACS_BIN="$(command -v emacs)"
 if [ -x "$EMACS_BIN" ]; then
@@ -637,9 +648,7 @@ if [ -x "$EMACS_BIN" ]; then
               (dolist (f (directory-files-recursively
                           (expand-file-name "config/modules/" user-emacs-directory)
                           "\\.el\\'"))
-                (when (or (not (file-exists-p (concat f "c")))
-                          (file-newer-than-file-p f (concat f "c")))
-                  (byte-compile-file f))))' 2>/dev/null && \
+                (byte-compile-file f)))' 2>/dev/null && \
     echo "    AOT byte-compile: done" || \
     echo "    AOT byte-compile: skipped (will compile lazily on first launch)"
 else
