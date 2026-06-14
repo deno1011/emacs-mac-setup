@@ -156,7 +156,14 @@ EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
 EMACS_BREW_ARGS="${EMACS_BREW_ARGS:---with-xwidgets}"
 EMACS_TAP="${EMACS_TAP:-d12frosted/emacs-plus}"
 
-if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
+# `brew list --formula emacs-plus@30' returns non-zero when the formula was
+# installed tap-qualified (`d12frosted/emacs-plus/emacs-plus@30') even though
+# the formula IS present — recent brew versions stopped accepting the
+# unqualified name as a match. `brew --prefix' is the authoritative check:
+# it resolves the formula regardless of how it was installed and exits 0
+# iff the formula is on disk. Avoids re-entering the install branch
+# unnecessarily, which would then trip the next bug below.
+if ! brew --prefix "$EMACS_FORMULA" >/dev/null 2>&1; then
   echo "==> Installing $EMACS_FORMULA $EMACS_BREW_ARGS (this takes ~10 minutes on first install)..."
 
   # Make the tap explicit and visible. Recent Homebrew versions (4.5+)
@@ -187,8 +194,13 @@ if ! brew list --formula "$EMACS_FORMULA" &>/dev/null; then
   # Install via the FULLY-QUALIFIED formula path so brew never has to
   # guess which tap the recipe came from. Equivalent to `brew install
   # d12frosted/emacs-plus/emacs-plus@30 --with-xwidgets'.
+  #
+  # Tolerate non-zero exit: brew 5+ returns 1 when the formula is
+  # already installed (caveats still print). Whether the install was
+  # truly successful is decided by the `brew --prefix' + Emacs.app
+  # check immediately below — that's the only signal that matters.
   # shellcheck disable=SC2086
-  brew install "${EMACS_TAP}/${EMACS_FORMULA}" $EMACS_BREW_ARGS
+  brew install "${EMACS_TAP}/${EMACS_FORMULA}" $EMACS_BREW_ARGS || true
 fi
 
 # Locate the brewed Emacs.app. This is the headless daemon binary —
