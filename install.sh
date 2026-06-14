@@ -619,6 +619,31 @@ echo "    (LaunchServices re-registered; Dock restarted to refresh Launchpad)"
 # loaded) and early-init.el reads it before any module load.
 ENV_SNAP="$EMACS_D/env-snapshot.el"
 echo "==> Writing env snapshot to $ENV_SNAP (for the daemon's early-init.el)"
+# On Darwin the install shell rarely has LIBRARY_PATH set — `brew shellenv`
+# does NOT export it, and the user's profile usually doesn't either. The
+# snapshot loop below skips empty vars, so without this seed the snapshot
+# would silently omit LIBRARY_PATH, leaving the daemon to fall back on
+# early-init.el's hardcoded paths only. Seed the brew gcc + libgccjit
+# library dirs explicitly so the snapshot is the authoritative source
+# instead of a stale-leaning safety net.
+if [ "$(uname -s)" = "Darwin" ]; then
+  GCC_LIB="/opt/homebrew/opt/gcc/lib/gcc/current"
+  GCCJIT_LIB="/opt/homebrew/opt/libgccjit/lib/gcc/current"
+  [ -d "/usr/local/opt/gcc/lib/gcc/current" ] && GCC_LIB="/usr/local/opt/gcc/lib/gcc/current"
+  [ -d "/usr/local/opt/libgccjit/lib/gcc/current" ] && GCCJIT_LIB="/usr/local/opt/libgccjit/lib/gcc/current"
+  if [ -z "${LIBRARY_PATH:-}" ]; then
+    export LIBRARY_PATH="${GCC_LIB}:${GCCJIT_LIB}"
+  else
+    case ":$LIBRARY_PATH:" in
+      *":$GCC_LIB:"*) ;;
+      *) export LIBRARY_PATH="${GCC_LIB}:${LIBRARY_PATH}";;
+    esac
+    case ":$LIBRARY_PATH:" in
+      *":$GCCJIT_LIB:"*) ;;
+      *) export LIBRARY_PATH="${GCCJIT_LIB}:${LIBRARY_PATH}";;
+    esac
+  fi
+fi
 {
   echo ";;; env-snapshot.el --- shell env captured at install time -*- lexical-binding: t -*-"
   echo ";;"
@@ -692,6 +717,28 @@ ELISP
   rm -f "$AOT_TMPEL"
 else
   echo "    AOT byte-compile: skipped — emacs binary not found"
+fi
+
+# 7b. Kick stale daemon so brew services respawns it with fresh files ------
+# Background: emacs-plus@30's LaunchAgent (~/Library/LaunchAgents/
+# homebrew.mxcl.emacs-plus@30.plist) has KeepAlive=true, so a daemon
+# started from a previous install / previous login is STILL RUNNING right
+# now — and has all the env from THAT process in memory. We just
+# overwrote early-init.el, env-snapshot.el and every .elc under
+# config/modules/. The running daemon won't notice any of that until
+# something restarts it. Without this kick, the user reinstalls, sees
+# the warnings *still* fire (because the on-disk fixes never reach the
+# in-memory daemon), and reasonably concludes "didn't we fix that?".
+#
+# A simple SIGTERM lets the daemon save its state cleanly; launchd then
+# respawns it within ~1s (KeepAlive) and the new process reads the new
+# early-init.el and the new env-snapshot.el. The final `open' below
+# connects to the fresh daemon via emacsclient.
+if pgrep -f 'emacs.*--fg-daemon' >/dev/null 2>&1; then
+  echo "==> Restarting daemon so it picks up new early-init.el + env-snapshot.el"
+  pkill -TERM -f 'emacs.*--fg-daemon' 2>/dev/null || true
+  # Give launchd KeepAlive a beat to respawn before the final `open' fires.
+  sleep 2
 fi
 
 # 8. Done ------------------------------------------------------------------
