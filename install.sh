@@ -687,6 +687,10 @@ echo "==> AOT byte-compiling all modules (so first launch starts fast)"
 # silently-wrong code. Deleting and rebuilding is cheap and
 # guarantees correctness.
 find "$EMACS_D/config/modules" -name "*.elc" -delete 2>/dev/null
+# Also nuke any stale `!`-prefixed .elc from a previous install that
+# byte-compiled them by mistake. The find above already covers them,
+# but list explicitly so a future grep makes the intent obvious.
+find "$EMACS_D/config/modules" -name '!*.elc' -delete 2>/dev/null
 EMACS_BIN="$(brew --prefix emacs-plus@30 2>/dev/null)/bin/emacs"
 [ -x "$EMACS_BIN" ] || EMACS_BIN="$(command -v emacs)"
 if [ -x "$EMACS_BIN" ]; then
@@ -699,6 +703,19 @@ if [ -x "$EMACS_BIN" ]; then
   # The heredoc `<<'ELISP'` is single-quoted so the body is taken
   # verbatim with no shell substitution or quoting at all.
   AOT_TMPEL="$(mktemp -t emacs-aot-XXXXXX).el"
+  # Skip `!`-prefixed files: those are SOURCE-LOADED bootstrap modules
+  # (`!00_startfirst.el' currently). init.el says it plainly: "the
+  # `elpaca' macro is defined and used in the same file — a pattern
+  # that breaks when byte-compiled (the macro call freezes as a
+  # function call against an unknown symbol, then funcall fails at
+  # runtime)." `my/-load-module' in config.org respects the same `!'
+  # convention by skipping byte-compile + loading the .el directly.
+  # Without this exclusion the AOT step writes `!00_startfirst.elc',
+  # the loader's tier-1 cache picks it up on next launch, elpaca
+  # silently fails to bootstrap, and every `use-package :ensure'
+  # form errors with "Cannot load <package>" — culminating in a
+  # daemon crash on `after-init' when `doom-modeline-mode' can't
+  # load doom-modeline.
   cat > "$AOT_TMPEL" <<'ELISP'
 (progn
   (require 'bytecomp)
@@ -706,7 +723,8 @@ if [ -x "$EMACS_BIN" ]; then
   (dolist (f (directory-files-recursively
               (expand-file-name "config/modules/" user-emacs-directory)
               "\\.el\\'"))
-    (byte-compile-file f)))
+    (unless (string-prefix-p "!" (file-name-nondirectory f))
+      (byte-compile-file f))))
 ELISP
   "$EMACS_BIN" --batch -Q \
     -L "$EMACS_D/config/modules" \
