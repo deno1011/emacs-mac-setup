@@ -504,6 +504,16 @@ mkdir -p "$HOME/bin"
 cat > "$HOME/bin/emacs-gui" <<'EOF'
 #!/bin/bash
 # Open an Emacs GUI frame via the daemon. Starts the daemon on demand.
+#
+# When invoked from Finder / Launchpad / Spotlight the parent process
+# is `launchd', whose default PATH is `/usr/bin:/bin:/usr/sbin:/sbin'.
+# `emacsclient' and `emacs' live under `/opt/homebrew/bin' (Apple
+# Silicon) or `/usr/local/bin' (Intel). Without an explicit PATH
+# extension here, this script silently fails with "command not found"
+# and the user sees nothing happen when they click the Dock icon.
+# Prepending both brew prefixes is harmless on either architecture.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 if ! emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
     emacs --daemon
     sleep 1
@@ -534,11 +544,25 @@ mkdir -p "$HOME/Applications"
 # of the previous one.
 [ -e "$APP_DIR" ] && rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
 cat > "$APP_DIR/Contents/MacOS/Emacs Client" <<'EOF'
 #!/bin/bash
 exec "$HOME/bin/emacs-gui" "$@"
 EOF
 chmod +x "$APP_DIR/Contents/MacOS/Emacs Client"
+# Borrow the Emacs icon from emacs-plus's own .app bundle so the
+# wrapper shows the real GNU Emacs icon in Launchpad / Dock / Cmd-Tab
+# instead of the generic gray "broken document" icon. Without this
+# step the bundle has no .icns file and macOS substitutes the
+# generic application icon, which is what the "corrupt app symbol"
+# observation reported.
+ICON_SRC="$(brew --prefix emacs-plus@30 2>/dev/null)/Emacs.app/Contents/Resources/Emacs.icns"
+if [ -f "$ICON_SRC" ]; then
+  cp "$ICON_SRC" "$APP_DIR/Contents/Resources/Emacs.icns"
+  echo "==> Copied Emacs icon from emacs-plus into the Client bundle"
+else
+  echo "==> WARNING: $ICON_SRC not found; Client.app will use generic icon"
+fi
 cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -552,6 +576,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
     <string>Emacs Client</string>
     <key>CFBundleDisplayName</key>
     <string>Emacs Client</string>
+    <key>CFBundleIconFile</key>
+    <string>Emacs</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
