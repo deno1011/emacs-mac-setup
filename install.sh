@@ -156,14 +156,17 @@ EMACS_FORMULA="${EMACS_FORMULA:-emacs-plus@30}"
 EMACS_BREW_ARGS="${EMACS_BREW_ARGS:---with-xwidgets}"
 EMACS_TAP="${EMACS_TAP:-d12frosted/emacs-plus}"
 
-# `brew list --formula emacs-plus@30' returns non-zero when the formula was
-# installed tap-qualified (`d12frosted/emacs-plus/emacs-plus@30') even though
-# the formula IS present — recent brew versions stopped accepting the
-# unqualified name as a match. `brew --prefix' is the authoritative check:
-# it resolves the formula regardless of how it was installed and exits 0
-# iff the formula is on disk. Avoids re-entering the install branch
-# unnecessarily, which would then trip the next bug below.
-if ! brew --prefix "$EMACS_FORMULA" >/dev/null 2>&1; then
+# Two unreliable checks combined into the right one:
+#   - `brew list --formula emacs-plus@30': returns non-zero for some
+#     tap-qualified installs even though the formula IS present.
+#   - `brew --prefix emacs-plus@30': returns the EXPECTED prefix path
+#     for any known formula, installed or not — so its exit code
+#     proves nothing about disk presence.
+# Disk truth = `[ -d "$(brew --prefix …)" ]'. brew --prefix gives the
+# canonical Cellar-linked path (handles tap qualification), and `-d'
+# confirms the formula was actually built and not e.g. orphaned to a
+# Cellar that `brew cleanup' wiped.
+if [ ! -d "$(brew --prefix "$EMACS_FORMULA" 2>/dev/null)" ]; then
   echo "==> Installing $EMACS_FORMULA $EMACS_BREW_ARGS (this takes ~10 minutes on first install)..."
 
   # Make the tap explicit and visible. Recent Homebrew versions (4.5+)
