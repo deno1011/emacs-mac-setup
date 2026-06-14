@@ -703,19 +703,29 @@ if [ -x "$EMACS_BIN" ]; then
   # The heredoc `<<'ELISP'` is single-quoted so the body is taken
   # verbatim with no shell substitution or quoting at all.
   AOT_TMPEL="$(mktemp -t emacs-aot-XXXXXX).el"
-  # Skip `!`-prefixed files: those are SOURCE-LOADED bootstrap modules
-  # (`!00_startfirst.el' currently). init.el says it plainly: "the
-  # `elpaca' macro is defined and used in the same file — a pattern
-  # that breaks when byte-compiled (the macro call freezes as a
-  # function call against an unknown symbol, then funcall fails at
-  # runtime)." `my/-load-module' in config.org respects the same `!'
-  # convention by skipping byte-compile + loading the .el directly.
-  # Without this exclusion the AOT step writes `!00_startfirst.elc',
-  # the loader's tier-1 cache picks it up on next launch, elpaca
-  # silently fails to bootstrap, and every `use-package :ensure'
-  # form errors with "Cannot load <package>" — culminating in a
-  # daemon crash on `after-init' when `doom-modeline-mode' can't
-  # load doom-modeline.
+  # Two exclusions, both rooted in the same constraint: the AOT step
+  # runs in `emacs -Q' and CANNOT see elpaca or any elpaca-managed
+  # package. Byte-compiling code that references those produces .elc
+  # that's broken at runtime.
+  #
+  #   1. `!`-prefixed bootstrap modules — `!00_startfirst.el' defines
+  #      AND uses the `elpaca' macro. Byte-compiling freezes the
+  #      macro call as a funcall against undefined `elpaca'. config.org's
+  #      loader source-loads these (skips byte-compile).
+  #
+  #   2. Files using `use-package' — `:ensure t' relies on
+  #      `elpaca-use-package-mode' to make use-package defer the body
+  #      until the package is built. Without elpaca-use-package on the
+  #      AOT load-path the use-package macro expands to immediate
+  #      `require' calls. On first launch (no packages built yet) every
+  #      such .elc errors "Cannot load <pkg>", and the after-init
+  #      activation of `doom-modeline-mode' takes the daemon down.
+  #
+  # Affected files (as of writing): 30_core.el, 40_org.el,
+  # 50_apple_reminders.el, 60_gptel.el. Grep'ing the file body is the
+  # robust check — survives future renames and new use-package modules.
+  # The runtime loader (`my/-load-module' in config.org) compiles
+  # these correctly on the first launch, when elpaca is fully active.
   cat > "$AOT_TMPEL" <<'ELISP'
 (progn
   (require 'bytecomp)
@@ -723,7 +733,11 @@ if [ -x "$EMACS_BIN" ]; then
   (dolist (f (directory-files-recursively
               (expand-file-name "config/modules/" user-emacs-directory)
               "\\.el\\'"))
-    (unless (string-prefix-p "!" (file-name-nondirectory f))
+    (unless (or (string-prefix-p "!" (file-name-nondirectory f))
+                (with-temp-buffer
+                  (insert-file-contents f)
+                  (goto-char (point-min))
+                  (re-search-forward "(use-package\\b" nil t)))
       (byte-compile-file f))))
 ELISP
   "$EMACS_BIN" --batch -Q \
