@@ -1,0 +1,9 @@
+#+TITLE: Inbox
+#+CATEGORY: inbox
+#+FILETAGS: :inbox:
+#+STARTUP: overview
+
+* Inbox
+Capture anything unclear here. During review, clarify each item into a
+next action, project, waiting item, calendar item, someday/maybe item,
+reference material, or trash.

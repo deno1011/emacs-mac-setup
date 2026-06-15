@@ -1,0 +1,7 @@
+#+TITLE: Calendar
+#+CATEGORY: calendar
+#+STARTUP: overview
+
+* Calendar
+Use this file for the hard landscape: appointments, deadlines, dated
+reminders, and things that truly belong on a specific day.

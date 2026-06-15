@@ -1,7 +1,218 @@
-;;; 80_gtd.el --- GTD overlay loader -*- lexical-binding: t; -*-
+;;; 80_gtd.el --- GTD defaults and personal overlay -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
+(require 'org)
+(require 'org-agenda)
+(require 'org-capture)
+(require 'org-id)
+
+(defvar org-agenda-custom-commands)
+(defvar org-agenda-files)
+(defvar org-archive-location)
+(defvar org-capture-templates)
+(defvar org-default-notes-file)
+(defvar org-enforce-todo-dependencies)
+(defvar org-heading-regexp)
+(defvar org-refile-targets)
+(defvar org-tags-exclude-from-inheritance)
+(defvar org-todo-keyword-faces)
+(defvar org-todo-keywords)
+(defvar org-todo-state-tags-triggers)
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(declare-function org-edna-mode "org-edna")
+
+(use-package org-edna
+  :ensure t
+  :defer t
+  :no-require t)
+
+(defun my/gtd--maybe-enable-org-edna ()
+  "Enable `org-edna-mode' when the package is available."
+  (when (require 'org-edna nil t)
+    (org-edna-mode 1)))
+
+(add-hook 'org-mode-hook #'my/gtd--maybe-enable-org-edna)
+
+(defun my/gtd--org-root ()
+  "Return the compact Org root for GTD files."
+  (unless (and (boundp 'my/data-dir) (stringp my/data-dir))
+    (user-error "Bootstrap is not ready; my/data-dir is unavailable"))
+  (expand-file-name "data/org/" my/data-dir))
+
+(defun my/gtd--file (name)
+  "Return compact GTD file NAME under `my/gtd--org-root'."
+  (expand-file-name name (my/gtd--org-root)))
+
+(defun my/gtd--agenda-files ()
+  "Return existing compact GTD files."
+  (cl-remove-if-not
+   #'file-exists-p
+   (mapcar #'my/gtd--file '("inbox.org" "gtd.org" "calendar.org"))))
+
+(setq org-todo-keywords
+      '((sequence "TODO(t)" "NEXT(n)" "WAITING(w@/!)" "|"
+                  "DONE(d@/!)" "CANCELLED(c@/!)")))
+
+(setq org-todo-keyword-faces
+      '(("TODO"      :foreground "red"          :weight bold)
+        ("NEXT"      :foreground "blue"         :weight bold)
+        ("WAITING"   :foreground "orange"       :weight bold)
+        ("DONE"      :foreground "forest green" :weight bold)
+        ("CANCELLED" :foreground "forest green" :weight bold)))
+
+(setq org-todo-state-tags-triggers
+      '(("CANCELLED" ("CANCELLED" . t))
+        ("WAITING"   ("WAITING" . t))
+        (done        ("WAITING") ("CANCELLED"))
+        ("TODO"      ("WAITING") ("CANCELLED"))
+        ("NEXT"      ("WAITING") ("CANCELLED"))))
+
+(dolist (tag '("crypt" "project"))
+  (cl-pushnew tag org-tags-exclude-from-inheritance :test #'string=))
+
+(setq org-enforce-todo-dependencies t)
+
+(defun my/org-local-tags ()
+  "Return local tags on the current Org heading."
+  (org-get-tags nil t))
+
+(defun my/org-project-p ()
+  "Return non-nil when the current heading is a local GTD project."
+  (member "project" (my/org-local-tags)))
+
+(defun my/org-heading-has-progress-cookie-p (title)
+  "Return non-nil when TITLE already contains a progress cookie."
+  (string-match-p "\\[[0-9]*/[0-9]*\\]\\|\\[[0-9]+%\\]" title))
+
+(defun my/org-ensure-progress-cookie ()
+  "Add a TODO progress cookie to the current heading when missing."
+  (let ((title (nth 4 (org-heading-components))))
+    (when (and title (not (my/org-heading-has-progress-cookie-p title)))
+      (org-edit-headline (concat "[/] " title)))))
+
+(defun my/org-project-has-next-p ()
+  "Return non-nil when the current project has a NEXT child action."
+  (let ((end (save-excursion (org-end-of-subtree t t)))
+        (found nil))
+    (save-excursion
+      (forward-line 1)
+      (while (and (not found)
+                  (re-search-forward org-heading-regexp end t))
+        (when (equal (org-get-todo-state) "NEXT")
+          (setq found t))))
+    found))
+
+(defun my/org-skip-non-stuck-projects ()
+  "Skip headings that are not stuck local GTD projects."
+  (if (and (my/org-project-p) (not (my/org-project-has-next-p)))
+      nil
+    (save-excursion (org-end-of-subtree t t))))
+
+(defun my/org-mark-as-project ()
+  "Mark the current heading as a compact GTD project."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "This command works in Org buffers"))
+  (unless buffer-file-name
+    (user-error "Save this Org buffer before marking projects; IDs need a file"))
+  (org-back-to-heading t)
+  (unless (org-get-todo-state)
+    (org-todo "TODO"))
+  (org-toggle-tag "project" 'on)
+  (org-entry-put (point) "COOKIE_DATA" "todo recursive")
+  (org-id-get-create)
+  (my/org-ensure-progress-cookie)
+  (org-update-parent-todo-statistics)
+  (message "Marked heading as GTD project"))
+
+(global-set-key (kbd "C-c g p") #'my/org-mark-as-project)
+
+(when (my/bootstrap-ready-p)
+  (setq org-default-notes-file (my/gtd--file "inbox.org"))
+
+  (setq org-capture-templates
+        `(("i" "Inbox" entry
+           (file+headline ,(my/gtd--file "inbox.org") "Inbox")
+           "* %?\n%U\n")
+          ("n" "Next action" entry
+           (file+headline ,(my/gtd--file "gtd.org") "Next Actions")
+           "** NEXT %? %^G\n%U\n")
+          ("p" "Project" entry
+           (file+headline ,(my/gtd--file "gtd.org") "Projects")
+           "** TODO [/] %^{Project outcome} :project:\n:PROPERTIES:\n:CATEGORY: %^{Category|project}\n:COOKIE_DATA: todo recursive\n:END:\n*** NEXT %?"
+           :empty-lines 1)
+          ("w" "Waiting" entry
+           (file+headline ,(my/gtd--file "gtd.org") "Waiting")
+           "** WAITING %? %^G\n%U\n")
+          ("s" "Someday / Maybe" entry
+           (file+headline ,(my/gtd--file "gtd.org") "Someday / Maybe")
+           "** TODO %? :someday:\n%U\n")
+          ("c" "Calendar" entry
+           (file+headline ,(my/gtd--file "calendar.org") "Calendar")
+           "** TODO %?\nSCHEDULED: %^t\n%U\n")
+          ("f" "Flight / travel" entry
+           (file+headline ,(my/gtd--file "gtd.org") "Tickler")
+           "** TODO %? :travel:flight:\n%U\n")))
+
+  (setq org-refile-targets
+        `((,(my/gtd--file "inbox.org") :maxlevel . 2)
+          (,(my/gtd--file "gtd.org") :maxlevel . 4)
+          (,(my/gtd--file "calendar.org") :maxlevel . 2)
+          (org-agenda-files :maxlevel . 4)))
+
+  (setq org-archive-location
+        (concat (my/gtd--file "archive.org") "::datetree/"))
+
+  (setq org-agenda-files
+        (cl-remove-duplicates
+         (append (my/gtd--agenda-files) org-agenda-files)
+         :test #'string=)))
+
+(defun my/gtd--without-commands (keys commands)
+  "Return COMMANDS without entries whose key is in KEYS."
+  (cl-remove-if (lambda (command)
+                  (member (car-safe command) keys))
+                commands))
+
+(setq org-agenda-custom-commands
+      (append
+       (my/gtd--without-commands
+        '("g" "r" "J" "X" "H" "C" "E" "K" "f")
+        org-agenda-custom-commands)
+       '(("g" "GTD dashboard"
+          ((agenda "" ((org-agenda-span 1)
+                       (org-deadline-warning-days 7)))
+           (todo "NEXT"
+                 ((org-agenda-overriding-header "Next actions")))
+           (todo "WAITING"
+                 ((org-agenda-overriding-header "Waiting")))
+           (tags "+inbox"
+                 ((org-agenda-overriding-header "Inbox")))))
+         ("r" "Weekly review"
+          ((agenda "" ((org-agenda-span 7)
+                       (org-agenda-start-on-weekday nil)))
+           (tags-todo "+project"
+                      ((org-agenda-overriding-header "Projects")))
+           (tags-todo "+project"
+                      ((org-agenda-overriding-header "Stuck projects")
+                       (org-agenda-skip-function 'my/org-skip-non-stuck-projects)))
+           (todo "WAITING"
+                 ((org-agenda-overriding-header "Waiting")))
+           (tags-todo "+someday"
+                      ((org-agenda-overriding-header "Someday / Maybe")))))
+         ("J" "Projects" tags-todo "+project")
+         ("X" "Stuck projects" tags-todo "+project"
+          ((org-agenda-skip-function 'my/org-skip-non-stuck-projects)))
+         ("H" "@home next actions" tags-todo "+@home/NEXT")
+         ("C" "@computer next actions" tags-todo "+@computer/NEXT")
+         ("E" "@errand next actions" tags-todo "+@errand/NEXT")
+         ("K" "@calls next actions" tags-todo "+@calls/NEXT")
+         ("f" "Flights / travel"
+          ((tags "+flight"
+                 ((org-agenda-overriding-header "Flights")))
+           (tags "+travel"
+                 ((org-agenda-overriding-header "Travel"))))))))
 
 (when (my/bootstrap-ready-p)
   (let ((gtd-config (expand-file-name "data/org/gtd-config.el" my/data-dir)))

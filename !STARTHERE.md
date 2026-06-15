@@ -37,8 +37,8 @@ Hit Save. The bootstrap orchestrator then:
 2. Writes everything else into a single Bitwarden item
    (`emacs_credentials`) so the same setup follows you to other Macs
 3. Clones (or creates) your private data repo into `~/emacs-data/`
-4. Seeds it with the example agenda, the populated LLM-wiki, and
-   `TOUR.org`
+4. Seeds missing starter Org files for the compact GTD setup:
+   `inbox.org`, `gtd.org`, `calendar.org`, and `archive.org`
 
 Next launch: nothing prompts, your data folder is already cloned, the
 agenda already finds your org files, gptel chat already has its keys.
@@ -51,7 +51,7 @@ The form only re-opens if something is missing.
 | `emacs-plus@30` | `/Applications/Emacs Plus.app` | Homebrew |
 | Literate config | `~/.emacs.d/config/` | this repo (refreshed by `install.sh`) |
 | `async-tasks` framework | `~/.emacs.d/config/modules/10_tasks.el` | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) (vendored by install.sh) |
-| Personal data (agenda, wiki, TOUR.org) | `~/emacs-data/` (or whatever Repo name you picked) | your private GitHub repo |
+| Personal data (agenda, GTD, wiki) | `~/emacs-data/` (or whatever Repo name you picked) | your private GitHub repo |
 | Bitwarden master + email | macOS Keychain (`emacs_credentials` service) | Bitwarden |
 | GitHub PAT + API keys | Bitwarden item `emacs_credentials`, mirrored to Keychain | Bitwarden |
 

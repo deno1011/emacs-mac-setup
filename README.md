@@ -37,6 +37,7 @@ emacs-mac-setup/
     └── config/
         ├── CONVENTIONS.md            # general code rules for non-bootstrap modules
         ├── config.org                # discovery loop + my/-load-module (3-tier cache)
+        ├── starter-data/org/         # first-install Org starter files
         └── modules/
             ├── !00_startfirst.el     # source-loaded elpaca bootstrap
             ├── 00_startfirst.org     # dark theme + fullscreen
@@ -50,6 +51,8 @@ emacs-mac-setup/
             │   ├── 20.02.02_bootstrap_repo_clone.org  ← Layer 2 (clone repo)
             │   ├── 20.02.03_bootstrap_secrets.org     ← Layer 2 (API keys + form)
             │   ├── 20.02.04_bootstrap_identity.org    ← Layer 2 (git config + gh auth)
+            │   ├── 20.02.05_bootstrap_git_crypt.org   ← Layer 2 (git-crypt unlock)
+            │   ├── 20.02.06_bootstrap_starter_data.org ← Layer 2 (starter Org files)
             │   └── 20.03.01_bootstrap.org             ← Layer 3 (orchestrator)
             ├── 20_bootstrap.org.old  # retired legacy monolith — kept for reference, not loaded
             ├── 30_core.org           # base Emacs, completion, magit, modeline
@@ -57,7 +60,7 @@ emacs-mac-setup/
             ├── 50_apple_reminders.org
             ├── 60_gptel.org          # LLM backends (Claude, OpenAI, Gemini, Groq, …)
             ├── 70_wiki.org           # LLM-Wiki helpers
-            ├── 80_gtd.org            # GTD overlay loader
+            ├── 80_gtd.org            # compact GTD defaults + personal overlay loader
             └── 90_doctor.org         # M-x my/doctor — health check
 ```
 
@@ -168,7 +171,7 @@ headings.
 | `50_apple_reminders.org` | Apple Reminders bidirectional sync |
 | `60_gptel.org` | LLM backends — Claude, ChatGPT, Gemini, Groq, GitHub Models, Ollama, LM Studio, MLX |
 | `70_wiki.org` | LLM-Wiki helpers (Karpathy pattern, org-roam-backed) |
-| `80_gtd.org` | Thin loader for `~/emacs/data/org/gtd-config.el` |
+| `80_gtd.org` | Compact GTD defaults, capture/templates, project views, optional `data/org/gtd-config.el` overlay |
 | `90_doctor.org` | `M-x my/doctor` — health check command |
 
 ---

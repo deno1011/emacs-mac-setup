@@ -1,0 +1,5 @@
+#+TITLE: Archive
+#+CATEGORY: archive
+#+STARTUP: overview
+
+Completed and cancelled GTD items can be archived here by Org mode.

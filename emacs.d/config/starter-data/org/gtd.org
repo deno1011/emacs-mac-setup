@@ -1,0 +1,168 @@
+#+TITLE: GTD
+#+CATEGORY: gtd
+#+STARTUP: overview
+#+TAGS: project area goal life someday reference plan idea quick focus travel flight
+#+TAGS: @home @computer @errand @calls @office @anywhere
+
+* Manual
+** The Compact File Model
+This setup keeps the GTD system small on purpose.
+
+- inbox.org: raw capture, brain dumps, and anything not clarified yet.
+- gtd.org: next actions, projects, waiting-for, someday/maybe, tickler, and reviews.
+- calendar.org: dated commitments and true deadlines.
+- archive.org: completed or cancelled items after archiving.
+
+Reference material can live outside GTD, for example in your wiki or
+notes. Only create another GTD file when it solves a real review
+problem.
+
+** Clarifying Inbox Items
+For each inbox item, ask:
+
+1. Is it actionable?
+2. If yes, is it one physical next action or a project?
+3. If it takes more than one action, make it a project.
+4. If it belongs on a date, move it to calendar.org.
+5. If someone else owns it, move it to Waiting.
+6. If it is not actionable, keep it as reference, someday/maybe, or delete it.
+
+** TODO Keywords
+Use these states:
+
+#+begin_example
+TODO       not yet ready or not yet selected as the next physical action
+NEXT       the next visible action you can do
+WAITING    delegated, blocked, or waiting for external input
+DONE       completed
+CANCELLED  intentionally dropped
+#+end_example
+
+Keep the keyword set small. Context, energy, area, person, and topic
+belong in tags or properties, not in extra TODO keywords.
+
+** Projects
+A project is any outcome that needs more than one action. Mark project
+headings with the local tag :project:. Child tasks inherit normal topic
+and context tags, but :project: itself does not inherit, so agenda
+project views stay clean.
+
+Minimal project example:
+
+#+begin_example
+** TODO [/] Renew driving license :project:admin:
+:PROPERTIES:
+:CATEGORY: license
+:COOKIE_DATA: todo recursive
+:END:
+*** NEXT Find required city-office documents :@computer:
+*** TODO Book appointment :@computer:
+*** WAITING Confirmation from city office
+#+end_example
+
+The progress cookie [/] and COOKIE_DATA property let Org show project
+progress from child task states.
+
+** Subprojects And Links
+If a task grows, turn it into a project and link it to its parent
+instead of forcing everything into one tree. Use IDs for stable links:
+
+#+begin_example
+M-x org-id-get-create
+C-c l      ;; store a link
+C-c C-l    ;; insert a link elsewhere
+#+end_example
+
+Use a normal Org link when two outcomes are related. Use org-edna
+properties only when there is a real dependency that should
+automatically unlock or block another item.
+
+Dependency sketch:
+
+#+begin_example
+:BLOCKER: ids("id:parent-project-id")
+:TRIGGER: ids("id:child-action-id") todo!(NEXT)
+#+end_example
+
+** Reviews
+Daily review:
+
+1. Empty inbox.org into the right lists.
+2. Check calendar.org for today and the next few days.
+3. Pick realistic NEXT actions.
+
+Weekly review:
+
+1. Review every project.
+2. Every active project should have at least one NEXT child action.
+3. Review Waiting and Someday / Maybe.
+4. Add or remove horizons, goals, and areas as your life changes.
+
+** Agenda Commands
+Use C-c a and then:
+
+- g: GTD dashboard
+- r: weekly review
+- J: all active projects
+- X: stuck projects without a NEXT child action
+- H: @home next actions
+- C: @computer next actions
+- E: @errand next actions
+- K: @calls next actions
+- f: flights and travel items
+
+** Examples To Copy
+Next action:
+
+#+begin_example
+** NEXT Call the city office about required license documents :@calls:
+#+end_example
+
+Waiting item:
+
+#+begin_example
+** WAITING Tax statement from accountant
+#+end_example
+
+Someday item:
+
+#+begin_example
+** TODO Learn photo editing workflow :someday:
+#+end_example
+
+Travel item:
+
+#+begin_example
+** TODO Check passport validity before Japan trip :travel:
+#+end_example
+
+Flight item:
+
+#+begin_example
+** TODO Add flight check-in reminder :flight:travel:
+#+end_example
+
+* Next Actions
+
+* Projects
+
+* Waiting
+
+* Someday / Maybe :someday:
+
+* Tickler
+
+* Horizons
+** Areas :area:
+Stable responsibilities you want to maintain, such as health, finance,
+family, work, learning, home, friends, and administration.
+
+** Goals :goal:
+Outcomes above the project level. These should explain why projects matter.
+
+** Life / Values :life:
+High-level direction, standards, identity, and long-range decisions.
+
+* Reference Links :reference:
+Put links here only when they support GTD reviews. General knowledge
+belongs in your normal notes or wiki.

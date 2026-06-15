@@ -594,14 +594,12 @@ Run after adding new directories or moving files around."
           tags-todo "-someday-idea-plan-area-goal-life-reference"))))
 
 (defun my/gtd-ensure-tree ()
-  "Create $my/data-dir/data/org/{gtd,archive}/ if missing. Doesn't touch files."
+  "Create $my/data-dir/data/org/ if missing. Does not touch files."
   (interactive)
   (let ((org-root (expand-file-name "data/org/" my/data-dir)))
-    (dolist (sub '("" "gtd" "archive"))
-      (let ((d (expand-file-name sub org-root)))
-        (unless (file-directory-p d)
-          (make-directory d t)
-          (message "gtd: created %s" d))))))
+    (unless (file-directory-p org-root)
+      (make-directory org-root t)
+      (message "gtd: created %s" org-root))))
 
 ;; Data-dir.el gate (RESTORED): on a first-launch the form (which
 ;; Only run when bootstrap has converged — otherwise `my/data-dir'

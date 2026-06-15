@@ -22,6 +22,7 @@
 ;;   my/identity-ensure-loaded       ← 20.02.NN_bootstrap-identity
 ;;   my/data-dir-resolve             ← 20.02.NN_bootstrap-repo
 ;;   my/api-key-fetch--from-secrets  ← 20.02.NN_bootstrap-secrets
+;;   my/starter-data-ensure          ← 20.02.NN_bootstrap_starter_data
 
 (declare-function my/secrets-ensure-readable            "20.02.03_bootstrap_secrets")
 (declare-function my/repo-ensure-cloned                 "20.02.02_bootstrap_repo_clone")
@@ -36,6 +37,7 @@
 (declare-function my/identity-credential-descriptors    "20.02.04_bootstrap_identity")
 (declare-function my/git-crypt-ensure-unlocked          "20.02.05_bootstrap_git_crypt")
 (declare-function my/git-crypt-credential-descriptors   "20.02.05_bootstrap_git_crypt")
+(declare-function my/starter-data-ensure                "20.02.06_bootstrap_starter_data")
 
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.
@@ -61,6 +63,7 @@ modules consult.")
   '(("data-folder resolution"  my/data-dir-resolve            t)
     ("data-folder clone"       my/repo-ensure-cloned          t)
     ("git-crypt unlock"        my/git-crypt-ensure-unlocked   t)
+    ("starter org files"       my/starter-data-ensure         t)
     ("github identity"         my/identity-ensure-loaded      nil)
     ("secrets readable"        my/secrets-ensure-readable     nil))
   "Ordered list of (LABEL FUNCTION-SYMBOL REQUIRED) triples.

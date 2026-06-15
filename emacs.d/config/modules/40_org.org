@@ -660,38 +660,27 @@ Run after adding new directories or moving files around."
 
 * GTD Starter — First-Install Bootstrap
 
-Parallel to =my/wiki-bootstrap=: ensures the GTD folder structure
-and starter files exist on a fresh install. The personal layer
-(iCloud-synced =~/emacs/data/org/=) takes priority; missing files
-are seeded from templates shipped in =mac-setup/stable/gtd-templates/=.
-Idempotent — existing files are never touched.
+The Layer-2 bootstrap now creates a compact GTD starter set directly
+inside the user's data repository when files are missing:
 
-The seeded files carry the right =#+FILETAGS:= for the tag-driven
-agenda views: =gtd/someday.org= → =:someday:=, =gtd/reference.org=
-→ =:reference:=, =gtd/waiting.org= → =:waiting:=,
-=gtd/projects.org= → =:project:=. After the bootstrap, =C-c a g=
-(GTD Dashboard) works immediately without any manual setup.
+- =data/org/inbox.org= for capture
+- =data/org/gtd.org= for the GTD system, manual, examples, projects,
+  next actions, waiting-for, someday/maybe, and review lists
+- =data/org/calendar.org= for dated commitments
+- =data/org/archive.org= for archived completed/cancelled items
 
-To skip a file or add your own: just have it present before the
-first Emacs run (e.g., via iCloud sync from another device).
-
-GTD starter files are seeded by =install.sh= from =starter-data/org/=
-on first install. If a file goes missing later, copy from
-=~/emacs-mac-setup-src/starter-data/org/= or re-run =install.sh= after
-deleting =~/emacs/= (destructive — install.sh re-seeds only when
-=~/emacs/= is absent). The runtime URL fetch is gone; this function
-just makes sure the directory tree exists.
+This Org module only keeps the directory root present at runtime. It
+does not seed or overwrite files; =my/starter-data-ensure= owns that
+idempotent first-install behavior during bootstrap.
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/gtd-ensure-tree ()
-  "Create $my/data-dir/data/org/{gtd,archive}/ if missing. Doesn't touch files."
+  "Create $my/data-dir/data/org/ if missing. Does not touch files."
   (interactive)
   (let ((org-root (expand-file-name "data/org/" my/data-dir)))
-    (dolist (sub '("" "gtd" "archive"))
-      (let ((d (expand-file-name sub org-root)))
-        (unless (file-directory-p d)
-          (make-directory d t)
-          (message "gtd: created %s" d))))))
+    (unless (file-directory-p org-root)
+      (make-directory org-root t)
+      (message "gtd: created %s" org-root))))
 
 ;; Data-dir.el gate (RESTORED): on a first-launch the form (which
 ;; Only run when bootstrap has converged — otherwise `my/data-dir'
