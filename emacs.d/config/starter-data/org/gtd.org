@@ -1,7 +1,7 @@
 #+TITLE: GTD
 #+CATEGORY: gtd
 #+STARTUP: overview
-#+TAGS: project area goal life someday reference plan idea quick focus travel flight
+#+TAGS: project area goal life someday reference plan idea quick focus travel flight blocked
 #+TAGS: @home @computer @errand @calls @office @anywhere
 
 * Manual
@@ -73,6 +73,11 @@ headings with the local tag :project:. Child tasks inherit normal topic
 and context tags, but :project: itself does not inherit, so agenda
 project views stay clean.
 
+This follows Karl Voit's Org project approach: projects stay normal TODO
+headings and are marked with :project:, a progress cookie, and recursive
+COOKIE_DATA. During migration, older TODO headings with TODO children
+are still treated as projects so old data remains visible.
+
 Minimal project example:
 
 #+begin_example
@@ -91,7 +96,8 @@ progress from child task states.
 
 Use C-c g p on a heading to mark it as a GTD project. It adds the local
 :project: tag, creates an ID, sets recursive TODO cookie data, and adds
-a progress cookie when missing.
+a progress cookie when missing. Use C-u C-c g p when you also want to
+set or change CATEGORY.
 
 Every active project should have at least one NEXT child action. If it
 does not, it appears in the stuck-project agenda view with C-c a X.
@@ -109,6 +115,15 @@ C-c C-l    ;; insert a link elsewhere
 Use a normal Org link when two outcomes are related. Use org-edna
 properties only when there is a real dependency that should
 automatically unlock or block another item.
+
+For related projects or subprojects, prefer org-super-links backlinks:
+
+#+begin_example
+C-c g s  ;; search for a heading and create a bidirectional link
+C-c g l  ;; store current heading for later super-link insertion
+C-c g i  ;; insert the stored super link here
+C-c g d  ;; delete a super link and its backlink
+#+end_example
 
 To add org-edna dependencies, first create stable IDs on the target
 headings, then edit the dependency properties on the heading that owns
@@ -161,10 +176,15 @@ Use C-c a and then:
 - r: weekly review
 - J: all active projects
 - X: stuck projects without a NEXT child action
+- B: blocked and waiting items
 - H: @home next actions
 - C: @computer next actions
 - E: @errand next actions
 - K: @calls next actions
+- A: areas
+- G: goals
+- L: life and values
+- R: higher-horizon review
 - f: flights and travel items
 
 ** Examples To Copy

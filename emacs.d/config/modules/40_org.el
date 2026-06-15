@@ -1,5 +1,6 @@
 ;;; 40_org.el --- Org mode configuration -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'org)
 (require 'org-agenda)
 (require 'org-capture)
@@ -17,11 +18,13 @@
 (defvar org-archive-mark-done)
 (defvar org-show-entry-below)
 (defvar org-agenda-repeating-timestamp-show-all)
+(defvar org-todo-keywords-1)
 (defvar org-alphabetical-lists)
 (defvar org-export-htmlize-output-type)
 (defvar org-export-allow-BIND)
 (defvar org-image-actual-size)
 (defvar org-plantuml-exec-mode)
+(defvar org-tags-exclude-from-inheritance)
 (defvar appt-time-msg-list)
 (defvar org-roam-v2-ack)
 (defvar bh/keep-clock-running nil)
@@ -225,10 +228,24 @@
 (add-hook 'org-clock-out-hook 'bh/remove-empty-drawer-on-clock-out 'append)
 
 (setq org-tag-alist '((:startgroup)
-                      ("@errand" . ?e)
-                      ("@office" . ?o)
-                      ("@home"   . ?H)
+                      ("@errand"   . ?e)
+                      ("@office"   . ?o)
+                      ("@home"     . ?H)
+                      ("@computer" . ?C)
+                      ("@calls"    . ?k)
+                      ("@anywhere" . ?y)
                       (:endgroup)
+                      ("project"   . ?p)
+                      ("area"      . ?A)
+                      ("goal"      . ?G)
+                      ("life"      . ?L)
+                      ("reference" . ?R)
+                      ("someday"   . ?s)
+                      ("idea"      . ?i)
+                      ("plan"      . ?l)
+                      ("travel"    . ?v)
+                      ("flight"    . ?f)
+                      ("blocked"   . ?b)
                       ("WAITING"   . ?w)
                       ("HOLD"      . ?h)
                       ("PERSONAL"  . ?P)
@@ -241,13 +258,21 @@
 (setq org-fast-tag-selection-single-key 'expert)
 (setq org-agenda-tags-todo-honor-ignore-options t)
 
-(defun bh/is-project-p ()
-  "Any task with a todo keyword subtask."
+(defvar my/org-project-structural-fallback t
+  "When non-nil, treat old TODO headings with TODO children as projects.
+Explicit local :project: tags remain authoritative.  The structural
+fallback keeps older Org data visible during migration.")
+
+(defun bh/heading-has-local-project-tag-p ()
+  "Return non-nil when the current heading has a local project tag."
+  (member "project" (org-get-tags nil t)))
+
+(defun bh/heading-has-todo-child-p ()
+  "Return non-nil when the current heading has a TODO-keyword child."
   (save-restriction
     (widen)
     (let ((has-subtask)
-          (subtree-end (save-excursion (org-end-of-subtree t)))
-          (is-a-task (member (nth 2 (org-heading-components)) org-todo-keywords-1)))
+          (subtree-end (save-excursion (org-end-of-subtree t))))
       (save-excursion
         (forward-line 1)
         (while (and (not has-subtask)
@@ -255,7 +280,16 @@
                     (re-search-forward "^\*+ " subtree-end t))
           (when (member (org-get-todo-state) org-todo-keywords-1)
             (setq has-subtask t))))
-      (and is-a-task has-subtask))))
+      has-subtask)))
+
+(defun bh/is-project-p ()
+  "Return non-nil when the current heading is a project.
+Prefer an explicit local :project: tag.  Fall back to the older Norang
+style of TODO heading with TODO children while data is being migrated."
+  (or (bh/heading-has-local-project-tag-p)
+      (and my/org-project-structural-fallback
+           (member (nth 2 (org-heading-components)) org-todo-keywords-1)
+           (bh/heading-has-todo-child-p))))
 
 (defun bh/is-project-subtree-p ()
   "Any task in a project subtree."
@@ -286,7 +320,7 @@
         (is-a-task (member (nth 2 (org-heading-components)) org-todo-keywords-1)))
     (save-excursion
       (while (and (not is-subproject) (org-up-heading-safe))
-        (when (member (nth 2 (org-heading-components)) org-todo-keywords-1)
+        (when (bh/is-project-p)
           (setq is-subproject t))))
     (and is-a-task is-subproject)))
 
@@ -648,7 +682,7 @@ Run after adding new directories or moving files around."
     (widen)
     (let ((parent-task (save-excursion (org-back-to-heading 'invisible-ok) (point))))
       (while (org-up-heading-safe)
-        (when (member (nth 2 (org-heading-components)) org-todo-keywords-1)
+        (when (bh/is-project-p)
           (setq parent-task (point))))
       (goto-char parent-task)
       parent-task)))
@@ -735,7 +769,8 @@ Run after adding new directories or moving files around."
 
 (require 'org-crypt)
 (org-crypt-use-before-save-magic)
-(setq org-tags-exclude-from-inheritance '("crypt"))
+(dolist (tag '("crypt" "project"))
+  (cl-pushnew tag org-tags-exclude-from-inheritance :test #'string=))
 (setq org-crypt-disable-auto-save nil)
 
 (setq org-use-speed-commands t)

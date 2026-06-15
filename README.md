@@ -223,7 +223,13 @@ instead become reference, someday/maybe, or trash.
 Projects are marked by a local `:project:` tag. The tag is excluded
 from inheritance, so children can inherit normal context/topic tags
 without making every child look like a project in agenda views.
-Use `C-c g p` on a heading to mark it as a project.
+Use `C-c g p` on a heading to mark it as a project, or `C-u C-c g p`
+to also set `CATEGORY`.
+
+This follows Karl Voit's Org project model: a project remains a normal
+TODO heading, marked with `:project:`, a progress cookie, recursive
+`COOKIE_DATA`, and an ID. During migration, TODO headings with TODO
+children are still treated as projects so older data remains visible.
 
 ```org
 ** TODO [/] Renew driving license :project:admin:
@@ -237,14 +243,27 @@ Use `C-c g p` on a heading to mark it as a project.
 ```
 
 If a task grows, promote it into its own project and link it to the
-parent with an Org ID link instead of forcing everything into one large
-tree. Use `org-edna` only for real dependencies that should block or
-trigger state changes automatically.
+parent with an Org ID link or an `org-super-links` backlink instead of
+forcing everything into one large tree. Use `org-edna` only for real
+dependencies that should block or trigger state changes automatically.
 
 `org-edna` is installed by Elpaca from
 `https://github.com/emacsmirror/gnu_elpa`, branch
 `externals/org-edna`, pinned to commit
 `8258a4dfa00aa522249cdf9aeea5be4de97bd7c1`.
+
+`org-super-links` is installed by Elpaca from
+`https://github.com/toshism/org-super-links.git`, branch `develop`,
+pinned to commit `ce53993edc0fcfb85289f3eea74d1caa4dce8b60`.
+
+Backlink keys:
+
+| Key | Command |
+|---|---|
+| `C-c g s` | create a bidirectional super link by search |
+| `C-c g l` | store current heading for later super-link insertion |
+| `C-c g i` | insert the stored super link here |
+| `C-c g d` | delete the super link at point and its backlink |
 
 Use `C-c g e` on an Org heading, or `M-x my/org-edna-edit`, to edit the
 `BLOCKER` and `TRIGGER` properties. In the Edna edit buffer, write only
@@ -271,10 +290,15 @@ Agenda keys under `C-c a`:
 | `r` | weekly review |
 | `J` | all active projects |
 | `X` | stuck projects without a `NEXT` child |
+| `B` | blocked and waiting items |
 | `H` | `@home` next actions |
 | `C` | `@computer` next actions |
 | `E` | `@errand` next actions |
 | `K` | `@calls` next actions |
+| `A` | areas |
+| `G` | goals |
+| `L` | life and values |
+| `R` | higher-horizon review |
 | `f` | flights and travel |
 
 ---

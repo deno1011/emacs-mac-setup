@@ -44,6 +44,11 @@ intentional landing zones for capture and refile. They begin empty
 because a new user's real system should contain real actions, not
 installer sample tasks.
 
+This module follows Karl Voit's project model: projects are ordinary
+TODO headings marked with a local =:project:= tag, not a separate TODO
+keyword. During migration, older structural projects are still detected
+when a TODO heading has TODO children.
+
 ** TODO Keywords
 
 #+begin_example
@@ -81,7 +86,8 @@ agenda project views stay clean.
 
 Use =C-c g p= on a heading to mark it as a GTD project. The command adds
 the =:project:= tag, creates an ID, sets recursive TODO cookie data, and
-adds a progress cookie when missing.
+adds a progress cookie when missing. Use =C-u C-c g p= when you also
+want to set or change =CATEGORY=.
 
 #+begin_example
 ** TODO [/] Renew driving license :project:admin:
@@ -128,6 +134,22 @@ M-x org-id-get-create  ;; create or show the current heading ID
 C-c l                  ;; store a link to the current heading
 C-c C-l                ;; insert a stored link elsewhere
 #+end_example
+
+Backlink commands:
+
+#+begin_example
+C-c g s                ;; create a bidirectional org-super-links link
+C-c g l                ;; store current heading for a later super link
+C-c g i                ;; insert the stored super link here
+C-c g d                ;; delete a super link and its backlink
+#+end_example
+
+=org-super-links= is used only for backlinks. It is pinned to
+=toshism/org-super-links= commit
+=ce53993edc0fcfb85289f3eea74d1caa4dce8b60=. =org-linker-edna= is not a
+core dependency because the dependency workflow stays small: ID links
+for related items, =org-super-links= for backlinks, and =org-edna= for
+real automatic blockers/triggers.
 
 Dependency editing command:
 
@@ -182,10 +204,15 @@ Use =C-c a= for agenda views:
 - =r= :: weekly review
 - =J= :: all active projects
 - =X= :: stuck projects without a =NEXT= child
+- =B= :: blocked and waiting items
 - =H= :: =@home= next actions
 - =C= :: =@computer= next actions
 - =E= :: =@errand= next actions
 - =K= :: =@calls= next actions
+- =A= :: areas
+- =G= :: goals
+- =L= :: life and values
+- =R= :: higher-horizon review
 - =f= :: flights and travel
 
 #+begin_src emacs-lisp :tangle yes
@@ -208,11 +235,21 @@ Use =C-c a= for agenda views:
 (defvar org-tags-exclude-from-inheritance)
 (defvar org-todo-keyword-faces)
 (defvar org-todo-keywords)
+(defvar org-todo-keywords-1)
 (defvar org-todo-state-tags-triggers)
+(defvar my/org-project-structural-fallback)
 (defvar my/data-dir)
+(defvar org-super-links-backlink-into-drawer)
+(defvar org-super-links-related-into-drawer)
+(defvar org-super-links-related-drawer-default-name)
+(defvar org-super-links-search-function)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (declare-function org-edna-edit "org-edna")
 (declare-function org-edna-mode "org-edna")
+(declare-function org-super-links-delete-link "org-super-links")
+(declare-function org-super-links-insert-link "org-super-links")
+(declare-function org-super-links-link "org-super-links")
+(declare-function org-super-links-store-link "org-super-links")
 #+end_src
 
 * Packages
@@ -220,19 +257,38 @@ Use =C-c a= for agenda views:
 #+begin_src emacs-lisp :tangle yes
 (when (fboundp 'elpaca)
   (eval
-   '(elpaca
-     (org-edna
-      :inherit nil
-      :repo ("https://github.com/emacsmirror/gnu_elpa" . "org-edna")
-      :branch "externals/org-edna"
-      :ref "8258a4dfa00aa522249cdf9aeea5be4de97bd7c1"
-      :pin t
-      :files ("*" (:exclude ".git"))))))
+   '(progn
+      (elpaca
+        (org-edna
+         :inherit nil
+         :repo ("https://github.com/emacsmirror/gnu_elpa" . "org-edna")
+         :branch "externals/org-edna"
+         :ref "8258a4dfa00aa522249cdf9aeea5be4de97bd7c1"
+         :pin t
+         :files ("*" (:exclude ".git"))))
+      (elpaca
+        (org-super-links
+         :inherit nil
+         :repo "https://github.com/toshism/org-super-links.git"
+         :branch "develop"
+         :ref "ce53993edc0fcfb85289f3eea74d1caa4dce8b60"
+         :pin t
+         :files ("*.el"))))))
 
 (use-package org-edna
   :ensure nil
   :defer t
   :no-require t)
+
+(use-package org-super-links
+  :ensure nil
+  :defer t
+  :no-require t
+  :init
+  (setq org-super-links-backlink-into-drawer t
+        org-super-links-related-into-drawer t
+        org-super-links-related-drawer-default-name "RELATED"
+        org-super-links-search-function 'org-super-links-get-location))
 
 (defun my/gtd--maybe-enable-org-edna ()
   "Enable `org-edna-mode' when the package is available."
@@ -240,6 +296,35 @@ Use =C-c a= for agenda views:
     (org-edna-mode 1)))
 
 (add-hook 'org-mode-hook #'my/gtd--maybe-enable-org-edna)
+
+(defun my/org-super-links--require ()
+  "Load org-super-links or signal a helpful error."
+  (unless (require 'org-super-links nil t)
+    (user-error "org-super-links is not installed yet")))
+
+(defun my/org-super-links-link ()
+  "Create a bidirectional org-super-links link."
+  (interactive)
+  (my/org-super-links--require)
+  (org-super-links-link))
+
+(defun my/org-super-links-store-link ()
+  "Store the current Org heading for later super-link insertion."
+  (interactive)
+  (my/org-super-links--require)
+  (org-super-links-store-link))
+
+(defun my/org-super-links-insert-link ()
+  "Insert the stored super link and create the backlink."
+  (interactive)
+  (my/org-super-links--require)
+  (org-super-links-insert-link))
+
+(defun my/org-super-links-delete-link ()
+  "Delete the super link at point and its backlink when present."
+  (interactive)
+  (my/org-super-links--require)
+  (org-super-links-delete-link))
 
 (defun my/org-edna-edit ()
   "Edit org-edna BLOCKER and TRIGGER properties for the current heading."
@@ -251,6 +336,10 @@ Use =C-c a= for agenda views:
   (org-edna-edit))
 
 (global-set-key (kbd "C-c g e") #'my/org-edna-edit)
+(global-set-key (kbd "C-c g s") #'my/org-super-links-link)
+(global-set-key (kbd "C-c g l") #'my/org-super-links-store-link)
+(global-set-key (kbd "C-c g i") #'my/org-super-links-insert-link)
+(global-set-key (kbd "C-c g d") #'my/org-super-links-delete-link)
 #+end_src
 
 * Paths
@@ -303,13 +392,35 @@ Use =C-c a= for agenda views:
 * Project Helpers
 
 #+begin_src emacs-lisp :tangle yes
+(defvar my/org-project-structural-fallback t
+  "When non-nil, treat old TODO headings with TODO children as projects.
+Explicit local :project: tags remain authoritative.  The structural
+fallback keeps older Org data visible during migration.")
+
 (defun my/org-local-tags ()
   "Return local tags on the current Org heading."
   (org-get-tags nil t))
 
+(defun my/org-heading-has-todo-child-p ()
+  "Return non-nil when the current heading has a TODO-keyword child."
+  (let ((end (save-excursion (org-end-of-subtree t t)))
+        (found nil))
+    (save-excursion
+      (forward-line 1)
+      (while (and (not found)
+                  (re-search-forward org-heading-regexp end t))
+        (when (member (org-get-todo-state) org-todo-keywords-1)
+          (setq found t))))
+    found))
+
 (defun my/org-project-p ()
-  "Return non-nil when the current heading is a local GTD project."
-  (member "project" (my/org-local-tags)))
+  "Return non-nil when the current heading is a GTD project.
+Prefer an explicit local :project: tag.  Fall back to the older
+structural project shape while user data is being migrated."
+  (or (member "project" (my/org-local-tags))
+      (and my/org-project-structural-fallback
+           (member (org-get-todo-state) org-todo-keywords-1)
+           (my/org-heading-has-todo-child-p))))
 
 (defun my/org-heading-has-progress-cookie-p (title)
   "Return non-nil when TITLE already contains a progress cookie."
@@ -339,9 +450,17 @@ Use =C-c a= for agenda views:
       nil
     (save-excursion (org-end-of-subtree t t))))
 
-(defun my/org-mark-as-project ()
+(defun my/org-skip-non-projects ()
+  "Skip headings that are not explicit or migration-fallback projects."
+  (if (my/org-project-p)
+      nil
+    (save-excursion (org-end-of-subtree t t))))
+
+(defun my/org-mark-as-project (&optional category)
   "Mark the current heading as a compact GTD project."
-  (interactive)
+  (interactive
+   (list (when current-prefix-arg
+           (read-string "CATEGORY: " (or (org-entry-get (point) "CATEGORY") "")))))
   (unless (derived-mode-p 'org-mode)
     (user-error "This command works in Org buffers"))
   (unless buffer-file-name
@@ -351,6 +470,8 @@ Use =C-c a= for agenda views:
     (org-todo "TODO"))
   (org-toggle-tag "project" 'on)
   (org-entry-put (point) "COOKIE_DATA" "todo recursive")
+  (when (and category (not (string= category "")))
+    (org-entry-put (point) "CATEGORY" category))
   (org-id-get-create)
   (my/org-ensure-progress-cookie)
   (org-update-parent-todo-statistics)
@@ -416,7 +537,7 @@ Use =C-c a= for agenda views:
 (setq org-agenda-custom-commands
       (append
        (my/gtd--without-commands
-        '("g" "r" "J" "X" "H" "C" "E" "K" "f")
+        '("g" "r" "J" "X" "B" "H" "C" "E" "K" "A" "G" "L" "R" "f")
         org-agenda-custom-commands)
        '(("g" "GTD dashboard"
           ((agenda "" ((org-agenda-span 1)
@@ -425,27 +546,56 @@ Use =C-c a= for agenda views:
                  ((org-agenda-overriding-header "Next actions")))
            (todo "WAITING"
                  ((org-agenda-overriding-header "Waiting")))
+           (alltodo ""
+                      ((org-agenda-overriding-header "Projects")
+                       (org-agenda-skip-function 'my/org-skip-non-projects)))
+           (alltodo ""
+                      ((org-agenda-overriding-header "Stuck projects")
+                       (org-agenda-skip-function 'my/org-skip-non-stuck-projects)))
            (tags "+inbox"
                  ((org-agenda-overriding-header "Inbox")))))
          ("r" "Weekly review"
           ((agenda "" ((org-agenda-span 7)
                        (org-agenda-start-on-weekday nil)))
-           (tags-todo "+project"
-                      ((org-agenda-overriding-header "Projects")))
-           (tags-todo "+project"
+           (alltodo ""
+                      ((org-agenda-overriding-header "Projects")
+                       (org-agenda-skip-function 'my/org-skip-non-projects)))
+           (alltodo ""
                       ((org-agenda-overriding-header "Stuck projects")
                        (org-agenda-skip-function 'my/org-skip-non-stuck-projects)))
            (todo "WAITING"
                  ((org-agenda-overriding-header "Waiting")))
            (tags-todo "+someday"
-                      ((org-agenda-overriding-header "Someday / Maybe")))))
-         ("J" "Projects" tags-todo "+project")
-         ("X" "Stuck projects" tags-todo "+project"
+                      ((org-agenda-overriding-header "Someday / Maybe")))
+           (tags-todo "+area"
+                      ((org-agenda-overriding-header "Areas")))
+           (tags-todo "+goal"
+                      ((org-agenda-overriding-header "Goals")))
+           (tags-todo "+life"
+                      ((org-agenda-overriding-header "Life / Values")))))
+         ("J" "Projects" alltodo ""
+          ((org-agenda-skip-function 'my/org-skip-non-projects)))
+         ("X" "Stuck projects" alltodo ""
           ((org-agenda-skip-function 'my/org-skip-non-stuck-projects)))
+         ("B" "Blocked / waiting"
+          ((todo "WAITING"
+                 ((org-agenda-overriding-header "Waiting")))
+           (tags-todo "+blocked"
+                      ((org-agenda-overriding-header "Blocked")))))
          ("H" "@home next actions" tags-todo "+@home/NEXT")
          ("C" "@computer next actions" tags-todo "+@computer/NEXT")
          ("E" "@errand next actions" tags-todo "+@errand/NEXT")
          ("K" "@calls next actions" tags-todo "+@calls/NEXT")
+         ("A" "Areas" tags-todo "+area")
+         ("G" "Goals" tags-todo "+goal")
+         ("L" "Life / values" tags-todo "+life")
+         ("R" "Higher-horizon review"
+          ((tags-todo "+life"
+                      ((org-agenda-overriding-header "Life / Values")))
+           (tags-todo "+goal"
+                      ((org-agenda-overriding-header "Goals")))
+           (tags-todo "+area"
+                      ((org-agenda-overriding-header "Areas")))))
          ("f" "Flights / travel"
           ((tags "+flight"
                  ((org-agenda-overriding-header "Flights")))
