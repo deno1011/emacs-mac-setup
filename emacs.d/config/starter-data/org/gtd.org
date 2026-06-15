@@ -63,6 +63,10 @@ Minimal project example:
 The progress cookie [/] and COOKIE_DATA property let Org show project
 progress from child task states.
 
+Use C-c g p on a heading to mark it as a GTD project. It adds the local
+:project: tag, creates an ID, sets recursive TODO cookie data, and adds
+a progress cookie when missing.
+
 ** Subprojects And Links
 If a task grows, turn it into a project and link it to its parent
 instead of forcing everything into one tree. Use IDs for stable links:
@@ -76,6 +80,20 @@ C-c C-l    ;; insert a link elsewhere
 Use a normal Org link when two outcomes are related. Use org-edna
 properties only when there is a real dependency that should
 automatically unlock or block another item.
+
+To add org-edna dependencies, first create stable IDs on the target
+headings, then edit the dependency properties on the heading that owns
+the dependency:
+
+#+begin_example
+M-x org-id-get-create  ;; create or show the current heading ID
+C-c g e                ;; edit BLOCKER/TRIGGER for this heading
+M-x my/org-edna-edit   ;; same command by name
+#+end_example
+
+Inside the Edna edit buffer, write only the value below the BLOCKER or
+TRIGGER section header. Finish with C-c C-c. Completion is available
+with M-TAB or the normal completion key.
 
 Dependency sketch:
 

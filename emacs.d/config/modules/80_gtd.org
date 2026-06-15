@@ -12,6 +12,127 @@ tagging, stuck-project views, and tag-based life/travel views. A
 personal =~/emacs/data/org/gtd-config.el= may still override anything
 after these defaults load.
 
+* User Manual
+
+The user-facing starter manual lives in [[file:../starter-data/org/gtd.org][starter-data/org/gtd.org]].
+During a new install it is copied to =data/org/gtd.org= in the selected
+data repo, where the user can extend it with their own system notes.
+
+** Files
+
+- =inbox.org= :: raw capture, brain dumps, and anything not clarified yet.
+- =gtd.org= :: next actions, projects, waiting-for, someday/maybe,
+  tickler items, review lists, and the in-file manual.
+- =calendar.org= :: appointments, hard deadlines, and dated commitments.
+- =archive.org= :: completed or cancelled items after archiving.
+
+Reference material can live outside GTD, for example in a wiki or notes.
+Only add another GTD file when it solves a real review problem.
+
+** TODO Keywords
+
+#+begin_example
+TODO       not yet ready or not yet selected as the next physical action
+NEXT       the next visible action you can do
+WAITING    delegated, blocked, or waiting for external input
+DONE       completed
+CANCELLED  intentionally dropped
+#+end_example
+
+Keep the keyword set small. Context, energy, area, person, and topic
+belong in tags or properties, not in extra TODO keywords.
+
+** Projects
+
+A project is any outcome that needs more than one action. Mark project
+headings with the local =:project:= tag. Child tasks inherit normal
+topic and context tags, but =:project:= itself does not inherit, so
+agenda project views stay clean.
+
+Use =C-c g p= on a heading to mark it as a GTD project. The command adds
+the =:project:= tag, creates an ID, sets recursive TODO cookie data, and
+adds a progress cookie when missing.
+
+#+begin_example
+** TODO [/] Renew driving license :project:admin:
+:PROPERTIES:
+:CATEGORY: license
+:COOKIE_DATA: todo recursive
+:END:
+*** NEXT Find required city-office documents :@computer:
+*** TODO Book appointment :@computer:
+*** WAITING Confirmation from city office
+#+end_example
+
+** Subprojects And Dependencies
+
+If a task grows, turn it into its own project and link it to the parent
+instead of forcing everything into one large tree. Use normal Org ID
+links for loose relationships. Use =org-edna= only for dependencies that
+should block or trigger state changes automatically.
+
+Basic linking commands:
+
+#+begin_example
+M-x org-id-get-create  ;; create or show the current heading ID
+C-c l                  ;; store a link to the current heading
+C-c C-l                ;; insert a stored link elsewhere
+#+end_example
+
+Dependency editing command:
+
+#+begin_example
+C-c g e                ;; edit org-edna BLOCKER/TRIGGER for this heading
+M-x my/org-edna-edit   ;; same command by name
+#+end_example
+
+Inside the Edna edit buffer, write only the value below the =BLOCKER= or
+=TRIGGER= section header. Finish with =C-c C-c=. Completion is available
+with =M-TAB= or the normal completion key.
+
+Example dependency properties:
+
+#+begin_example
+:BLOCKER: ids("id:parent-project-id")
+:TRIGGER: ids("id:child-action-id") todo!(NEXT)
+#+end_example
+
+In practice, replace the example strings with real IDs. Put =BLOCKER=
+on the heading that must not be completed until the referenced item is
+ready. Put =TRIGGER= on the heading whose completion should change
+another item, for example promote a child action to =NEXT=.
+
+** Capture, Review, And Agenda
+
+Use =C-c c= for capture templates. The compact GTD templates are:
+
+- =i= :: inbox item
+- =n= :: next action in =gtd.org=
+- =p= :: project in =gtd.org=
+- =w= :: waiting item
+- =s= :: someday/maybe item
+- =c= :: calendar item
+- =f= :: flight/travel item
+
+Daily review: empty =inbox.org=, check =calendar.org=, and choose a
+realistic set of =NEXT= actions.
+
+Weekly review: inspect every =:project:= heading, make sure each active
+project has a =NEXT= child, then review =WAITING=, =Someday / Maybe=,
+areas, goals, and life horizons.
+
+Use =C-c a= for agenda views:
+
+- =g= :: GTD dashboard
+- =r= :: weekly review
+- =J= :: all active projects
+- =X= :: stuck projects without a =NEXT= child
+- =H= :: =@home= next actions
+- =C= :: =@computer= next actions
+- =E= :: =@errand= next actions
+- =K= :: =@calls= next actions
+- =f= :: flights and travel
+
 #+begin_src emacs-lisp :tangle yes
 ;;; 80_gtd.el --- GTD defaults and personal overlay -*- lexical-binding: t; -*-
 
@@ -35,6 +156,7 @@ after these defaults load.
 (defvar org-todo-state-tags-triggers)
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(declare-function org-edna-edit "org-edna")
 (declare-function org-edna-mode "org-edna")
 #+end_src
 
@@ -63,6 +185,17 @@ after these defaults load.
     (org-edna-mode 1)))
 
 (add-hook 'org-mode-hook #'my/gtd--maybe-enable-org-edna)
+
+(defun my/org-edna-edit ()
+  "Edit org-edna BLOCKER and TRIGGER properties for the current heading."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "This command works in Org buffers"))
+  (unless (require 'org-edna nil t)
+    (user-error "org-edna is not installed yet"))
+  (org-edna-edit))
+
+(global-set-key (kbd "C-c g e") #'my/org-edna-edit)
 #+end_src
 
 * Paths

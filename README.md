@@ -194,6 +194,9 @@ never overwritten.
 | `data/org/calendar.org` | appointments, hard deadlines, and dated commitments |
 | `data/org/archive.org` | default archive target for completed/cancelled items |
 
+The seed that creates the in-system manual is
+[`emacs.d/config/starter-data/org/gtd.org`](emacs.d/config/starter-data/org/gtd.org).
+
 Use the small TODO keyword set deliberately:
 
 ```org
@@ -212,6 +215,7 @@ instead become reference, someday/maybe, or trash.
 Projects are marked by a local `:project:` tag. The tag is excluded
 from inheritance, so children can inherit normal context/topic tags
 without making every child look like a project in agenda views.
+Use `C-c g p` on a heading to mark it as a project.
 
 ```org
 ** TODO [/] Renew driving license :project:admin:
@@ -233,6 +237,12 @@ trigger state changes automatically.
 `https://github.com/emacsmirror/gnu_elpa`, branch
 `externals/org-edna`, pinned to commit
 `8258a4dfa00aa522249cdf9aeea5be4de97bd7c1`.
+
+Use `C-c g e` on an Org heading, or `M-x my/org-edna-edit`, to edit the
+`BLOCKER` and `TRIGGER` properties. In the Edna edit buffer, write only
+the value below the `BLOCKER` or `TRIGGER` section header and save with
+`C-c C-c`. Use `M-x org-id-get-create` on the target headings first so
+the IDs are stable.
 
 ```org
 :BLOCKER: ids("id:parent-project-id")

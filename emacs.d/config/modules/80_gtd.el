@@ -20,6 +20,7 @@
 (defvar org-todo-state-tags-triggers)
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(declare-function org-edna-edit "org-edna")
 (declare-function org-edna-mode "org-edna")
 
 (when (fboundp 'elpaca)
@@ -44,6 +45,17 @@
     (org-edna-mode 1)))
 
 (add-hook 'org-mode-hook #'my/gtd--maybe-enable-org-edna)
+
+(defun my/org-edna-edit ()
+  "Edit org-edna BLOCKER and TRIGGER properties for the current heading."
+  (interactive)
+  (unless (derived-mode-p 'org-mode)
+    (user-error "This command works in Org buffers"))
+  (unless (require 'org-edna nil t)
+    (user-error "org-edna is not installed yet"))
+  (org-edna-edit))
+
+(global-set-key (kbd "C-c g e") #'my/org-edna-edit)
 
 (defun my/gtd--org-root ()
   "Return the compact Org root for GTD files."
