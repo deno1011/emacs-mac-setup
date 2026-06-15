@@ -87,10 +87,13 @@ Actual load order on a populated install:
 20_bootstrap/20.01.01_bootstrap_keychain.org       ← Layer 1
 20_bootstrap/20.01.02_bootstrap_git.org            ← Layer 1
 20_bootstrap/20.01.03_bootstrap_gh.org             ← Layer 1
+20_bootstrap/20.01.04_bootstrap_git_crypt.org      ← Layer 1
 20_bootstrap/20.02.01_bootstrap_repo.org           ← Layer 2
 20_bootstrap/20.02.02_bootstrap_repo_clone.org     ← Layer 2
 20_bootstrap/20.02.03_bootstrap_secrets.org        ← Layer 2
 20_bootstrap/20.02.04_bootstrap_identity.org       ← Layer 2
+20_bootstrap/20.02.05_bootstrap_git_crypt.org      ← Layer 2
+20_bootstrap/20.02.06_bootstrap_starter_data.org   ← Layer 2
 20_bootstrap/20.03.01_bootstrap.org                ← Layer 3 (auto-fires my/bootstrap)
 30_core.org                                        — base Emacs
 40_org.org                                         — org + agenda + roam
@@ -122,14 +125,16 @@ A three-layer architecture for the credential / data-folder /
 identity provisioning. Self-contained ruleset in
 [`emacs.d/config/modules/20_bootstrap/BOOTSTRAP.md`](emacs.d/config/modules/20_bootstrap/BOOTSTRAP.md).
 
-The orchestrator (`my/bootstrap`) runs four steps in order:
+The orchestrator (`my/bootstrap`) runs six steps in order:
 
 | # | Step | Layer-2 function | Required? |
 |---|---|---|---|
 | 1 | data-folder resolution | `my/data-dir-resolve` | YES |
 | 2 | data-folder clone | `my/repo-ensure-cloned` | YES |
-| 3 | github identity | `my/identity-ensure-loaded` | optional |
-| 4 | secrets readable | `my/secrets-ensure-readable` | optional |
+| 3 | git-crypt unlock | `my/git-crypt-ensure-unlocked` | YES |
+| 4 | starter Org files | `my/starter-data-ensure` | YES |
+| 5 | github identity | `my/identity-ensure-loaded` | optional |
+| 6 | secrets readable | `my/secrets-ensure-readable` | optional |
 
 A required-step failure halts the bootstrap with a `*Warnings*`
 popup containing the exact shell command to fix it. Feature modules
@@ -173,6 +178,86 @@ headings.
 | `70_wiki.org` | LLM-Wiki helpers (Karpathy pattern, org-roam-backed) |
 | `80_gtd.org` | Compact GTD defaults, capture/templates, project views, optional `data/org/gtd-config.el` overlay |
 | `90_doctor.org` | `M-x my/doctor` — health check command |
+
+---
+
+## Compact GTD user manual
+
+New installs seed a small GTD system in the selected data repo. The
+starter files are copied only when missing, so existing user files are
+never overwritten.
+
+| File | Purpose |
+|---|---|
+| `data/org/inbox.org` | raw capture, brain dumps, and unclarified items |
+| `data/org/gtd.org` | next actions, projects, waiting-for, someday/maybe, tickler, review lists, and the in-file manual |
+| `data/org/calendar.org` | appointments, hard deadlines, and dated commitments |
+| `data/org/archive.org` | default archive target for completed/cancelled items |
+
+Use the small TODO keyword set deliberately:
+
+```org
+TODO       not yet ready or not yet selected as the next physical action
+NEXT       the next visible action you can do
+WAITING    delegated, blocked, or waiting for external input
+DONE       completed
+CANCELLED  intentionally dropped
+```
+
+Clarify inbox items by asking whether the item is actionable, whether
+it is one physical next action or a multi-step outcome, whether it
+belongs on a date, whether someone else owns it, and whether it should
+instead become reference, someday/maybe, or trash.
+
+Projects are marked by a local `:project:` tag. The tag is excluded
+from inheritance, so children can inherit normal context/topic tags
+without making every child look like a project in agenda views.
+
+```org
+** TODO [/] Renew driving license :project:admin:
+:PROPERTIES:
+:CATEGORY: license
+:COOKIE_DATA: todo recursive
+:END:
+*** NEXT Find required city-office documents :@computer:
+*** TODO Book appointment :@computer:
+*** WAITING Confirmation from city office
+```
+
+If a task grows, promote it into its own project and link it to the
+parent with an Org ID link instead of forcing everything into one large
+tree. Use `org-edna` only for real dependencies that should block or
+trigger state changes automatically.
+
+`org-edna` is installed by Elpaca from
+`https://github.com/emacsmirror/gnu_elpa`, branch
+`externals/org-edna`, pinned to commit
+`8258a4dfa00aa522249cdf9aeea5be4de97bd7c1`.
+
+```org
+:BLOCKER: ids("id:parent-project-id")
+:TRIGGER: ids("id:child-action-id") todo!(NEXT)
+```
+
+Daily review: empty `inbox.org`, check `calendar.org`, and choose a
+realistic set of `NEXT` actions. Weekly review: inspect every
+`:project:` heading, make sure each active project has a `NEXT` child,
+then review `WAITING`, `Someday / Maybe`, areas, goals, and life
+horizons.
+
+Agenda keys under `C-c a`:
+
+| Key | View |
+|---|---|
+| `g` | GTD dashboard |
+| `r` | weekly review |
+| `J` | all active projects |
+| `X` | stuck projects without a `NEXT` child |
+| `H` | `@home` next actions |
+| `C` | `@computer` next actions |
+| `E` | `@errand` next actions |
+| `K` | `@calls` next actions |
+| `f` | flights and travel |
 
 ---
 

@@ -22,8 +22,19 @@
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (declare-function org-edna-mode "org-edna")
 
+(when (fboundp 'elpaca)
+  (eval
+   '(elpaca
+     (org-edna
+      :inherit nil
+      :repo ("https://github.com/emacsmirror/gnu_elpa" . "org-edna")
+      :branch "externals/org-edna"
+      :ref "8258a4dfa00aa522249cdf9aeea5be4de97bd7c1"
+      :pin t
+      :files ("*" (:exclude ".git"))))))
+
 (use-package org-edna
-  :ensure t
+  :ensure nil
   :defer t
   :no-require t)
 
