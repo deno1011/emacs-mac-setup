@@ -39,7 +39,10 @@
       (elpaca
         (org-edna
          :inherit nil
-         :repo ("https://github.com/emacsmirror/gnu_elpa" . "org-edna")
+         :type git
+         :protocol https
+         :host github
+         :repo "emacsmirror/gnu_elpa"
          :branch "externals/org-edna"
          :ref "8258a4dfa00aa522249cdf9aeea5be4de97bd7c1"
          :pin t
@@ -47,7 +50,10 @@
       (elpaca
         (org-super-links
          :inherit nil
-         :repo "https://github.com/toshism/org-super-links.git"
+         :type git
+         :protocol https
+         :host github
+         :repo "toshism/org-super-links"
          :branch "develop"
          :ref "ce53993edc0fcfb85289f3eea74d1caa4dce8b60"
          :pin t
