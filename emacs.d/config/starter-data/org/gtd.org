@@ -17,6 +17,20 @@ Reference material can live outside GTD, for example in your wiki or
 notes. Only create another GTD file when it solves a real review
 problem.
 
+** The Full GTD Loop
+Use this system as a loop, not as a place to park vague intentions.
+
+1. Capture everything unfinished into inbox.org with C-c c i.
+2. Clarify one inbox item at a time until the inbox is empty.
+3. Organize clarified outcomes into the right trusted bucket.
+4. Reflect daily and weekly so the lists stay current.
+5. Engage from the agenda views by context, time, energy, and priority.
+
+The empty top-level sections below this manual are intentional landing
+zones. Capture and refile commands need stable headings. They begin
+empty because your real system should contain your real actions, not
+installer sample tasks.
+
 ** Clarifying Inbox Items
 For each inbox item, ask:
 
@@ -26,6 +40,18 @@ For each inbox item, ask:
 4. If it belongs on a date, move it to calendar.org.
 5. If someone else owns it, move it to Waiting.
 6. If it is not actionable, keep it as reference, someday/maybe, or delete it.
+
+Decision guide:
+
+- Trash it when it is no longer useful.
+- Move it to reference when it may be useful but requires no action.
+- Move it to Someday / Maybe when you may want it later but will not
+  commit now.
+- Move it to calendar.org when it must happen on a specific date or at a
+  specific time.
+- Move it to Waiting when someone else owns the next move.
+- Move it to Next Actions when it is one visible physical action.
+- Move it to Projects when it needs more than one action to finish.
 
 ** TODO Keywords
 Use these states:
@@ -67,6 +93,9 @@ Use C-c g p on a heading to mark it as a GTD project. It adds the local
 :project: tag, creates an ID, sets recursive TODO cookie data, and adds
 a progress cookie when missing.
 
+Every active project should have at least one NEXT child action. If it
+does not, it appears in the stuck-project agenda view with C-c a X.
+
 ** Subprojects And Links
 If a task grows, turn it into a project and link it to its parent
 instead of forcing everything into one tree. Use IDs for stable links:
@@ -107,14 +136,23 @@ Daily review:
 
 1. Empty inbox.org into the right lists.
 2. Check calendar.org for today and the next few days.
-3. Pick realistic NEXT actions.
+3. Check Waiting for anything that needs a follow-up.
+4. Pick realistic NEXT actions for the day.
 
 Weekly review:
 
 1. Review every project.
 2. Every active project should have at least one NEXT child action.
 3. Review Waiting and Someday / Maybe.
-4. Add or remove horizons, goals, and areas as your life changes.
+4. Review Tickler items and dated follow-ups.
+5. Add or remove horizons, goals, and areas as your life changes.
+6. Archive DONE and CANCELLED items that no longer need to stay visible.
+
+Monthly or quarterly review:
+
+1. Review Areas, Goals, and Life / Values.
+2. Decide which goals deserve active projects.
+3. Delete or demote projects that no longer matter.
 
 ** Agenda Commands
 Use C-c a and then:
@@ -161,25 +199,71 @@ Flight item:
 #+end_example
 
 * Next Actions
+Purpose: standalone NEXT actions that are ready to do. Project-specific
+NEXT actions may also live as children of their project. Use this
+section for actions that do not need a larger project container.
+
+Good next actions start with a physical verb and usually carry a
+context tag such as :@computer:, :@calls:, :@home:, or :@errand:.
+
+Example shape:
+
+#+begin_example
+** NEXT Call city office about required driving-license documents :@calls:
+#+end_example
 
 * Projects
+Purpose: active outcomes that need more than one action. Use C-c c p to
+capture a new project, or C-c g p on an existing heading to mark it as a
+project.
+
+Each active project should answer two questions:
+
+1. What finished outcome would make this complete?
+2. What is the next visible action?
+
+Split a task into a project as soon as it has hidden steps. If a project
+keeps growing, create a subproject and link it with Org ID links.
 
 * Waiting
+Purpose: delegated, blocked, or external items where the next move is
+not yours. Use WAITING and make the waiting condition visible in the
+title, notes, or properties.
+
+During review, decide whether to follow up, keep waiting, convert it
+back to a NEXT action, or cancel it.
 
 * Someday / Maybe :someday:
+Purpose: possible future actions, ideas, and projects that are not
+current commitments. This is not a guilt list. Review it, activate what
+matters, and delete what no longer belongs in your life.
 
 * Tickler
+Purpose: reminders that should resurface later. Use this for dated
+prompts that are not hard appointments. True appointments and fixed
+deadlines belong in calendar.org.
+
+When a tickler becomes current, clarify it again: move it to Next
+Actions, Projects, Waiting, Someday / Maybe, calendar.org, or delete it.
 
 * Horizons
 ** Areas :area:
 Stable responsibilities you want to maintain, such as health, finance,
 family, work, learning, home, friends, and administration.
 
+Areas are maintained, not completed. They should help you notice missing
+projects and rebalance attention.
+
 ** Goals :goal:
 Outcomes above the project level. These should explain why projects matter.
 
+Goals should eventually create or retire projects. If a goal has no
+active project for a long time, decide whether it is still real.
+
 ** Life / Values :life:
 High-level direction, standards, identity, and long-range decisions.
+
+Use this section during slower reviews, not during daily execution.
 
 * Reference Links :reference:
 Put links here only when they support GTD reviews. General knowledge

@@ -196,6 +196,14 @@ never overwritten.
 
 The seed that creates the in-system manual is
 [`emacs.d/config/starter-data/org/gtd.org`](emacs.d/config/starter-data/org/gtd.org).
+The initially empty top-level headings in that file are intentional
+landing zones for capture and refile. They start empty so a new system
+contains real user actions, not installer sample tasks.
+
+Use the system as a loop: capture everything unfinished into
+`inbox.org`, clarify one inbox item at a time, organize it into the
+right trusted bucket, review daily/weekly, then engage from agenda views
+by context, time, energy, and priority.
 
 Use the small TODO keyword set deliberately:
 

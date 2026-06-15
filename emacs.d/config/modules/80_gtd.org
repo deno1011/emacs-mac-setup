@@ -29,6 +29,21 @@ data repo, where the user can extend it with their own system notes.
 Reference material can live outside GTD, for example in a wiki or notes.
 Only add another GTD file when it solves a real review problem.
 
+** Full Workflow
+
+Use this system as a loop, not as a place to park vague intentions:
+
+1. Capture everything unfinished into =inbox.org= with =C-c c i=.
+2. Clarify one inbox item at a time until the inbox is empty.
+3. Organize clarified outcomes into the right trusted bucket.
+4. Reflect daily and weekly so the lists stay current.
+5. Engage from agenda views by context, time, energy, and priority.
+
+The apparently empty top-level headings in the starter =gtd.org= are
+intentional landing zones for capture and refile. They begin empty
+because a new user's real system should contain real actions, not
+installer sample tasks.
+
 ** TODO Keywords
 
 #+begin_example
@@ -41,6 +56,21 @@ CANCELLED  intentionally dropped
 
 Keep the keyword set small. Context, energy, area, person, and topic
 belong in tags or properties, not in extra TODO keywords.
+
+** Clarify And Organize
+
+Process inbox items one at a time. Decide whether each item is
+actionable before deciding where it lives:
+
+- trash it when it is no longer useful;
+- move it to reference when it may be useful but requires no action;
+- move it to =Someday / Maybe= when it may matter later but is not a
+  current commitment;
+- move it to =calendar.org= when it must happen on a specific date or at
+  a specific time;
+- move it to =Waiting= when someone else owns the next move;
+- move it to =Next Actions= when it is one visible physical action;
+- move it to =Projects= when it needs more than one action to finish.
 
 ** Projects
 
@@ -63,6 +93,26 @@ adds a progress cookie when missing.
 *** TODO Book appointment :@computer:
 *** WAITING Confirmation from city office
 #+end_example
+
+Every active project should have at least one =NEXT= child action. If it
+does not, it appears in the stuck-project agenda view with =C-c a X=.
+
+** Trusted Buckets
+
+- =Next Actions= :: standalone =NEXT= actions that are ready to do.
+  Project-specific next actions may also live as children of their
+  project.
+- =Projects= :: active outcomes that need more than one action. Each
+  project should say what finished looks like and what the next visible
+  action is.
+- =Waiting= :: delegated, blocked, or external items where the next move
+  is not yours.
+- =Someday / Maybe= :: possible future actions, ideas, and projects that
+  are not current commitments.
+- =Tickler= :: reminders that should resurface later; hard dates belong
+  in =calendar.org=.
+- =Horizons= :: areas, goals, and life values reviewed at slower
+  cadences.
 
 ** Subprojects And Dependencies
 
@@ -115,11 +165,16 @@ Use =C-c c= for capture templates. The compact GTD templates are:
 - =f= :: flight/travel item
 
 Daily review: empty =inbox.org=, check =calendar.org=, and choose a
-realistic set of =NEXT= actions.
+realistic set of =NEXT= actions. Also glance at =Waiting= for follow-up
+prompts.
 
 Weekly review: inspect every =:project:= heading, make sure each active
 project has a =NEXT= child, then review =WAITING=, =Someday / Maybe=,
-areas, goals, and life horizons.
+Tickler items, areas, goals, and life horizons. Archive =DONE= and
+=CANCELLED= items that no longer need to stay visible.
+
+Monthly or quarterly review: inspect areas, goals, and life values;
+create or retire projects accordingly.
 
 Use =C-c a= for agenda views:
 
