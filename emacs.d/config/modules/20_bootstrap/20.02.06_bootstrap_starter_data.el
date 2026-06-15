@@ -44,12 +44,10 @@
      ((file-exists-p target)
       :skip)
      ((not (file-exists-p source))
-      `(:error ,(format "Starter template is missing: %s
+      `(:error ,(format "Starter template is missing from the distro: %s
 
-FIX: restore the distro starter data, then re-run M-x my/bootstrap:
-
-     cd ~/emacs-mac-setup-src
-     ./install.sh"
+FIX: reinstall or update the configuration to restore the
+config/starter-data/org/ templates, then run M-x my/bootstrap."
                          source)))
      (t
       (make-directory (file-name-directory target) t)

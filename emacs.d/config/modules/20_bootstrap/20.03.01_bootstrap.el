@@ -63,7 +63,7 @@ modules consult.")
   '(("data-folder resolution"  my/data-dir-resolve            t)
     ("data-folder clone"       my/repo-ensure-cloned          t)
     ("git-crypt unlock"        my/git-crypt-ensure-unlocked   t)
-    ("starter org files"       my/starter-data-ensure         t)
+    ("starter org files"       my/starter-data-ensure         nil)
     ("github identity"         my/identity-ensure-loaded      nil)
     ("secrets readable"        my/secrets-ensure-readable     nil))
   "Ordered list of (LABEL FUNCTION-SYMBOL REQUIRED) triples.
