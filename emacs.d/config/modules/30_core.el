@@ -1,5 +1,23 @@
 ;;; core.el --- Core Emacs configuration -*- lexical-binding: t; -*-
 
+(require 'comp nil t)
+
+(defvar native-comp-async-env-modifier-form)
+(defvar my/native-comp--original-env-modifier-form
+  (and (boundp 'native-comp-async-env-modifier-form)
+       native-comp-async-env-modifier-form))
+(declare-function org-persist-gc "org-persist")
+
+;; Native compiler subprocesses run with -Q --batch; keep Org's exit-time
+;; persistence cleanup out of those helpers so stuck GC cannot pin a CPU core.
+(when (boundp 'native-comp-async-env-modifier-form)
+  (setq native-comp-async-env-modifier-form
+        `(progn
+           ,@(when my/native-comp--original-env-modifier-form
+               (list my/native-comp--original-env-modifier-form))
+           (with-eval-after-load 'org-persist
+             (remove-hook 'kill-emacs-hook #'org-persist-gc)))))
+
 (require 'org)
 
 (defvar my/config-dir)
