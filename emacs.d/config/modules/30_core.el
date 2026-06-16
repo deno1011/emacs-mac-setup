@@ -345,6 +345,32 @@
                           (expand-file-name ".git" my/data-dir)))
                 (git-auto-commit-mode 1)))))
 
+(defun my/data-auto-sync ()
+  "Stage, commit and push all changes under `my/data-dir' to its git remote.
+No-op when the data dir is not a git repository.  Commits any working-tree
+change (including files moved or renamed outside Emacs), rebases on the
+remote to absorb other devices' changes, then pushes.  On a rebase conflict
+the local commit is kept and a message is shown for manual resolution."
+  (interactive)
+  (when (and (stringp my/data-dir)
+             (file-directory-p (expand-file-name ".git" my/data-dir)))
+    (let ((default-directory (file-name-as-directory my/data-dir)))
+      (unless (string-empty-p
+               (string-trim (shell-command-to-string "git status --porcelain")))
+        (call-process "git" nil nil nil "add" "-A")
+        (call-process "git" nil nil nil "commit" "-m"
+                      (format-time-string "auto-sync %F %R")))
+      (if (zerop (call-process "git" nil nil nil "pull" "--rebase" "--autostash"))
+          (call-process "git" nil nil nil "push" "origin" "main")
+        (call-process "git" nil nil nil "rebase" "--abort")
+        (message "my/data-auto-sync: rebase conflict; local kept, resolve manually")))))
+
+(defvar my/data-auto-sync-timer
+  (run-with-idle-timer 300 t #'my/data-auto-sync)
+  "Idle timer that periodically runs `my/data-auto-sync'.")
+
+(add-hook 'kill-emacs-hook #'my/data-auto-sync)
+
 (defun my/beorg-sync ()
   "Mirror my/data-dir/data/org/ to beorg's iCloud folder."
   (unless (my/bootstrap-ready-p)
