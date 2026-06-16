@@ -1,0 +1,7 @@
+#+TITLE: Next Actions - Standalone, Concrete, Doable Now
+#+STARTUP: overview
+#+TAGS: admin finance health emacs home quick travel @home @computer @errand @calls
+
+# Use this file for standalone NEXT actions that do not belong inside a project.
+# Project-specific NEXT actions can live as children in projects.org.
+

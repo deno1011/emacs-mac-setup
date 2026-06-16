@@ -1,0 +1,6 @@
+#+TITLE: Waiting For - Delegated or Blocked
+#+STARTUP: overview
+
+# Use WAITING when the next move belongs to someone or something else.
+# Make the waiting condition visible in the heading or notes.
+

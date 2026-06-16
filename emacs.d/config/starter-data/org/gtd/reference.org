@@ -1,0 +1,7 @@
+#+TITLE: Reference - Non-actionable GTD Material
+#+FILETAGS: :reference:
+#+STARTUP: overview
+
+# Information worth keeping that does not require action.
+# Do not store active commitments here.
+

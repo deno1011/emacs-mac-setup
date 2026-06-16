@@ -1,0 +1,55 @@
+#+TITLE: GTD Assistant Skill - Scheduling Policy
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:scheduling:
+#+STARTUP: overview
+
+* Purpose
+Decide whether a commitment belongs in Org, Apple Calendar, Apple
+Reminders, or nowhere yet.
+
+* Core Distinction
+- Calendar event: protected time, true appointment, travel block, or someone else depends on the exact time.
+- Reminder: a lightweight nudge that can move without breaking the day.
+- Org SCHEDULED: start showing this action from a date.
+- Org DEADLINE: real consequence if unfinished by the date.
+- Someday: possible future interest, not a current commitment.
+
+* Calendar Rules
+Create or propose a calendar event when:
+
+- The user must be somewhere at a specific time.
+- Another person expects the user at that time.
+- Travel, check-in, or preparation must happen in a time window.
+- An important non-urgent project needs protected focus time.
+
+Do not fill the calendar with every small task.
+
+* Reminder Rules
+Create or propose a reminder when:
+
+- The user needs a nudge at a time or place.
+- The task is short and can slide.
+- The action is an errand, call, purchase, or check.
+- Missing it is annoying but not a hard calendar failure.
+
+* Org Rules
+Keep the Org task as the source record:
+
+- Projects keep outcomes, child actions, IDs, and dependencies.
+- NEXT actions describe the next visible step.
+- WAITING records who or what is blocking progress.
+- Someday records non-commitments without guilt.
+
+* Daily Scheduling Algorithm
+1. Read real appointments first.
+2. Estimate available focus windows.
+3. Pick one important non-urgent action.
+4. Pick urgent dated actions only if they are real.
+5. Add errands and calls as reminders, not focus blocks.
+6. Ask before writing anything outside Org.
+
+* Safety Rules
+- Never auto-write to Calendar or Reminders without a user yes.
+- Prefer a test calendar before enabling CalDAV sync.
+- If a task could be a reminder or a calendar event, choose reminder unless time must be protected.
+- If the user reschedules repeatedly, ask whether the task is still committed.

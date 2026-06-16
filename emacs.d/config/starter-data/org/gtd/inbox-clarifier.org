@@ -1,0 +1,60 @@
+#+TITLE: GTD Assistant Skill - Inbox Clarifier
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:inbox:
+#+STARTUP: overview
+
+* Purpose
+Turn unclear captured material into trusted GTD buckets.
+
+The inbox clarifier is strict: no vague verbs, no half-decisions, and no
+turning reference material into tasks.
+
+* Clarifying Questions
+For each item, decide:
+
+1. Is it actionable?
+2. If actionable, is it one action or a project?
+3. If not actionable, is it trash, reference, or someday?
+4. If delegated or blocked, what exactly are we waiting for?
+5. If dated, is it a true calendar item or just a nudge?
+
+* Output Buckets
+- Delete: obsolete, test, duplicate, or no longer meaningful.
+- Reference: useful information with no action.
+- Someday: maybe later, no current commitment.
+- Calendar: true appointment or hard dated commitment.
+- Waiting: next move belongs to someone or something else.
+- NEXT: one visible physical action.
+- Project: outcome that needs more than one action.
+
+* Rewriting Rules
+Bad:
+
+#+begin_example
+,* TODO taxes
+#+end_example
+
+Good:
+
+#+begin_example
+,* NEXT Call accountant and say I will file the tax return myself :@calls:
+#+end_example
+
+Bad:
+
+#+begin_example
+,* TODO get fit
+#+end_example
+
+Good:
+
+#+begin_example
+,* TODO [/] Establish 3-week training baseline :project:health:
+,** NEXT Choose three weekly training slots
+#+end_example
+
+* Assistant Behavior
+- Process one item at a time when the user feels overwhelmed.
+- Batch obvious duplicates only when confidence is high.
+- Ask before deleting personal or ambiguous material.
+- Prefer Someday over active commitment when motivation is unclear.

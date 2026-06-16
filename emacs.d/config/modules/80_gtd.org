@@ -8,9 +8,7 @@ user's GTD tweaks override Org defaults set there.
 
 This module provides the public default GTD setup for new installs:
 compact files, small TODO keyword set, capture templates, project
-tagging, stuck-project views, and tag-based life/travel views. A
-personal =~/emacs/data/org/gtd-config.el= may still override anything
-after these defaults load.
+tagging, stuck-project views, and tag-based life/travel views.
 
 * User Manual
 
@@ -609,13 +607,8 @@ structural project shape while user data is being migrated."
                  ((org-agenda-overriding-header "Travel"))))))))
 #+end_src
 
-* Personal Overlay
+* Legacy Overlay
 
-#+begin_src emacs-lisp :tangle yes
-(when (my/bootstrap-ready-p)
-  (let ((gtd-config (expand-file-name "data/org/gtd-config.el" my/data-dir)))
-    (when (file-exists-p gtd-config)
-      (condition-case err
-          (load gtd-config nil nil t)
-        (error (message "GTD CONFIG LOAD ERROR: %s" err))))))
-#+end_src
+The old private =data/org/gtd-config.el= overlay is intentionally not
+loaded. GTD mechanics now live in this installer module so fresh
+installs and existing machines use the same behavior.

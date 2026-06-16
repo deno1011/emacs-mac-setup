@@ -53,7 +53,21 @@ files are never overwritten.
   "Directory containing distro starter Org templates.")
 
 (defconst my/starter-data--files
-  '("inbox.org" "gtd.org" "calendar.org" "archive.org")
+  '("inbox.org"
+    "gtd.org"
+    "calendar.org"
+    "archive.org"
+    "gtd/projects.org"
+    "gtd/next.org"
+    "gtd/waiting.org"
+    "gtd/someday.org"
+    "gtd/tickler.org"
+    "gtd/reference.org"
+    "gtd/daily-coach.org"
+    "gtd/scheduling-policy.org"
+    "gtd/inbox-clarifier.org"
+    "gtd/weekly-review-coach.org"
+    "gtd/horizon-coach.org")
   "Starter Org files copied into data/org/ when missing.")
 #+end_src
 

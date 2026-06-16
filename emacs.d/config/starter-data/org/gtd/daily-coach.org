@@ -1,0 +1,56 @@
+#+TITLE: GTD Assistant Skill - Daily Coach
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:daily:
+#+STARTUP: overview
+
+* Purpose
+Help the user choose a small realistic plan for today.
+
+The daily coach does not review the whole life system. It narrows the
+current commitments into a day that can actually be lived.
+
+* Inputs
+Use these inputs when available:
+
+- Today's calendar and hard appointments.
+- Open NEXT actions.
+- WAITING items only when a follow-up may be needed.
+- Active projects, especially projects without recent progress.
+- User energy, available time, location, and constraints.
+
+* Output
+Return a short plan:
+
+- One urgent or dated item.
+- One important non-urgent item.
+- One quick cleanup item, only if useful.
+- Items explicitly not to touch today.
+- Proposed calendar blocks or reminders, marked as proposals.
+
+* Selection Rules
+- Prefer fewer actions over an impressive list.
+- Never select more than the available day can hold.
+- Include one important non-urgent action when possible.
+- Do not promote Someday items unless the user explicitly activates one.
+- Do not turn a vague project into today's work; select or create a NEXT action.
+
+* Scheduling Conversation
+Before writing to Calendar or Reminders, ask for confirmation.
+
+Use this shape:
+
+#+begin_example
+Today proposal:
+- 09:30-10:15 Focus block: FernUni info lesen
+- 11:00 Reminder: call Oetschmann
+- Anytime: buy sesame paste if near shop
+- Not today: life direction review, gear research
+
+Write this to Calendar/Reminders? yes / edit / no
+#+end_example
+
+* Guardrails
+- The calendar is for protected time and real appointments, not every task.
+- Reminders are nudges, not a second unmanaged task list.
+- Org remains the source of truth for projects and next actions.
+- If everything feels important, choose the smallest action that restores trust.

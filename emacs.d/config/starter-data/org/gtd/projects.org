@@ -1,0 +1,8 @@
+#+TITLE: Projects - Active Multi-step Outcomes
+#+STARTUP: overview
+#+TAGS: project area goal life admin finance health family home emacs learning focus quick @home @computer @errand @calls
+
+# A project is an outcome that needs more than one action.
+# Mark active project headings with a local :project: tag.
+# Each active project should have at least one NEXT child action.
+

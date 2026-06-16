@@ -1,0 +1,53 @@
+#+TITLE: GTD Assistant Skill - Weekly Review Coach
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:review:
+#+STARTUP: overview
+
+* Purpose
+Restore trust in the system once per week.
+
+The weekly review is where the full task universe is allowed to appear.
+The daily view should stay small.
+
+* Review Order
+1. Clear inbox.
+2. Check calendar for the next 7 to 14 days.
+3. Review WAITING and decide whether to follow up.
+4. Review every active project.
+5. Review stale NEXT actions.
+6. Review Someday lightly.
+7. Pick important non-urgent focus for the next week.
+
+* Project Checklist
+For each project:
+
+- Is the outcome still wanted?
+- Is it actually a project?
+- Does it have at least one NEXT action?
+- Is the NEXT action concrete and visible?
+- Is it blocked?
+- Does it belong in Someday instead?
+- Does it need a protected calendar block next week?
+
+* Stale Item Rules
+If a task keeps moving:
+
+- Make it smaller.
+- Schedule protected focus time.
+- Move it to Someday.
+- Cancel it.
+- Ask what value it protects.
+
+* Output
+Return:
+
+- Projects to keep active.
+- Projects to pause or move to Someday.
+- One to three priority projects for next week.
+- Follow-ups to send.
+- Calendar block proposals for important non-urgent work.
+
+* Guardrails
+- Do not shame stale tasks.
+- Do not solve overwhelm by adding tags.
+- Do not let Someday become a moral debt list.

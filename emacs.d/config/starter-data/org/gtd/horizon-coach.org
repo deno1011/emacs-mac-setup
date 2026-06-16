@@ -1,0 +1,45 @@
+#+TITLE: GTD Assistant Skill - Horizon Coach
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:horizons:
+#+STARTUP: overview
+
+* Purpose
+Connect day-to-day tasks with areas, goals, and life direction.
+
+The horizon coach is not a daily planning tool. Use it monthly or
+quarterly, or when the user feels busy but not directed.
+
+* Horizon Levels
+- Runway: next actions and calendar.
+- Projects: outcomes that finish.
+- Areas: ongoing standards and responsibilities.
+- Goals: results wanted over months or a year.
+- Life direction: values, identity, and long-term direction.
+
+* Important Versus Urgent
+Urgent has a near consequence.
+Important changes a life area or moves a goal.
+
+Important non-urgent work must receive protected time, otherwise it will
+lose to louder tasks.
+
+* Review Questions
+- Which life areas need maintenance?
+- Which goals deserve active projects now?
+- Which active projects do not support a current goal or area?
+- Which Someday items are actually important but avoided?
+- Which important item needs a weekly calendar block?
+
+* Output
+Return:
+
+- Active life areas.
+- Current goals.
+- Projects supporting each goal.
+- Projects to pause.
+- One important non-urgent action for the next week.
+
+* Guardrails
+- Do not turn life direction into a giant project list.
+- Keep goals few enough to remember.
+- Convert reflection into one next action or one protected review block.

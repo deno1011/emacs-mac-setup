@@ -12,6 +12,10 @@ This setup keeps the GTD system small on purpose.
 - gtd.org: next actions, projects, waiting-for, someday/maybe, tickler, and reviews.
 - calendar.org: dated commitments and true deadlines.
 - archive.org: completed or cancelled items after archiving.
+- gtd/*.org: GTD assistant skill manuals for daily planning,
+  scheduling, inbox clarification, weekly review, and horizons. The
+  setup also seeds split GTD files under gtd/ for users who prefer
+  separate operational files.
 
 Reference material can live outside GTD, for example in your wiki or
 notes. Only create another GTD file when it solves a real review
@@ -30,6 +34,32 @@ The empty top-level sections below this manual are intentional landing
 zones. Capture and refile commands need stable headings. They begin
 empty because your real system should contain your real actions, not
 installer sample tasks.
+
+** GTD Assistant Skill Files
+The setup also seeds Org files that describe how an AI assistant should
+help you operate the system. They are manuals and prompts, not task
+lists:
+
+- [[file:gtd/daily-coach.org][daily-coach.org]]: choose a small realistic day plan.
+- [[file:gtd/scheduling-policy.org][scheduling-policy.org]]: decide calendar vs reminder vs Org schedule.
+- [[file:gtd/inbox-clarifier.org][inbox-clarifier.org]]: process unclear inputs into GTD buckets.
+- [[file:gtd/weekly-review-coach.org][weekly-review-coach.org]]: keep projects, waiting, and someday clean.
+- [[file:gtd/horizon-coach.org][horizon-coach.org]]: connect life areas and goals to projects.
+
+** Split GTD Files
+The compact default system uses this =gtd.org= file as the primary
+operational file. The bootstrap also seeds split files for users who
+prefer smaller operational files or already have an older split setup:
+
+- [[file:gtd/projects.org][projects.org]]: active multi-step outcomes.
+- [[file:gtd/next.org][next.org]]: standalone next actions.
+- [[file:gtd/waiting.org][waiting.org]]: delegated or blocked items.
+- [[file:gtd/someday.org][someday.org]]: possible future actions and ideas.
+- [[file:gtd/tickler.org][tickler.org]]: date-triggered reminders.
+- [[file:gtd/reference.org][reference.org]]: non-actionable GTD reference.
+
+Existing files are never overwritten. Choose compact or split as your
+operational style; do not duplicate the same active task in both.
 
 ** Clarifying Inbox Items
 For each inbox item, ask:
@@ -53,7 +83,7 @@ Decision guide:
 - Move it to Next Actions when it is one visible physical action.
 - Move it to Projects when it needs more than one action to finish.
 
-** TODO Keywords
+** Todo Keywords
 Use these states:
 
 #+begin_example
@@ -81,14 +111,14 @@ are still treated as projects so old data remains visible.
 Minimal project example:
 
 #+begin_example
-** TODO [/] Renew driving license :project:admin:
+,** TODO [/] Renew driving license :project:admin:
 :PROPERTIES:
 :CATEGORY: license
 :COOKIE_DATA: todo recursive
 :END:
-*** NEXT Find required city-office documents :@computer:
-*** TODO Book appointment :@computer:
-*** WAITING Confirmation from city office
+,*** NEXT Find required city-office documents :@computer:
+,*** TODO Book appointment :@computer:
+,*** WAITING Confirmation from city office
 #+end_example
 
 The progress cookie [/] and COOKIE_DATA property let Org show project
@@ -191,31 +221,31 @@ Use C-c a and then:
 Next action:
 
 #+begin_example
-** NEXT Call the city office about required license documents :@calls:
+,** NEXT Call the city office about required license documents :@calls:
 #+end_example
 
 Waiting item:
 
 #+begin_example
-** WAITING Tax statement from accountant
+,** WAITING Tax statement from accountant
 #+end_example
 
 Someday item:
 
 #+begin_example
-** TODO Learn photo editing workflow :someday:
+,** TODO Learn photo editing workflow :someday:
 #+end_example
 
 Travel item:
 
 #+begin_example
-** TODO Check passport validity before Japan trip :travel:
+,** TODO Check passport validity before Japan trip :travel:
 #+end_example
 
 Flight item:
 
 #+begin_example
-** TODO Add flight check-in reminder :flight:travel:
+,** TODO Add flight check-in reminder :flight:travel:
 #+end_example
 
 * Next Actions
@@ -229,7 +259,7 @@ context tag such as :@computer:, :@calls:, :@home:, or :@errand:.
 Example shape:
 
 #+begin_example
-** NEXT Call city office about required driving-license documents :@calls:
+,** NEXT Call city office about required driving-license documents :@calls:
 #+end_example
 
 * Projects
