@@ -1,0 +1,78 @@
+#+TITLE: GTD Assistant Skill - Initial Setup Coach
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:setup:
+#+STARTUP: overview
+
+* Purpose
+Build, or rebuild, the system from zero. Once. Get every open loop out of
+the head and into trusted buckets so the daily and weekly views can stay
+small. This is the capture-and-clarify pass that the weekly review assumes
+has already happened.
+
+* When To Use
+- The first time GTD is set up.
+- After a long gap, when the lists no longer reflect reality.
+- When the weekly review keeps surfacing "this is outdated" and trust is gone.
+
+Run this rarely (a few times a year at most). Day-to-day drift is the
+weekly review's job, not this.
+
+* Process
+1. Capture (mind sweep): empty the head into inbox.org. Do not organize yet.
+2. Clarify: process inbox top to bottom, one item at a time.
+3. Organize: file each clarified item into its bucket.
+4. Reflect: set the review rhythm so the system stays trusted.
+
+Capture fully before clarifying. Mixing the two stalls both.
+
+* Mind Sweep Triggers
+Walk these out loud and write everything that pulls attention into
+inbox.org. Raw phrasing is fine; do not decide anything yet.
+
+Professional / projects:
+- started but unfinished, promised but not delivered, waiting on others,
+  decisions owed, things to read, write, learn, or fix.
+
+Personal / life:
+- health, fitness, sleep, food; finances, taxes, bills, subscriptions;
+- home, repairs, cleaning, things to buy, replace, or throw away;
+- family, friends, calls owed, gifts, events; admin, documents, renewals;
+- car, travel, errands; hobbies, creative work, ideas parked too long.
+
+Open mental loops:
+- anything you keep re-remembering; anything that creates vague guilt;
+- every "I should...", "I need to...", "what about..." — capture the phrase.
+
+* Clarify Rules
+For each captured item, decide in order:
+
+1. Actionable? If no, then trash, reference, or someday/maybe.
+2. One action or multi-step? More than one action means it is a project.
+3. Under two minutes? Do it now, do not file it.
+4. Yours to do? If not, then waiting.org with who and when.
+5. Date-bound? A hard date or time goes to calendar.org. Otherwise next.org.
+6. A project goes to projects.org with an outcome line and a concrete NEXT.
+
+Write the next physical, visible action, not the outcome. "Call X about Y",
+not "sort out Y".
+
+* Project Rules
+Every project needs a one-line outcome (what "done" looks like) and at
+least one NEXT action that is concrete and doable now. A project without a
+NEXT is stuck before it starts.
+
+* Output
+Return:
+- A clean inbox (nothing left unclarified).
+- Count of projects created, each with its NEXT.
+- Items moved to waiting, someday, reference, or calendar.
+- 1 to 3 projects to make active first; the rest can wait their turn.
+- Anything that is really an Area or a Horizon, flagged for later rather
+  than forced into projects.
+
+* Guardrails
+- Capture without judging or solving. Speed first, decisions later.
+- Do not turn the mind sweep into doing the tasks.
+- It is fine, and normal, for most captured items to become someday or trash.
+- Do not define life goals here. Clear the runway first; horizons later.
+- Stop when the head feels empty, not when the list looks impressive.

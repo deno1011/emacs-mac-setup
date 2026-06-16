@@ -39,7 +39,8 @@
     "gtd/scheduling-policy.org"
     "gtd/inbox-clarifier.org"
     "gtd/weekly-review-coach.org"
-    "gtd/horizon-coach.org")
+    "gtd/horizon-coach.org"
+    "gtd/initial-setup-coach.org")
   "Starter Org files copied into data/org/ when missing.")
 
 (defun my/starter-data--source (file)

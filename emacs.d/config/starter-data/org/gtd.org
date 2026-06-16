@@ -40,6 +40,7 @@ The setup also seeds Org files that describe how an AI assistant should
 help you operate the system. They are manuals and prompts, not task
 lists:
 
+- [[file:gtd/initial-setup-coach.org][initial-setup-coach.org]]: build or reset the whole system once (mind sweep + clarify).
 - [[file:gtd/daily-coach.org][daily-coach.org]]: choose a small realistic day plan.
 - [[file:gtd/scheduling-policy.org][scheduling-policy.org]]: decide calendar vs reminder vs Org schedule.
 - [[file:gtd/inbox-clarifier.org][inbox-clarifier.org]]: process unclear inputs into GTD buckets.
