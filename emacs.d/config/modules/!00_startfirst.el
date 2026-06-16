@@ -112,6 +112,12 @@
     (require 'elpaca)
     (elpaca-generate-autoloads "elpaca" repo)
     (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
+;; elpaca 0.2.0 defaults package clones to `:depth treeless' (tree:0 partial
+;; clone). In this environment that leaves the working tree empty (only .git →
+;; "Unable to find main elisp file" on magit/org-roam/nerd-icons/…), and a
+;; shallow clone can't reach a pinned `:ref'. Use full clones for reliability.
+(when (boundp 'elpaca-order-defaults)
+  (setq elpaca-order-defaults (plist-put elpaca-order-defaults :depth nil)))
 (add-hook 'after-init-hook #'elpaca-process-queues)
 (elpaca `(,@elpaca-order))
 
