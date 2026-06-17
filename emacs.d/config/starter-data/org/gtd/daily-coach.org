@@ -12,11 +12,31 @@ current commitments into a day that can actually be lived.
 * Inputs
 Use these inputs when available:
 
-- Today's calendar and hard appointments.
+- Today's calendar and hard appointments. Refresh/read the Apple Calendar
+  mirror first when available.
 - Open NEXT actions.
 - WAITING items only when a follow-up may be needed.
 - Active projects, especially projects without recent progress.
 - User energy, available time, location, and constraints.
+
+* Calendar Mirror Pass
+Before choosing a day plan, treat the Apple Calendar mirror as the AI-readable
+calendar input layer:
+
+1. Refresh/read the read-only mirror (=C-c k m=) or the equivalent calendar
+   event feed.
+2. Apply persistent roles: per-calendar defaults from
+   =calendar-classification.eld= and per-event overrides from
+   =calendar-overrides.eld=.
+3. Classify uncertain events before calculating availability:
+   - =busy= blocks free time.
+   - =info= is visible context and does not block free time.
+   - =ignore= is duplicate/noise and should disappear from the planning view.
+4. Compute free slots from =busy= events only; keep =info= events as context
+   when proposing the day.
+5. If an event implies work to do, propose a GTD task or reminder. Do not move
+   mirrored external events into =calendar.org= unless the user explicitly
+   wants to create a new Emacs-owned appointment.
 
 * Output
 Return a short plan:
