@@ -17,6 +17,8 @@ macOS only. First use triggers a one-time macOS Calendar-access prompt.
 (defvar org-apple-calendar-source-file)
 (defvar org-apple-calendar-overrides-file)
 (defvar org-apple-calendar-classification-file)
+(defvar org-apple-calendar-auto-refresh-interval)
+(declare-function org-apple-calendar-setup-auto-refresh "org-apple-calendar")
 (declare-function org-apple-calendar-override-role "org-apple-calendar")
 (declare-function org-apple-calendar-init-classification "org-apple-calendar")
 (declare-function org-apple-calendar-show-calendars "org-apple-calendar")
@@ -86,5 +88,9 @@ in =!00_startfirst= avoids treeless partial clones). Commands hang off a
           org-apple-calendar-overrides-file
           (expand-file-name "data/org/calendar-overrides.eld" my/data-dir)
           org-apple-calendar-classification-file
-          (expand-file-name "data/org/calendar-classification.eld" my/data-dir))))
+          (expand-file-name "data/org/calendar-classification.eld" my/data-dir))
+    ;; Idle auto-refresh of the read-only mirror (15 min idle). The two-way
+    ;; write sync (C-c k s) stays manual on purpose.
+    (setq org-apple-calendar-auto-refresh-interval 900)
+    (org-apple-calendar-setup-auto-refresh)))
 #+end_src
