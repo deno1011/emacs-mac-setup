@@ -53,7 +53,8 @@ wegwerfbar und wird neu erzeugt; dauerhafte Entscheidungen leben in
 | =C-c k f= | Wann bin ich frei (nur echte busy-Zeiten)           |
 | =C-c k m= | Read-only Spiegel für die Agenda aktualisieren      |
 | =C-c k i= | Externe Deadlines → GTD-Aufgaben (confirm)          |
-| =C-c k p= | =calendar.org= → „Org"-Kalender schreiben           |
+| =C-c k p= | =calendar.org= → „Org"-Kalender schreiben (nur Anlegen) |
+| =C-c k s= | Zwei-Wege-Sync „Org" ↔ =calendar.org= (Pull/Update/Delete) |
 | =C-c k a= | Externen Mirror-Termin nach =calendar.org= adoptieren |
 | =C-c k o= | Rolle eines Events überschreiben (busy/info/ignore) |
 
@@ -102,7 +103,12 @@ nicht einfach nach =calendar.org= verschoben.
 Beim ersten =C-c k=-Befehl den macOS-Dialog „Emacs darf auf Kalender zugreifen"
 mit „Erlauben" bestätigen.
 
-* Noch nicht (geplante Increments)
-Apple→org Pull für den „Org"-Kalender und Update/Delete-Sync (in Apple geänderte/
-gelöschte „Org"-Termine kommen noch nicht zurück). Recurrence-Write für einfache
-Repeater ist da; komplexe Muster (Mo–Fr/Sexp) bleiben Apple-nativ.
+* Zwei-Wege-Sync
+=C-c k s= gleicht „Org"-Kalender ↔ =calendar.org= ab (nicht-wiederkehrende
+Termine): neue Apple-Termine → org; org-Änderungen → Apple; in Apple geänderte →
+org (Apple gewinnt, wenn dort zuletzt geändert); =:APPLE_DELETE: t= → löscht in
+Apple + entfernt das Heading; in Apple gelöschte → Heading =:apple-deleted:=.
+
+* Noch nicht
+Komplexe Recurrence (Mo–Fr/Sexp) und das Bearbeiten *wiederkehrender* Serien in
+Apple bleiben Apple-nativ.
