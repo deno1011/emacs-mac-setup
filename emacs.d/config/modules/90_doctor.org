@@ -310,6 +310,20 @@ and :fix. The :label is supplied by this macro."
           :fix "M-x my/caldav-set-password"))))
 #+end_src
 
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "Apple Calendar integration (org-apple-calendar)"
+  (cond
+   ((not (eq system-type 'darwin))
+    (list :status :ok :detail "not macOS — skipped"))
+   ((fboundp 'org-apple-calendar-list-calendars)
+    (list :status :ok
+          :detail "installed — first C-c k use prompts once for macOS Calendar access"))
+   (t
+    (list :status :warn
+          :detail "org-apple-calendar not loaded (EventKit calendar read/ingest)"
+          :fix "check modules/56_calendar; elpaca installs deno1011/org-apple-calendar"))))
+#+end_src
+
 * External services
 
 #+begin_src emacs-lisp :tangle yes

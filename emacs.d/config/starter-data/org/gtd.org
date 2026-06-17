@@ -47,6 +47,11 @@ lists:
 - [[file:gtd/weekly-review-coach.org][weekly-review-coach.org]]: keep projects, waiting, and someday clean.
 - [[file:gtd/horizon-coach.org][horizon-coach.org]]: connect life areas and goals to projects.
 
+Apple-integration manuals (how the macOS sync is wired and operated):
+
+- [[file:gtd/apple-reminders-setup.org][apple-reminders-setup.org]]: Reminders ↔ GTD (lists, SCHEDULED⇄due, promote).
+- [[file:gtd/apple-calendar-setup.org][apple-calendar-setup.org]]: Calendar ↔ GTD (appointments, free-slots, ingest, roles).
+
 ** Split GTD Files
 The compact default system uses this =gtd.org= file as the primary
 operational file. The bootstrap also seeds split files for users who

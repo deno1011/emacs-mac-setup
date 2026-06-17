@@ -16,9 +16,9 @@ macOS only. First use triggers a one-time macOS Calendar-access prompt.
 (defvar org-apple-calendar-ingest-file)
 (defvar org-apple-calendar-source-file)
 (defvar org-apple-calendar-overrides-file)
-(defvar org-apple-calendar-info-calendars)
-(defvar org-apple-calendar-ignore-calendars)
+(defvar org-apple-calendar-classification-file)
 (declare-function org-apple-calendar-override-role "org-apple-calendar")
+(declare-function org-apple-calendar-init-classification "org-apple-calendar")
 (declare-function org-apple-calendar-show-calendars "org-apple-calendar")
 (declare-function org-apple-calendar-upcoming "org-apple-calendar")
 (declare-function org-apple-calendar-show-free-slots "org-apple-calendar")
@@ -64,17 +64,20 @@ in =!00_startfirst= avoids treeless partial clones). Commands hang off a
     (define-key my/calendar-map (kbd "i") #'org-apple-calendar-ingest-deadlines)
     (define-key my/calendar-map (kbd "p") #'org-apple-calendar-push-appointments)
     (define-key my/calendar-map (kbd "o") #'org-apple-calendar-override-role)
+    (define-key my/calendar-map (kbd "c") #'org-apple-calendar-init-classification)
     :config
+    ;; All personal paths live under the (git-crypt) data repo — encrypted,
+    ;; reinstall-safe, and out of this shared config. The per-calendar
+    ;; busy/info/ignore policy is the user's own data: it lives in
+    ;; calendar-classification.eld, auto-created listing ALL calendars on first
+    ;; access (or M-x org-apple-calendar-init-classification / C-c k c).
+    ;; No real calendar names in this public module.
     (setq org-apple-calendar-ingest-file
           (expand-file-name "data/org/gtd/next.org" my/data-dir)
           org-apple-calendar-source-file
           (expand-file-name "data/org/calendar.org" my/data-dir)
-          ;; Role overrides persist in the git-crypt data repo (reinstall-safe).
           org-apple-calendar-overrides-file
           (expand-file-name "data/org/calendar-overrides.eld" my/data-dir)
-          ;; Default per-calendar policy — tune freely; per-event override wins.
-          org-apple-calendar-info-calendars
-          '("Modern Arnis München" "Familienkalender" "Übereiter"
-            "Deutsche Feiertage" "Geburtstage" "Luka" "Lucy" "Hatu&Denis")
-          org-apple-calendar-ignore-calendars '("Kalenderwochen"))))
+          org-apple-calendar-classification-file
+          (expand-file-name "data/org/calendar-classification.eld" my/data-dir))))
 #+end_src
