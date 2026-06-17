@@ -1,0 +1,62 @@
+#+TITLE: org-apple-calendar — EventKit read + ingest
+#+STARTUP: overview
+
+Installs and wires [[https://github.com/deno1011/org-apple-calendar][org-apple-calendar]] — the EventKit/JXA read+ingest side of
+the calendar integration (the default; the optional CalDAV write backend lives
+in =55_calendar.org=). Read-only over all calendars: list/classify, upcoming,
+free-slots, a read-only org-agenda mirror, and deadline ingest into GTD.
+
+macOS only. First use triggers a one-time macOS Calendar-access prompt.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 56_calendar.el --- EventKit calendar read + ingest -*- lexical-binding: t; -*-
+
+(defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(defvar org-apple-calendar-ingest-file)
+(declare-function org-apple-calendar-show-calendars "org-apple-calendar")
+(declare-function org-apple-calendar-upcoming "org-apple-calendar")
+(declare-function org-apple-calendar-show-free-slots "org-apple-calendar")
+(declare-function org-apple-calendar-refresh-mirror "org-apple-calendar")
+(declare-function org-apple-calendar-ingest-deadlines "org-apple-calendar")
+#+end_src
+
+* Install and configure
+
+Cloned from GitHub via elpaca (full clone — the global =:depth nil= default set
+in =!00_startfirst= avoids treeless partial clones). Commands hang off a
+=C-c k= ("Kalender") prefix, mirroring the reminders =C-c r= map.
+
+- Ingested deadline tasks land in =gtd/next.org= (NEXT + SCHEDULED), so they
+  flow on to Apple Reminders "Anstehend" via `org-apple-reminders`' SCHEDULED
+  path once promoted.
+- The read-only agenda mirror lives in the Emacs cache (regenerable; not in the
+  git-synced data repo) and is added to `org-agenda-files' on refresh.
+
+#+begin_src emacs-lisp :tangle yes
+(when (and (eq system-type 'darwin)
+           (my/bootstrap-ready-p))
+  (use-package org-apple-calendar
+    :ensure (org-apple-calendar
+             :host github
+             :repo "deno1011/org-apple-calendar"
+             :branch "main"
+             :depth nil)
+    :defer t
+    :commands (org-apple-calendar-show-calendars
+               org-apple-calendar-upcoming
+               org-apple-calendar-show-free-slots
+               org-apple-calendar-refresh-mirror
+               org-apple-calendar-ingest-deadlines)
+    :init
+    (define-prefix-command 'my/calendar-map)
+    (global-set-key (kbd "C-c k") 'my/calendar-map)
+    (define-key my/calendar-map (kbd "l") #'org-apple-calendar-show-calendars)
+    (define-key my/calendar-map (kbd "u") #'org-apple-calendar-upcoming)
+    (define-key my/calendar-map (kbd "f") #'org-apple-calendar-show-free-slots)
+    (define-key my/calendar-map (kbd "m") #'org-apple-calendar-refresh-mirror)
+    (define-key my/calendar-map (kbd "i") #'org-apple-calendar-ingest-deadlines)
+    :config
+    (setq org-apple-calendar-ingest-file
+          (expand-file-name "data/org/gtd/next.org" my/data-dir))))
+#+end_src
