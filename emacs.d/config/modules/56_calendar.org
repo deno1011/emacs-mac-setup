@@ -14,11 +14,13 @@ macOS only. First use triggers a one-time macOS Calendar-access prompt.
 (defvar my/data-dir)
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (defvar org-apple-calendar-ingest-file)
+(defvar org-apple-calendar-source-file)
 (declare-function org-apple-calendar-show-calendars "org-apple-calendar")
 (declare-function org-apple-calendar-upcoming "org-apple-calendar")
 (declare-function org-apple-calendar-show-free-slots "org-apple-calendar")
 (declare-function org-apple-calendar-refresh-mirror "org-apple-calendar")
 (declare-function org-apple-calendar-ingest-deadlines "org-apple-calendar")
+(declare-function org-apple-calendar-push-appointments "org-apple-calendar")
 #+end_src
 
 * Install and configure
@@ -56,7 +58,10 @@ in =!00_startfirst= avoids treeless partial clones). Commands hang off a
     (define-key my/calendar-map (kbd "f") #'org-apple-calendar-show-free-slots)
     (define-key my/calendar-map (kbd "m") #'org-apple-calendar-refresh-mirror)
     (define-key my/calendar-map (kbd "i") #'org-apple-calendar-ingest-deadlines)
+    (define-key my/calendar-map (kbd "p") #'org-apple-calendar-push-appointments)
     :config
     (setq org-apple-calendar-ingest-file
-          (expand-file-name "data/org/gtd/next.org" my/data-dir))))
+          (expand-file-name "data/org/gtd/next.org" my/data-dir)
+          org-apple-calendar-source-file
+          (expand-file-name "data/org/calendar.org" my/data-dir))))
 #+end_src
