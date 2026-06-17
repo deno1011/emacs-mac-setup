@@ -1,0 +1,139 @@
+#+TITLE: org-caldav — Apple Calendar (iCloud) Sync
+#+STARTUP: overview
+
+Bidirectional sync between =calendar.org= (hard appointments, active
+timestamps) and an iCloud calendar via CalDAV, using the community package
+[[https://github.com/dengste/org-caldav][org-caldav]].
+
+Architecture:
+- =calendar.org= holds appointments as headings with an *active timestamp*
+  =<2026-06-25 Wed 09:30-10:15>= (events, not tasks — no TODO keyword).
+- Events created on the iPhone come back into =calendar-inbox.org=; refile
+  them into =calendar.org= afterwards.
+- This is the calendar counterpart to =50_apple_reminders=: Reminders carry
+  dated *tasks* (org SCHEDULED), the calendar carries *appointments*.
+
+Account-specific values (=org-caldav-url=, =org-caldav-calendar-id=,
+=org-icalendar-timezone=) and the iCloud credentials live OUTSIDE this public
+module:
+- URL + calendar id  →  =local.org= (per-Mac override, not in the public repo).
+- App-specific password  →  auth-source (macOS Keychain or =~/.authinfo.gpg=).
+
+macOS only.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 55_calendar.el --- Apple Calendar (iCloud) sync via org-caldav -*- lexical-binding: t; -*-
+
+(defvar my/data-dir)
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(defvar org-caldav-url)
+(defvar org-caldav-calendar-id)
+(defvar org-caldav-files)
+(defvar org-caldav-inbox)
+(defvar org-caldav-save-directory)
+(declare-function org-caldav-sync "org-caldav")
+(declare-function my/keychain-set-internet "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-get-internet "20.01.01_bootstrap_keychain")
+#+end_src
+
+* Configuration
+
+Generic, non-account configuration. =org-caldav-sync= stays inert until
+=org-caldav-url= and =org-caldav-calendar-id= are set (in =local.org=), so
+this module is safe to load before iCloud is wired up.
+
+- =org-caldav-files= :: org files whose events are pushed to iCloud.
+- =org-caldav-inbox= :: where events created on other devices land.
+- =org-caldav-save-directory= :: per-machine sync state (UID↔org mapping).
+- auth-source reads the app-specific password by host; Keychain first.
+
+#+begin_src emacs-lisp :tangle yes
+(when (and (eq system-type 'darwin)
+           (my/bootstrap-ready-p))
+  (use-package org-caldav
+    :ensure t
+    :defer t
+    :commands (org-caldav-sync)
+    :init
+    ;; Read the iCloud app-specific password from the macOS Keychain first,
+    ;; then ~/.authinfo.gpg. The password is never stored in this config.
+    (require 'auth-source)
+    (add-to-list 'auth-sources 'macos-keychain-internet)
+    :config
+    (setq org-caldav-files
+          (list (expand-file-name "data/org/calendar.org" my/data-dir))
+          org-caldav-inbox
+          (expand-file-name "data/org/calendar-inbox.org" my/data-dir)
+          org-caldav-save-directory
+          (expand-file-name "org-caldav/" user-emacs-directory))
+    ;; Only org entries with an active timestamp become calendar events;
+    ;; SCHEDULED/DEADLINE tasks belong to org-apple-reminders, not here.
+    (setq org-caldav-sync-todo nil)
+    (let ((d org-caldav-save-directory))
+      (unless (file-directory-p d) (make-directory d t)))))
+#+end_src
+
+* Credential command
+
+=my/caldav-set-password= prompts for the Apple ID and the app-specific
+password and stores it in the macOS Keychain as an HTTPS Internet password —
+the same thing the manual =security add-internet-password= invocation does,
+but inside Emacs (the password is read with `read-passwd', never echoed).
+
+It writes the entry for =caldav.icloud.com= (used during discovery) and, when
+=org-caldav-url= is already set, also for that host (the =pNN-caldav.icloud.com=
+the sync actually talks to). auth-source's =macos-keychain-internet= backend
+then resolves the credential automatically. The doctor (=M-x my/doctor=) flags
+a missing entry and points here.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/caldav-apple-id nil
+  "Apple ID (email) for iCloud CalDAV. nil ⇒ prompt with `user-mail-address'.
+Set in `local.org' to skip the prompt.")
+
+(defun my/caldav-set-password ()
+  "Prompt for the iCloud Apple ID + app-specific password; store in Keychain.
+Stores an HTTPS Internet password for `caldav.icloud.com' and, when
+`org-caldav-url' is set, for its host too. Run this once, or whenever the
+doctor reports the credential missing."
+  (interactive)
+  (unless (fboundp 'my/keychain-set-internet)
+    (user-error "Keychain primitive unavailable (bootstrap not loaded)"))
+  (let* ((account (read-string "Apple ID (email): "
+                               (or my/caldav-apple-id user-mail-address)))
+         (pass    (read-passwd "iCloud app-specific password: "))
+         (hosts   (delete-dups
+                   (cons "caldav.icloud.com"
+                         (when (and (boundp 'org-caldav-url)
+                                    (stringp org-caldav-url)
+                                    (string-match-p "icloud" org-caldav-url))
+                           (let ((h (url-host (url-generic-parse-url
+                                               org-caldav-url))))
+                             (and h (list h))))))))
+    (when (string-empty-p (string-trim account))
+      (user-error "Apple ID must not be empty"))
+    (when (string-empty-p (string-trim pass))
+      (user-error "Password must not be empty"))
+    (dolist (host hosts)
+      (let ((res (my/keychain-set-internet host account pass)))
+        (unless (eq res :ok)
+          (user-error "Keychain write failed for %s: %s" host (cadr res)))))
+    (message "iCloud CalDAV password stored for %s (%s)"
+             account (string-join hosts ", "))))
+#+end_src
+
+* iCloud wiring (do once, in =local.org=)
+
+This module deliberately omits the account-specific values. After creating an
+"Org" calendar in Calendar.app and an app-specific password at
+=appleid.apple.com=, the per-Mac =local.org= sets:
+
+#+begin_example
+(setq org-icalendar-timezone "Europe/Berlin")
+(setq org-caldav-url        "https://pNN-caldav.icloud.com/DSID/calendars")
+(setq org-caldav-calendar-id "UUID-OF-THE-ORG-CALENDAR")
+#+end_example
+
+The app-specific password goes into the Keychain (Internet password for the
+matching =pNN-caldav.icloud.com= host, account = Apple ID) or =~/.authinfo.gpg=.
+Then: =M-x org-caldav-sync=.

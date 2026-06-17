@@ -17,6 +17,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (declare-function my/bootstrap-ready-p             "20.03.01_bootstrap")
 (declare-function my/bootstrap--all-credential-descriptors "20.03.01_bootstrap")
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-get-internet         "20.01.01_bootstrap_keychain")
 (declare-function my/git-remote-url                "20.01.02_bootstrap_git")
 (declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
 #+end_src
@@ -290,6 +291,23 @@ and :fix. The :label is supplied by this macro."
                                                   rows))
                                          ", "))))
        (t (list :status :ok :detail detail)))))))
+#+end_src
+
+#+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "iCloud CalDAV password"
+  (cond
+   ((not (eq system-type 'darwin))
+    (list :status :ok :detail "not macOS — skipped"))
+   ((not (and (boundp 'org-caldav-url) (stringp org-caldav-url)
+              (string-match-p "icloud" org-caldav-url)))
+    (list :status :ok :detail "iCloud calendar sync not configured — skipped"))
+   ((and (fboundp 'my/keychain-get-internet)
+         (my/keychain-get-internet "caldav.icloud.com"))
+    (list :status :ok :detail "app-specific password present in Keychain"))
+   (t
+    (list :status :warn
+          :detail "org-caldav configured but no app-password in Keychain"
+          :fix "M-x my/caldav-set-password"))))
 #+end_src
 
 * External services

@@ -23,6 +23,8 @@ and stays well under the 150-line ceiling.
 ;; Public API (callable from any Layer-2 file):
 ;;   (my/keychain-get SERVICE ACCOUNT)            → string value, or nil
 ;;   (my/keychain-set SERVICE ACCOUNT VALUE)      → :ok or (:error MSG)
+;;   (my/keychain-get-internet SERVER &optional ACCOUNT) → string, or nil
+;;   (my/keychain-set-internet SERVER ACCOUNT VALUE)     → :ok or (:error MSG)
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   (none)
@@ -80,6 +82,62 @@ command; not appropriate for high-frequency or remote use."
         (let ((exit (call-process "security" nil buf nil
                                   "add-generic-password" "-U"
                                   "-s" service
+                                  "-a" account
+                                  "-w" value)))
+          (if (zerop exit)
+              :ok
+            `(:error ,(with-current-buffer buf
+                        (string-trim (buffer-string))))))
+      (kill-buffer buf))))
+#+end_src
+
+** =my/keychain-get-internet= — single Internet-password read
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/keychain-get-internet (server &optional account)
+  "Return the Internet password stored for SERVER in the macOS Keychain.
+
+When ACCOUNT is non-nil it further restricts the lookup. Returns the
+value as a string when an entry exists, or nil when none is configured
+(or the `security' subprocess failed). Empty values normalise to nil.
+
+Thin wrapper around
+  security find-internet-password -s SERVER [-a ACCOUNT] -w
+This is the host-keyed counterpart to `my/keychain-get'; url.el clients
+such as org-caldav resolve credentials through auth-source's
+`macos-keychain-internet' backend, which reads exactly these entries."
+  (let* ((cmd (concat "security find-internet-password -s "
+                      (shell-quote-argument server)
+                      (when account
+                        (concat " -a " (shell-quote-argument account)))
+                      " -w 2>/dev/null"))
+         (out (with-output-to-string
+                (with-current-buffer standard-output
+                  (call-process-shell-command cmd nil t))))
+         (trimmed (string-trim out)))
+    (if (string-empty-p trimmed) nil trimmed)))
+#+end_src
+
+** =my/keychain-set-internet= — write or update one Internet-password entry
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/keychain-set-internet (server account value)
+  "Store VALUE as an HTTPS Internet password for SERVER / ACCOUNT.
+
+Uses `security add-internet-password -U -r htps', which creates the
+entry when absent and overwrites it when present. Returns :ok on
+success, (:error MSG) on non-zero exit.
+
+Like `my/keychain-set', VALUE is passed in argv (briefly visible in the
+process listing) — acceptable for an interactive single-user setup
+command. Host-keyed counterpart used by url.el/auth-source clients such
+as org-caldav."
+  (let ((buf (generate-new-buffer " *my/keychain-set-internet*")))
+    (unwind-protect
+        (let ((exit (call-process "security" nil buf nil
+                                  "add-internet-password" "-U"
+                                  "-r" "htps"
+                                  "-s" server
                                   "-a" account
                                   "-w" value)))
           (if (zerop exit)
