@@ -70,7 +70,12 @@ this module is safe to load before iCloud is wired up.
     ;; SCHEDULED/DEADLINE tasks belong to org-apple-reminders, not here.
     (setq org-caldav-sync-todo nil)
     (let ((d org-caldav-save-directory))
-      (unless (file-directory-p d) (make-directory d t)))))
+      (unless (file-directory-p d) (make-directory d t)))
+    ;; iCloud needs preemptive Basic auth + no keep-alive (see section above).
+    (require 'url-http)
+    (advice-add 'url-http-create-request :filter-return
+                #'my/caldav--preemptive-basic-auth)
+    (advice-add 'org-caldav-sync :around #'my/caldav--no-keepalive)))
 #+end_src
 
 * Credential command
@@ -101,7 +106,7 @@ doctor reports the credential missing."
     (user-error "Keychain primitive unavailable (bootstrap not loaded)"))
   (let* ((account (read-string "Apple ID (email): "
                                (or my/caldav-apple-id user-mail-address)))
-         (pass    (read-passwd "iCloud app-specific password: "))
+         (pass    (string-trim (read-passwd "iCloud app-specific password: ")))
          (hosts   (delete-dups
                    (cons "caldav.icloud.com"
                          (when (and (boundp 'org-caldav-url)
@@ -112,14 +117,66 @@ doctor reports the credential missing."
                              (and h (list h))))))))
     (when (string-empty-p (string-trim account))
       (user-error "Apple ID must not be empty"))
-    (when (string-empty-p (string-trim pass))
+    (when (string-empty-p pass)
       (user-error "Password must not be empty"))
+    ;; Apple app-specific passwords are `xxxx-xxxx-xxxx-xxxx' (16 lowercase
+    ;; letters in four dash-separated groups). Warn early on anything else —
+    ;; a stray character here surfaces only later as an opaque 401.
+    (when (and (not (string-match-p
+                     "\\`[a-z]\\{4\\}-[a-z]\\{4\\}-[a-z]\\{4\\}-[a-z]\\{4\\}\\'" pass))
+               (not (yes-or-no-p
+                     (format "That is %d chars, not the xxxx-xxxx-xxxx-xxxx app-password format. Store anyway? "
+                             (length pass)))))
+      (user-error "Aborted — re-run and paste the app-specific password exactly"))
     (dolist (host hosts)
-      (let ((res (my/keychain-set-internet host account pass)))
+      (let ((res (my/keychain-set-internet host account pass 443)))
         (unless (eq res :ok)
           (user-error "Keychain write failed for %s: %s" host (cadr res)))))
     (message "iCloud CalDAV password stored for %s (%s)"
              account (string-join hosts ", "))))
+#+end_src
+
+* iCloud + url.el workaround (preemptive auth)
+
+iCloud CalDAV does not play well with url.el's default auth flow: url.el
+sends the request first, expects a =401= challenge, then retries with
+credentials — but iCloud's challenged PROPFIND stalls, so the synchronous
+request hangs (and wedges the whole daemon). Verified: an identical request
+with a *preemptive* =Authorization: Basic= header returns =207= immediately.
+
+So we inject Basic auth ourselves for iCloud hosts, pulled from auth-source
+(never stored in this file), and disable keep-alive for the duration of a
+sync. Scoped to iCloud / to `org-caldav-sync' — no effect on other url.el use.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/caldav--preemptive-basic-auth (request)
+  "Add a preemptive Basic `Authorization' header to REQUEST for iCloud hosts.
+REQUEST is the raw HTTP request string built by `url-http-create-request';
+`url-http-target-url' is the buffer-local target. No-op for other hosts or
+when an Authorization header is already present."
+  (if (and (boundp 'url-http-target-url) url-http-target-url
+           (let ((h (url-host url-http-target-url)))
+             (and h (string-match-p "caldav\\.icloud\\.com" h)))
+           (let ((case-fold-search t))
+             (not (string-match-p "^authorization:" request))))
+      (let* ((found (car (auth-source-search :host "caldav.icloud.com" :port 443
+                                             :max 1 :require '(:user :secret))))
+             (user (and found (plist-get found :user)))
+             (secret (and found (plist-get found :secret)))
+             (pass (and secret (if (functionp secret) (funcall secret) secret))))
+        (if (and user pass (string-match "\r\n" request))
+            (concat (substring request 0 (match-end 0))
+                    "Authorization: Basic "
+                    (base64-encode-string (concat user ":" pass) t) "\r\n"
+                    (substring request (match-end 0)))
+          request))
+    request))
+
+(defun my/caldav--no-keepalive (orig &rest args)
+  "Run ORIG (a sync command) with url.el keep-alive disabled.
+iCloud's chunked responses confuse url.el's keep-alive reuse."
+  (let ((url-http-attempt-keepalives nil))
+    (apply orig args)))
 #+end_src
 
 * iCloud wiring (do once, in =local.org=)
