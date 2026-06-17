@@ -1,0 +1,48 @@
+#+TITLE: GTD Assistant Skill - Calendar Coach
+#+CATEGORY: gtd-skill
+#+FILETAGS: :gtd:assistant:skill:calendar:
+#+STARTUP: overview
+
+# Hält den „Org"-Kalender vertrauenswürdig: was gehört rein, was wird bereinigt.
+# Bedienung/Details: apple-calendar-setup.org. Selten nötig (bei Unordnung).
+
+* Purpose
+Den von Emacs verwalteten „Org"-Kalender sauber und vertrauenswürdig halten —
+keine Duplikate, keine Fremdkörper, nur echte Einzeltermine. Lesen/Planen
+(Free-Slots) bleibt davon unberührt.
+
+* When To Use
+- Wenn `calendar.org` / der „Org"-Kalender unübersichtlich wirkt (Duplikate,
+  adoptierte Fremdtermine, Test-Reste).
+- Nach Fehlern/Experimenten mit Sync/Adopt.
+- Sonst: selten — der Idle-Mirror + `C-c k s` halten den Alltag aktuell.
+
+* Die eine Regel
+„Org"-Kalender = **nur Einzeltermine, die du in Emacs verfasst.** NICHT hinein:
+- Wiederkehrendes (Arbeit/Pendeln/Custody/Training) → eigener **nativer**
+  Apple-Kalender (Emacs liest ihn nur).
+- Aufgaben mit Datum → `SCHEDULED` → Reminders „Anstehend".
+- Fremde/abonnierte Termine (Schule, Familie) → read-only, nur lesen.
+Jeder Termin lebt in **genau einem** Kalender — keine Kopien über Kalender hinweg.
+
+* Prozess
+1. **Sync:** `C-c k s` (gleicht „Org" ↔ `calendar.org` ab).
+2. **Sichten:** `calendar.org` durchsehen. Pro Heading fragen:
+   - Ist das ein echter Einzeltermin, den ich in Emacs verwalten will? → bleibt.
+   - Wiederkehrend / Fremdkalender / Aufgabe / Duplikat? → raus aus „Org".
+3. **Bereinigen:** Fremdkörper mit `:APPLE_DELETE: t` markieren → `C-c k s`
+   löscht sie in Apple und entfernt das Heading. (Native Kopien in anderen
+   Kalendern bleiben — andere UID.)
+4. **Füllen:** echte neue Termine als aktiven Zeitstempel in `calendar.org`
+   schreiben → `C-c k p`. Einen am iPhone angelegten Termin übernehmen: Cursor
+   im Mirror/Upcoming darauf → `C-c k a` (adopt).
+5. **Mirror auffrischen:** `C-c k m` (oder Idle-Timer).
+
+* Guardrails
+- Nichts blind löschen: `C-c k l` zeigt, welcher Kalender beschreibbar (eigen)
+  vs. read-only (managed) ist. „Org" ist der einzige, in den geschrieben wird.
+- Beim Aufräumen NUR Events aus „Org" entfernen; native Kalender nicht anfassen.
+- Recurrence nicht über org erzwingen — Serien gehören nativ in Apple
+  (siehe apple-calendar-setup.org, Regel „Wiederkehrendes").
+- Free-Slots vertrauen: belegte Zeiten aus *allen* Kalendern sind schon drin
+  (Rollen busy/info via Klassifikation); fehlklassifiziertes Event → `C-c k o`.

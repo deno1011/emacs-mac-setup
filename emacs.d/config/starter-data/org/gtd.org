@@ -46,6 +46,7 @@ lists:
 - [[file:gtd/inbox-clarifier.org][inbox-clarifier.org]]: process unclear inputs into GTD buckets.
 - [[file:gtd/weekly-review-coach.org][weekly-review-coach.org]]: keep projects, waiting, and someday clean.
 - [[file:gtd/horizon-coach.org][horizon-coach.org]]: connect life areas and goals to projects.
+- [[file:gtd/calendar-coach.org][calendar-coach.org]]: keep the "Org" calendar clean (what belongs in it; cleanup).
 
 Apple-integration manuals (how the macOS sync is wired and operated):
 
