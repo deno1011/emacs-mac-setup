@@ -25,6 +25,7 @@ macOS only. First use triggers a one-time macOS Calendar-access prompt.
 (declare-function org-apple-calendar-refresh-mirror "org-apple-calendar")
 (declare-function org-apple-calendar-ingest-deadlines "org-apple-calendar")
 (declare-function org-apple-calendar-push-appointments "org-apple-calendar")
+(declare-function org-apple-calendar-adopt-event-at-point "org-apple-calendar")
 #+end_src
 
 * Install and configure
@@ -53,7 +54,8 @@ in =!00_startfirst= avoids treeless partial clones). Commands hang off a
                org-apple-calendar-upcoming
                org-apple-calendar-show-free-slots
                org-apple-calendar-refresh-mirror
-               org-apple-calendar-ingest-deadlines)
+               org-apple-calendar-ingest-deadlines
+               org-apple-calendar-adopt-event-at-point)
     :init
     (define-prefix-command 'my/calendar-map)
     (global-set-key (kbd "C-c k") 'my/calendar-map)
@@ -63,6 +65,7 @@ in =!00_startfirst= avoids treeless partial clones). Commands hang off a
     (define-key my/calendar-map (kbd "m") #'org-apple-calendar-refresh-mirror)
     (define-key my/calendar-map (kbd "i") #'org-apple-calendar-ingest-deadlines)
     (define-key my/calendar-map (kbd "p") #'org-apple-calendar-push-appointments)
+    (define-key my/calendar-map (kbd "a") #'org-apple-calendar-adopt-event-at-point)
     (define-key my/calendar-map (kbd "o") #'org-apple-calendar-override-role)
     (define-key my/calendar-map (kbd "c") #'org-apple-calendar-init-classification)
     :config

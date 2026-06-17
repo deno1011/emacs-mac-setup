@@ -53,6 +53,7 @@ wegwerfbar und wird neu erzeugt; dauerhafte Entscheidungen leben in
 | =C-c k m= | Read-only Spiegel für die Agenda aktualisieren      |
 | =C-c k i= | Externe Deadlines → GTD-Aufgaben (confirm)          |
 | =C-c k p= | =calendar.org= → „Org"-Kalender schreiben           |
+| =C-c k a= | Externen Mirror-Termin nach =calendar.org= adoptieren |
 | =C-c k o= | Rolle eines Events überschreiben (busy/info/ignore) |
 
 * Faustregel — wer kriegt was
@@ -68,10 +69,8 @@ Wenn ein externer/mirrored Termin wirklich Teil deiner eigenen Hard Landscape
 werden soll, wird er bewusst nach =calendar.org= adoptiert:
 
 1. Termin als normale Überschrift mit aktivem Zeitstempel in =calendar.org=
-   eintragen.
-2. Nach „Org" pushen (=C-c k p=).
-3. Das Original aus dem Mirror per Event-Override auf =ignore= setzen, damit es
-   nicht doppelt erscheint.
+   eintragen, nach „Org" pushen und das Original ignorieren lassen:
+   Cursor im Mirror oder Upcoming-Buffer auf den Termin → =C-c k a=.
 
 Danach kannst du in Apple Calendar im Alltag nur den „Org"-Kalender sichtbar
 lassen. Der Mirror bleibt trotzdem als AI-/GTD-Radar erhalten und liest weiter
