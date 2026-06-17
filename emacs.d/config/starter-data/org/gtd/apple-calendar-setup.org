@@ -15,9 +15,10 @@ Der „Org"-Kalender ist der EINZIGE, in den Emacs schreibt — gespeist aus
   bewusst geblockter Fokus-/Lernblock).
 - NEIN: Aufgaben/Deadlines → die sind =SCHEDULED= und gehen nach Reminders
   „Anstehend" (siehe [[file:apple-reminders-setup.org][apple-reminders-setup.org]]).
-- NEIN: Wiederkehrendes (Arbeit, Pendeln, Sorgerechts-/Custody-Rhythmus,
-  Trainings) → nativ in eigenen Apple-Kalendern pflegen (Recurrence-Write gibt
-  es noch nicht; Emacs liest sie nur). „Alle 2 Wochen" kann Apple nativ.
+- TEILS: Wiederkehrendes — einfache Repeater (=+1w=, =+2w=, =+1m=, =+1y=) kannst
+  du in =calendar.org= schreiben und mit =C-c k p= als wiederkehrenden Termin
+  pushen. Komplexe Muster (Mo–Fr, Sexp/=diary-cyclic=) und fremde Pläne → nativ
+  in eigenen Apple-Kalendern (Emacs liest sie nur).
 - NEIN: fremde Termine (z. B. ein abonnierter Schulkalender, Familie,
   Geburtstage) → read-only, nur lesen.
 
@@ -102,5 +103,6 @@ Beim ersten =C-c k=-Befehl den macOS-Dialog „Emacs darf auf Kalender zugreifen
 mit „Erlauben" bestätigen.
 
 * Noch nicht (geplante Increments)
-Recurrence im Write-Backend, Apple→org Pull für den „Org"-Kalender,
-Update/Delete-Sync. Bis dahin: Wiederkehrendes nativ in Apple.
+Apple→org Pull für den „Org"-Kalender und Update/Delete-Sync (in Apple geänderte/
+gelöschte „Org"-Termine kommen noch nicht zurück). Recurrence-Write für einfache
+Repeater ist da; komplexe Muster (Mo–Fr/Sexp) bleiben Apple-nativ.
