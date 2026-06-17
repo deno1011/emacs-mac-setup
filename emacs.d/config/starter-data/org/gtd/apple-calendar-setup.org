@@ -109,6 +109,26 @@ Termine): neue Apple-Termine → org; org-Änderungen → Apple; in Apple geänd
 org (Apple gewinnt, wenn dort zuletzt geändert); =:APPLE_DELETE: t= → löscht in
 Apple + entfernt das Heading; in Apple gelöschte → Heading =:apple-deleted:=.
 
+* Regel: Wiederkehrendes → eigener nativer Kalender
+Der „Org"-Kalender (von Emacs geschrieben, =C-c k s= synct zwei-Wege) hält
+**nur Einzeltermine**. Alles **Wiederkehrende** (Arbeit, Pendeln, Custody-/
+Sorgerechts-Rhythmus, Trainings) gehört in **eigene native Apple-Kalender** —
+dort anlegen/ändern/löschen; Emacs **liest** sie nur (Mirror + Free-Slots via
+Klassifikation). So muss keine Serie je durch die Sync.
+
+Warum: die Zwei-Wege-Sync fasst wiederkehrende Serien bewusst nicht an
+(EKSpan-/Ausnahme-Semantik + verlustbehaftetes RRULE↔Repeater-Mapping). **Fürs
+Planen verlierst du nichts:** =C-c k f= und die Agenda rechnen wiederkehrende
+Belegt-Zeiten aus *allen* Kalendern korrekt ein.
+
+Workarounds, falls eine Serie doch über org laufen soll:
+- In Emacs verfassen: Repeater in =calendar.org= (=+1w= …) → =C-c k p= legt sie
+  als wiederkehrenden Apple-Termin an (nur Anlegen).
+- Eine verknüpfte Serie ändern: „löschen + neu" — =:APPLE_DELETE: t= (oder in
+  Apple löschen) + neue Repeater-Zeile → =C-c k p=.
+- iPhone-angelegte / in Apple geänderte Serie: im nativen Kalender pflegen,
+  Emacs liest sie automatisch.
+
 * Noch nicht
-Komplexe Recurrence (Mo–Fr/Sexp) und das Bearbeiten *wiederkehrender* Serien in
-Apple bleiben Apple-nativ.
+Komplexe Recurrence (Mo–Fr/Sexp) und das Round-Trip-Editieren *wiederkehrender*
+Serien aus org bleiben bewusst Apple-nativ (siehe Regel oben).
