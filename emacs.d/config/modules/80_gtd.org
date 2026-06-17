@@ -344,6 +344,7 @@ Use =C-c a= for agenda views:
 (global-set-key (kbd "C-c g l") #'my/org-super-links-store-link)
 (global-set-key (kbd "C-c g i") #'my/org-super-links-insert-link)
 (global-set-key (kbd "C-c g d") #'my/org-super-links-delete-link)
+(global-set-key (kbd "C-c g r") #'my/gtd-weekly-review)
 #+end_src
 
 * Paths
@@ -358,6 +359,18 @@ Use =C-c a= for agenda views:
 (defun my/gtd--file (name)
   "Return compact GTD file NAME under `my/gtd--org-root'."
   (expand-file-name name (my/gtd--org-root)))
+
+(defun my/gtd-weekly-review ()
+  "Start the weekly review: open the coach manual beside the review agenda.
+Pops `gtd/weekly-review-coach.org' in another window and launches the
+org-agenda weekly-review view (custom command `r')."
+  (interactive)
+  (let ((coach (my/gtd--file "gtd/weekly-review-coach.org")))
+    (when (file-exists-p coach)
+      (find-file-other-window coach)
+      (when (fboundp 'org-overview) (org-overview))
+      (other-window 1)))
+  (org-agenda nil "r"))
 
 (defun my/gtd--agenda-files ()
   "Return existing compact GTD files."

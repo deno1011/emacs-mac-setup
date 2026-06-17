@@ -75,7 +75,9 @@ this module is safe to load before iCloud is wired up.
     (require 'url-http)
     (advice-add 'url-http-create-request :filter-return
                 #'my/caldav--preemptive-basic-auth)
-    (advice-add 'org-caldav-sync :around #'my/caldav--no-keepalive)))
+    (advice-add 'org-caldav-sync :around #'my/caldav--no-keepalive)
+    (advice-add 'org-caldav-url-dav-get-properties :filter-return
+                #'my/caldav--coerce-dav-status)))
 #+end_src
 
 * Credential command
@@ -177,6 +179,24 @@ when an Authorization header is already present."
 iCloud's chunked responses confuse url.el's keep-alive reuse."
   (let ((url-http-attempt-keepalives nil))
     (apply orig args)))
+
+(defun my/caldav--coerce-dav-status (output)
+  "Coerce non-numeric `DAV:status' values in OUTPUT to HTTP codes.
+`org-caldav-check-connection' does `(/ status 100)'; against iCloud the parsed
+status comes back as the empty string, raising `number-or-marker-p \"\"'. Pull
+the numeric code out of strings like \"HTTP/1.1 200 OK\"; if none is present but
+a response was returned, assume 200 (we got properties back). Returns OUTPUT."
+  (dolist (entry output output)
+    (when (consp entry)
+      (let* ((props (cdr entry))
+             (st (and (listp props) (plist-get props 'DAV:status))))
+        (when (and st (not (numberp st)))
+          (setcdr entry
+                  (plist-put props 'DAV:status
+                             (if (and (stringp st)
+                                      (string-match "\\([0-9]\\{3\\}\\)" st))
+                                 (string-to-number (match-string 1 st))
+                               200))))))))
 #+end_src
 
 * iCloud wiring (do once, in =local.org=)
