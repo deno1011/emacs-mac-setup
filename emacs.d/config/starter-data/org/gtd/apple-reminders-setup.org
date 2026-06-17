@@ -1,0 +1,81 @@
+#+TITLE: Apple Reminders ↔ GTD — Setup & Architektur
+#+CATEGORY: gtd-setup
+#+FILETAGS: :gtd:setup:apple:
+#+STARTUP: overview
+
+# Setup-Manual (kein Task-Inventar): WIE Apple Reminders ans GTD in Emacs
+# angebunden sind. Schwester: apple-calendar-setup.org.
+
+* Grundprinzip
+Das GTD lebt **in Emacs** (=gtd/*.org=, =inbox.org=, =calendar.org=, Horizons in
+=gtd.org=). Apple ist nur eine **dünne Kante**, kein zweites GTD:
+- oben rein: Schnell-Capture vom iPhone/Siri,
+- unten raus: datierte Tasks + Termine fürs Handy/den Kalender.
+
+Die gesamte Sortier- und Klärlogik bleibt in Emacs. Apple-Listen werden
+**nicht** als Spiegel der GTD-Buckets geführt (das driftet) — Apple ist nur die
+dünne Ein-/Ausgabe-Kante.
+
+* Die drei Apple-Reminders-Listen (Empfehlung)
+| Liste            | Job                                       | Sync-Richtung                           |
+|------------------+-------------------------------------------+-----------------------------------------|
+| 📥 Inbox         | Schnell-Capture (Siri/iPhone/„+")        | Apple → Emacs, danach aus Apple geleert |
+| ⏰ Anstehend      | promotete GTD-Tasks mit SCHEDULED         | bidirektional                           |
+| 🛒 Einkaufsliste | Einkauf, reines Handy-Tool                | bleibt Apple-only                       |
+
+Inbox und Anstehend sind bewusst getrennt: die Inbox ist *flüchtig* (wird
+geleert), Anstehend ist *dauerhaft* (gespiegelte datierte Tasks). („Anstehend"
+sind datierte *Aufgaben*, keine Kalendereinträge.)
+
+* Kalender vs. Reminders „Anstehend" — Arbeitsteilung
+Der Kalender ist heilig: nur echte zeit-/termingebundene Verpflichtungen.
+| Kanal                    | Quelle in Emacs     | Inhalt                                   |
+|--------------------------+---------------------+------------------------------------------|
+| 📆 Apple Kalender        | =calendar.org=      | echte Termine (fixes Datum/Uhrzeit)      |
+| ⏰ Reminders „Anstehend"  | promotete GTD-Tasks | Aufgaben *mit* Datum, aber keine Termine |
+
+„um dann" → Kalender. „bis dann" → Reminders. =org-agenda= vereint ohnehin beides
+(SCHEDULED + calendar.org). Kalender-Seite: apple-calendar-setup.org.
+
+* Datums-Konvention: org SCHEDULED ⇄ Apple-Fälligkeit
+Apple hat **ein** Datumsfeld (Fälligkeit). Eine Erinnerung erscheint nur als
+„offen"/in „Heute", wenn die Fälligkeit **auf den Tag** fällt — das verhält sich
+wie org =SCHEDULED= („taucht an dem Tag auf"), *nicht* wie =DEADLINE= (das vorher
+warnt). Darum (org-apple-reminders):
+- *org SCHEDULED  →  Apple-Fälligkeit* (Push)
+- *Apple-Fälligkeit  →  org SCHEDULED* (Pull/Backfill)
+- =DEADLINE= wird **nicht** synchronisiert.
+
+Praxis: datierte Aufgaben mit =C-c C-s= (org-schedule) terminieren, *nicht* mit
+=C-c C-d=. Das Live-Auto-Push hängt an =org-schedule=.
+
+* Die drei „Defaults" — wer setzt was
+- *Liste anlegen*: =org-apple-reminders-create-list= (=C-c r L=).
+- *Emacs-Promote-Default*: defcustom =org-apple-reminders-default-list=
+  (z. B. ="Inbox"=; nil ⇒ erste Liste).
+- *macOS System-Default* (Siri/„+"/Teilen): **manuell** in der Reminders-App,
+  Einstellungen → Standardliste → Inbox. Keine API, einmalig pro Gerät.
+
+* Tägliche Bedienung
+| Aktion                   | Taste     | Effekt                                                       |
+|--------------------------+-----------+--------------------------------------------------------------|
+| Bidirektional syncen     | =C-c r R= | verknüpfte Headings in den known files ↔ Apple               |
+| Task nach Apple promoten | =C-c r m= | erstellt Apple-Reminder (mit Datum), Task bleibt im gtd-File  |
+| Wieder aus Apple lösen   | =C-c r d= | löscht in Apple, Task bleibt im GTD                          |
+| Apple-Liste anlegen      | =C-c r L= | neue Zielliste                                               |
+
+Beim Promoten bewusst die Zielliste „Anstehend" wählen.
+
+* Capture-Flow (iPhone → GTD)
+1. Unterwegs in die Apple-*Inbox* werfen (Siri/„+").
+2. Am Mac =C-c r R= → die Items landen in Emacs.
+3. In =inbox.org= klären/refilen (siehe [[file:inbox-clarifier.org][inbox-clarifier.org]]).
+4. Danach aus Apple entfernen (=C-c r d=), damit die Inbox flüchtig bleibt.
+
+* Known files (was synct)
+=org-apple-reminders-sync-file= (Landefläche für Pulls),
+=org-apple-reminders-extra-files=, und alle =.org= in =org-agenda-files= mit
+Reminder-Metadaten. Die =gtd/*.org= sind bereits Agenda-Dateien ⇒ promotebar.
+
+* Siehe auch
+- [[file:apple-calendar-setup.org][apple-calendar-setup.org]] — Kalender-Seite (Termine, Free-Slots, Ingest, Rollen).

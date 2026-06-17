@@ -1,0 +1,81 @@
+#+TITLE: Apple Calendar ↔ GTD — Bedienung
+#+CATEGORY: gtd-setup
+#+FILETAGS: :gtd:setup:apple:calendar:
+#+STARTUP: overview
+
+# Bedien-Manual für die EventKit-Kalender-Integration (Paket: org-apple-calendar).
+# Schwester: apple-reminders-setup.org. Interna: org-apple-calendar/ARCHITECTURE.md.
+
+* Was gehört in den „Org"-Kalender?
+Der „Org"-Kalender ist der EINZIGE, in den Emacs schreibt — gespeist aus
+=calendar.org=. Hinein gehören: echte Termine mit fixem Datum/Uhrzeit, die du
+*in Emacs* anlegst und auf allen Geräten haben willst.
+
+- JA: selbst angelegte Einzeltermine (Arzt, Reservierung, gesetztes Meeting,
+  bewusst geblockter Fokus-/Lernblock).
+- NEIN: Aufgaben/Deadlines → die sind =SCHEDULED= und gehen nach Reminders
+  „Anstehend" (siehe [[file:apple-reminders-setup.org][apple-reminders-setup.org]]).
+- NEIN: Wiederkehrendes (Arbeit, Pendeln, Sorgerechts-/Custody-Rhythmus,
+  Trainings) → nativ in eigenen Apple-Kalendern pflegen (Recurrence-Write gibt
+  es noch nicht; Emacs liest sie nur). „Alle 2 Wochen" kann Apple nativ.
+- NEIN: fremde Termine (z. B. ein abonnierter Schulkalender, Familie,
+  Geburtstage) → read-only, nur lesen.
+
+Kurz: **„Org" = deine in Emacs verfassten Termine.** Alles andere lebt in
+eigenen Apple-Kalendern und wird nur gelesen.
+
+* Termin anlegen → aufs iPhone
+In =calendar.org= eine Überschrift mit *aktivem Zeitstempel* (kein TODO):
+#+begin_example
+,* Zahnarzt – Beratung
+  <2026-07-01 Wed 09:30-10:15>
+#+end_example
+Dann =C-c k p= → landet im „Org"-Kalender → erscheint auf allen Geräten.
+(Ganztags: nur =<2026-07-01 Wed>=.)
+
+* Die eine Scheibe Glas
+=C-c a= (org-agenda) zeigt alles zusammen: deine Termine (=calendar.org=) +
+datierte Aufgaben (=SCHEDULED=) + nach =C-c k m= den read-only Spiegel ALLER
+Apple-Kalender + Deadlines.
+
+* Befehle (=C-c k=, „Kalender")
+| Taste     | Funktion                                            |
+|-----------+-----------------------------------------------------|
+| =C-c k l= | Kalender auflisten (eigen/managed)                  |
+| =C-c k u= | Anstehende Termine (alle Kalender; ● busy / ○ info) |
+| =C-c k f= | Wann bin ich frei (nur echte busy-Zeiten)           |
+| =C-c k m= | Read-only Spiegel für die Agenda aktualisieren      |
+| =C-c k i= | Externe Deadlines → GTD-Aufgaben (confirm)          |
+| =C-c k p= | =calendar.org= → „Org"-Kalender schreiben           |
+| =C-c k o= | Rolle eines Events überschreiben (busy/info/ignore) |
+
+* Faustregel — wer kriegt was
+| Sache                                | wohin                         | Befehl    |
+|--------------------------------------+-------------------------------+-----------|
+| Fixer Termin, selbst angelegt        | =calendar.org= → „Org"        | =C-c k p= |
+| Wiederkehrendes (Arbeit/Custody/...) | nativ in Apple                | (nur lesen) |
+| Aufgabe mit Datum/Frist              | GTD =SCHEDULED= → „Anstehend" | =C-c r m= |
+| Externe Termine nur sehen            | Mirror/Agenda                 | =C-c k m= |
+
+* Event-Rollen (warum nicht alles „belegt" ist)
+Jedes Event hat eine Rolle: =busy= (blockiert deine Zeit), =info= (Kontext —
+z. B. ein fremder/abonnierter Kalender, ein Trainings-Plan, ein Schultermin —
+sichtbar, blockiert NICHT), =ignore= (ausgeblendet). Nur =busy= reduziert freie
+Slots. Reihenfolge: Override (=C-c k o=) › Kalender-Policy
+(=org-apple-calendar-info-calendars= / =-ignore-calendars=, in deiner Config) ›
+Apple „Anzeigen als" › Default busy.
+Falsch klassifiziert (z. B. ein fremder Termin blockt) → Cursor drauf in
+=C-c k u= / im Mirror → =C-c k o= → =info=. Bleibt dauerhaft.
+
+* Rhythmus
+- Morgens: =C-c a= (Termine + heutige NEXTs), bei Bedarf =C-c k f=.
+- Laufend: Termine in =calendar.org= → =C-c k p=. Fehl-Blocker → =C-c k o=.
+- Wöchentlich: Weekly-Review, =C-c k i= (neue externe Deadlines), =C-c r R=.
+
+* Einmalig
+Beim ersten =C-c k=-Befehl den macOS-Dialog „Emacs darf auf Kalender zugreifen"
+mit „Erlauben" bestätigen.
+
+* Noch nicht (geplante Increments)
+Recurrence im Write-Backend, Apple→org Pull für den „Org"-Kalender,
+Update/Delete-Sync. Bis dahin: Wiederkehrendes nativ in Apple.
