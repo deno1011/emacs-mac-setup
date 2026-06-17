@@ -63,6 +63,20 @@ wegwerfbar und wird neu erzeugt; dauerhafte Entscheidungen leben in
 | Aufgabe mit Datum/Frist              | GTD =SCHEDULED= → „Anstehend" | =C-c r m= |
 | Externe Termine nur sehen            | Mirror/Agenda                 | =C-c k m= |
 
+* Externen Termin adoptieren
+Wenn ein externer/mirrored Termin wirklich Teil deiner eigenen Hard Landscape
+werden soll, wird er bewusst nach =calendar.org= adoptiert:
+
+1. Termin als normale Überschrift mit aktivem Zeitstempel in =calendar.org=
+   eintragen.
+2. Nach „Org" pushen (=C-c k p=).
+3. Das Original aus dem Mirror per Event-Override auf =ignore= setzen, damit es
+   nicht doppelt erscheint.
+
+Danach kannst du in Apple Calendar im Alltag nur den „Org"-Kalender sichtbar
+lassen. Der Mirror bleibt trotzdem als AI-/GTD-Radar erhalten und liest weiter
+alle Kalender.
+
 * Event-Rollen (warum nicht alles „belegt" ist)
 Jedes Event hat eine Rolle: =busy= (blockiert deine Zeit), =info= (Kontext —
 z. B. ein fremder/abonnierter Kalender, ein Trainings-Plan, ein Schultermin —
