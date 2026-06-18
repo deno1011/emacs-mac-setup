@@ -584,12 +584,12 @@ structural project shape while user data is being migrated."
                  ((org-agenda-overriding-header "Waiting")))
            (tags-todo "+someday"
                       ((org-agenda-overriding-header "Someday / Maybe")))
-           (tags-todo "+area"
-                      ((org-agenda-overriding-header "Areas")))
-           (tags-todo "+goal"
-                      ((org-agenda-overriding-header "Goals")))
-           (tags-todo "+life"
-                      ((org-agenda-overriding-header "Life / Values")))))
+           (tags "+area"
+                 ((org-agenda-overriding-header "Areas")))
+           (tags "+goal"
+                 ((org-agenda-overriding-header "Goals")))
+           (tags "+life"
+                 ((org-agenda-overriding-header "Life / Values")))))
          ("J" "Projects" alltodo ""
           ((org-agenda-skip-function 'my/org-skip-non-projects)))
          ("X" "Stuck projects" alltodo ""
@@ -603,16 +603,17 @@ structural project shape while user data is being migrated."
          ("C" "@computer next actions" tags-todo "+@computer/NEXT")
          ("E" "@errand next actions" tags-todo "+@errand/NEXT")
          ("K" "@calls next actions" tags-todo "+@calls/NEXT")
-         ("A" "Areas" tags-todo "+area")
-         ("G" "Goals" tags-todo "+goal")
-         ("L" "Life / values" tags-todo "+life")
+         ;; Horizons are reference headings (often no TODO state) → `tags'.
+         ("A" "Areas" tags "+area")
+         ("G" "Goals" tags "+goal")
+         ("L" "Life / values" tags "+life")
          ("F" "Higher-horizon review (Future/horizons)"
-          ((tags-todo "+life"
-                      ((org-agenda-overriding-header "Life / Values")))
-           (tags-todo "+goal"
-                      ((org-agenda-overriding-header "Goals")))
-           (tags-todo "+area"
-                      ((org-agenda-overriding-header "Areas")))))
+          ((tags "+life"
+                 ((org-agenda-overriding-header "Life / Values")))
+           (tags "+goal"
+                 ((org-agenda-overriding-header "Goals")))
+           (tags "+area"
+                 ((org-agenda-overriding-header "Areas")))))
          ("f" "Flights / travel"
           ((tags "+flight"
                  ((org-agenda-overriding-header "Flights")))

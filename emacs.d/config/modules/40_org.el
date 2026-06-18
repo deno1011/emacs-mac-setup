@@ -635,13 +635,15 @@ it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
           ((org-agenda-skip-function-global nil)))
          ("S" "💤 Someday / Maybe"           tags-todo "+someday"
           ((org-agenda-skip-function-global nil)))
-         ("M" "📎 Reference material"        tags-todo "+reference"
+         ("M" "📎 Reference material"        tags "+reference"
           ((org-agenda-skip-function-global nil)))
          ("R" "🔖 Reference / backlog TODOs (all systems, :ref:)" tags-todo "+ref"
           ((org-agenda-skip-function-global nil)))
-         ("A" "🎯 Areas of focus (20K ft)"   tags-todo "+area")
-         ("G" "🚀 Goals (30K ft)"            tags-todo "+goal")
-         ("L" "🌟 Life / values (40–50K ft)" tags-todo "+life")
+         ;; Horizons are reference headings (often no TODO state), so use
+         ;; `tags' (all matching headings), not `tags-todo'.
+         ("A" "🎯 Areas of focus (20K ft)"   tags "+area")
+         ("G" "🚀 Goals (30K ft)"            tags "+goal")
+         ("L" "🌟 Life / values (40–50K ft)" tags "+life")
          ;; "Pure" action view — TODO state items in files/headings
          ;; that carry NO category tag. The cleanest "what's actually
          ;; on my plate right now" view across all of ~/emacs/.
