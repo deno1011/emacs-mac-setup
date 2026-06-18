@@ -24,7 +24,7 @@ and stays well under the 150-line ceiling.
 ;;   (my/keychain-get SERVICE ACCOUNT)            → string value, or nil
 ;;   (my/keychain-set SERVICE ACCOUNT VALUE)      → :ok or (:error MSG)
 ;;   (my/keychain-get-internet SERVER &optional ACCOUNT) → string, or nil
-;;   (my/keychain-set-internet SERVER ACCOUNT VALUE)     → :ok or (:error MSG)
+;;   (my/keychain-set-internet SERVER ACCOUNT VALUE &optional PORT) → :ok / (:error MSG)
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   (none)
@@ -121,12 +121,18 @@ such as org-caldav resolve credentials through auth-source's
 ** =my/keychain-set-internet= — write or update one Internet-password entry
 
 #+begin_src emacs-lisp :tangle yes
-(defun my/keychain-set-internet (server account value)
+(defun my/keychain-set-internet (server account value &optional port)
   "Store VALUE as an HTTPS Internet password for SERVER / ACCOUNT.
 
 Uses `security add-internet-password -U -r htps', which creates the
 entry when absent and overwrites it when present. Returns :ok on
 success, (:error MSG) on non-zero exit.
+
+PORT, when non-nil (e.g. 443), is recorded via `-P' so that
+port-qualified auth-source lookups match. url.el queries HTTPS
+credentials with the numeric port, so a port-less entry is NOT found
+and url.el falls back to an interactive prompt — store with PORT to
+avoid that.
 
 Like `my/keychain-set', VALUE is passed in argv (briefly visible in the
 process listing) — acceptable for an interactive single-user setup
@@ -134,12 +140,12 @@ command. Host-keyed counterpart used by url.el/auth-source clients such
 as org-caldav."
   (let ((buf (generate-new-buffer " *my/keychain-set-internet*")))
     (unwind-protect
-        (let ((exit (call-process "security" nil buf nil
-                                  "add-internet-password" "-U"
-                                  "-r" "htps"
-                                  "-s" server
-                                  "-a" account
-                                  "-w" value)))
+        (let ((exit (apply #'call-process "security" nil buf nil
+                           (append
+                            (list "add-internet-password" "-U"
+                                  "-r" "htps" "-s" server "-a" account)
+                            (when port (list "-P" (format "%s" port)))
+                            (list "-w" value)))))
           (if (zerop exit)
               :ok
             `(:error ,(with-current-buffer buf

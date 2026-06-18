@@ -18,8 +18,10 @@ listing the directory. It does not enumerate them.
   numbers (10, 20, 30) so future modules can insert without renumbering.
 - =modules/NN-name.disabled.org= — disabled by rename. The file stays
   on disk but the discovery loop skips it.
-- =local.org= (next to this file) — per-Mac overrides; loads LAST so it
-  can override any module. Optional and untracked.
+
+Per-Mac and account-specific values are NOT kept in a config file; they
+live in the macOS Keychain (e.g. the iCloud CalDAV wiring via
+=M-x my/caldav-setup=, see [[file:modules/55_calendar.org][modules/55_calendar.org]]).
 
 ** Discovery
 
@@ -175,10 +177,6 @@ to `directory-files', skipping `.', `..', `.DS_Store', etc."
                (my/-discover-modules my/modules-dir))))
     (dolist (f live)
       (my/-load-module f))))
-
-;; Per-Mac override — loads LAST, can shadow anything above. Optional.
-(let ((local (expand-file-name "local.org" my/config-dir)))
-  (when (file-exists-p local) (my/-load-module local)))
 
 ;; Bootstrap is invoked synchronously at the END of the 20_bootstrap
 ;; module's own tangled block (see Step 9 of modules/20_bootstrap.org)

@@ -391,7 +391,8 @@ when bootstrap halted (which is the case where you most need it).
 | `EMACS_DATA_DIR=/path` | env var | overrides the auto-derived data folder path |
 | `EMACS_MAC_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh installs from a non-`main` branch |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
-| `~/.emacs.d/config/modules/local.org` | create the file | loads LAST in discovery; can shadow any module's setting |
+| `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
+| iCloud CalDAV / account secrets | `M-x my/caldav-setup` → macOS Keychain | per-Mac account & secret values (CalDAV URL with DSID, calendar UUID, Apple ID, app-password) live in the Keychain, never in a config file |
 
 ---
 

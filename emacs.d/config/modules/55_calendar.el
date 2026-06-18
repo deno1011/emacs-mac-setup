@@ -1,28 +1,3 @@
-#+TITLE: org-caldav — Apple Calendar (iCloud) Sync
-#+STARTUP: overview
-
-Bidirectional sync between =calendar.org= (hard appointments, active
-timestamps) and an iCloud calendar via CalDAV, using the community package
-[[https://github.com/dengste/org-caldav][org-caldav]].
-
-Architecture:
-- =calendar.org= holds appointments as headings with an *active timestamp*
-  =<2026-06-25 Wed 09:30-10:15>= (events, not tasks — no TODO keyword).
-- Events created on the iPhone come back into =calendar-inbox.org=; refile
-  them into =calendar.org= afterwards.
-- This is the calendar counterpart to =50_apple_reminders=: Reminders carry
-  dated *tasks* (org SCHEDULED), the calendar carries *appointments*.
-
-Account-specific values (=org-caldav-url=, =org-caldav-calendar-id=,
-=org-icalendar-timezone=, Apple ID) and the iCloud credentials live OUTSIDE
-this public module — *all* in the macOS Keychain, never in a file:
-- URL, calendar id, Apple ID, timezone  →  generic passwords under service
-  =emacs-icloud-caldav= (read at load; written by =M-x my/caldav-setup=).
-- App-specific password  →  Internet password (auth-source / macOS Keychain).
-
-macOS only.
-
-#+begin_src emacs-lisp :tangle yes
 ;;; 55_calendar.el --- Apple Calendar (iCloud) sync via org-caldav -*- lexical-binding: t; -*-
 
 (defvar my/data-dir)
@@ -38,20 +13,7 @@ macOS only.
 (declare-function my/keychain-get-internet "20.01.01_bootstrap_keychain")
 (declare-function my/keychain-set "20.01.01_bootstrap_keychain")
 (declare-function my/keychain-get "20.01.01_bootstrap_keychain")
-#+end_src
 
-* Configuration
-
-Generic, non-account configuration. =org-caldav-sync= stays inert until
-=org-caldav-url= and =org-caldav-calendar-id= are read from the Keychain, so
-this module is safe to load before iCloud is wired up.
-
-- =org-caldav-files= :: org files whose events are pushed to iCloud.
-- =org-caldav-inbox= :: where events created on other devices land.
-- =org-caldav-save-directory= :: per-machine sync state (UID↔org mapping).
-- auth-source reads the app-specific password by host; Keychain first.
-
-#+begin_src emacs-lisp :tangle yes
 (when (and (eq system-type 'darwin)
            (my/bootstrap-ready-p))
   (use-package org-caldav
@@ -92,22 +54,7 @@ this module is safe to load before iCloud is wired up.
     (advice-add 'org-caldav-sync :around #'my/caldav--no-keepalive)
     (advice-add 'org-caldav-url-dav-get-properties :filter-return
                 #'my/caldav--coerce-dav-status)))
-#+end_src
 
-* Credential command
-
-=my/caldav-set-password= prompts for the Apple ID and the app-specific
-password and stores it in the macOS Keychain as an HTTPS Internet password —
-the same thing the manual =security add-internet-password= invocation does,
-but inside Emacs (the password is read with `read-passwd', never echoed).
-
-It writes the entry for =caldav.icloud.com= (used during discovery) and, when
-=org-caldav-url= is already set, also for that host (the =pNN-caldav.icloud.com=
-the sync actually talks to). auth-source's =macos-keychain-internet= backend
-then resolves the credential automatically. The doctor (=M-x my/doctor=) flags
-a missing entry and points here.
-
-#+begin_src emacs-lisp :tangle yes
 (defvar my/caldav-apple-id nil
   "Apple ID (email) for iCloud CalDAV. nil ⇒ prompt with `user-mail-address'.
 Normally read from the Keychain (service \"emacs-icloud-caldav\", account
@@ -216,21 +163,7 @@ update."
     (when (boundp 'org-icalendar-timezone) (setq org-icalendar-timezone tz))
     (message "iCloud CalDAV wired via Keychain for %s — now M-x org-caldav-sync"
              apple-id)))
-#+end_src
 
-* iCloud + url.el workaround (preemptive auth)
-
-iCloud CalDAV does not play well with url.el's default auth flow: url.el
-sends the request first, expects a =401= challenge, then retries with
-credentials — but iCloud's challenged PROPFIND stalls, so the synchronous
-request hangs (and wedges the whole daemon). Verified: an identical request
-with a *preemptive* =Authorization: Basic= header returns =207= immediately.
-
-So we inject Basic auth ourselves for iCloud hosts, pulled from auth-source
-(never stored in this file), and disable keep-alive for the duration of a
-sync. Scoped to iCloud / to `org-caldav-sync' — no effect on other url.el use.
-
-#+begin_src emacs-lisp :tangle yes
 (defun my/caldav--preemptive-basic-auth (request)
   "Add a preemptive Basic `Authorization' header to REQUEST for iCloud hosts.
 REQUEST is the raw HTTP request string built by `url-http-create-request';
@@ -277,25 +210,3 @@ a response was returned, assume 200 (we got properties back). Returns OUTPUT."
                                       (string-match "\\([0-9]\\{3\\}\\)" st))
                                  (string-to-number (match-string 1 st))
                                200))))))))
-#+end_src
-
-* iCloud wiring (do once: =M-x my/caldav-setup=)
-
-This module deliberately omits the account-specific values; they all live in
-the macOS Keychain, never in a config file. After creating an "Org" calendar
-in Calendar.app and an app-specific password at =appleid.apple.com=, run
-=M-x my/caldav-setup= and answer the prompts. It stores, under the generic
-service =emacs-icloud-caldav=:
-
-#+begin_example
-url          https://pNN-caldav.icloud.com/DSID/calendars
-calendar-id  UUID-OF-THE-ORG-CALENDAR
-apple-id     you@icloud.com
-timezone     Europe/Berlin
-#+end_example
-
-…plus the app-specific password as an Internet password (host
-=pNN-caldav.icloud.com= + =caldav.icloud.com=, account = Apple ID, port 443).
-The module reads these at load, so on the next start =org-caldav-sync= is wired
-automatically. Then: =M-x org-caldav-sync=. The doctor (=M-x my/doctor=) flags
-any missing piece and points back to =my/caldav-setup=.

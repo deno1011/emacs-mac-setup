@@ -136,10 +136,6 @@ to `directory-files', skipping `.', `..', `.DS_Store', etc."
     (dolist (f live)
       (my/-load-module f))))
 
-;; Per-Mac override — loads LAST, can shadow anything above. Optional.
-(let ((local (expand-file-name "local.org" my/config-dir)))
-  (when (file-exists-p local) (my/-load-module local)))
-
 ;; Bootstrap is invoked synchronously at the END of the 20_bootstrap
 ;; module's own tangled block (see Step 9 of modules/20_bootstrap.org)
 ;; so the form opens — and `my/data-dir' is settled, the data repo is

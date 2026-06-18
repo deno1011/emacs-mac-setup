@@ -11,6 +11,8 @@
 (declare-function my/bootstrap-ready-p             "20.03.01_bootstrap")
 (declare-function my/bootstrap--all-credential-descriptors "20.03.01_bootstrap")
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-get-internet         "20.01.01_bootstrap_keychain")
+(declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
 (declare-function my/git-remote-url                "20.01.02_bootstrap_git")
 (declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
 
@@ -235,6 +237,45 @@ and :fix. The :label is supplied by this macro."
                                                   rows))
                                          ", "))))
        (t (list :status :ok :detail detail)))))))
+
+(my/doctor-define-check "iCloud CalDAV wiring (Keychain)"
+  (let* ((kc  (fboundp 'my/keychain-get))
+         (url (or (and kc (my/keychain-get "emacs-icloud-caldav" "url"))
+                  (and (boundp 'org-caldav-url) (stringp org-caldav-url)
+                       (string-match-p "icloud" org-caldav-url) org-caldav-url)))
+         (cid (and kc (my/keychain-get "emacs-icloud-caldav" "calendar-id")))
+         (aid (and kc (my/keychain-get "emacs-icloud-caldav" "apple-id")))
+         (pw  (and (fboundp 'my/keychain-get-internet)
+                   (my/keychain-get-internet "caldav.icloud.com"))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (or url cid aid pw))
+      (list :status :ok :detail "iCloud calendar sync not configured — skipped"))
+     (t
+      (let ((missing (delq nil (list (unless url "url")
+                                     (unless cid "calendar-id")
+                                     (unless aid "apple-id")
+                                     (unless pw  "password")))))
+        (if missing
+            (list :status :warn
+                  :detail (format "iCloud CalDAV Keychain incomplete — missing: %s"
+                                  (string-join missing ", "))
+                  :fix "M-x my/caldav-setup")
+          (list :status :ok
+                :detail "fully wired in Keychain (url, calendar-id, apple-id, password)")))))))
+
+(my/doctor-define-check "Apple Calendar integration (org-apple-calendar)"
+  (cond
+   ((not (eq system-type 'darwin))
+    (list :status :ok :detail "not macOS — skipped"))
+   ((fboundp 'org-apple-calendar-list-calendars)
+    (list :status :ok
+          :detail "installed — first C-c k use prompts once for macOS Calendar access"))
+   (t
+    (list :status :warn
+          :detail "org-apple-calendar not loaded (EventKit calendar read/ingest)"
+          :fix "check modules/56_calendar; elpaca installs deno1011/org-apple-calendar"))))
 
 (my/doctor-define-check "gh CLI authenticated"
   (cond
