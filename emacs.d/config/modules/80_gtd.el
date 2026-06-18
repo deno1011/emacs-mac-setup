@@ -314,7 +314,7 @@ structural project shape while user data is being migrated."
 (setq org-agenda-custom-commands
       (append
        (my/gtd--without-commands
-        '("g" "r" "J" "X" "B" "H" "C" "E" "K" "A" "G" "L" "F" "f")
+        '("g" "r" "J" "X" "B" "H" "c" "E" "K" "F" "f")
         org-agenda-custom-commands)
        '(("g" "GTD dashboard"
           ((agenda "" ((org-agenda-span 1)
@@ -360,13 +360,10 @@ structural project shape while user data is being migrated."
            (tags-todo "+blocked"
                       ((org-agenda-overriding-header "Blocked")))))
          ("H" "@home next actions" tags-todo "+@home/NEXT")
-         ("C" "@computer next actions" tags-todo "+@computer/NEXT")
+         ("c" "@computer next actions" tags-todo "+@computer/NEXT")
          ("E" "@errand next actions" tags-todo "+@errand/NEXT")
          ("K" "@calls next actions" tags-todo "+@calls/NEXT")
-         ;; Horizons are reference headings (often no TODO state) → `tags'.
-         ("A" "Areas" tags "+area")
-         ("G" "Goals" tags "+goal")
-         ("L" "Life / values" tags "+life")
+         ;; Individual Areas/Goals/Life views dropped — use F (composite).
          ("F" "Higher-horizon review (Future/horizons)"
           ((tags "+life"
                  ((org-agenda-overriding-header "Life / Values")))

@@ -605,50 +605,45 @@ Run after adding new directories or moving files around."
 
 (setq org-agenda-files (my/-agenda-files-scanned))
 
-;; Reference-material exclusion (general, tag-based — not path-bound).
-;; Entries tagged :ref: live in a *reference system* (the wiki today, any
+;; Backlog-exclusion (general, tag-based — not path-bound).
+;; Entries tagged :backlog: live in a *reference system* (the wiki today, any
 ;; other doc system tomorrow) — documented project TODOs, NOT active GTD
 ;; actions. Skip them from EVERY agenda view via the global skip hook; the
 ;; backlog/reference views below re-enable them locally so they stay
-;; findable. Safety net against forgetting: the Weekly Review opens C-c a W.
-(defun my/gtd-skip-reference ()
-  "Skip entries tagged :ref: (reference material) in active GTD agenda views.
+;; findable. Safety net against forgetting: the Weekly Review opens C-c a R.
+(defun my/gtd-skip-backlog ()
+  "Skip entries tagged :backlog: (reference-doc TODOs) in active GTD views.
 Return the position of the next heading to skip this entry, or nil to keep
 it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
-`#+FILETAGS: :ref:' line marks an entire reference file."
-  (when (member "ref" (org-get-tags))
+`#+FILETAGS: :backlog:' line marks an entire reference file."
+  (when (member "backlog" (org-get-tags))
     (save-excursion (or (outline-next-heading) (point-max)))))
 
-(setq org-agenda-skip-function-global #'my/gtd-skip-reference)
+(setq org-agenda-skip-function-global #'my/gtd-skip-backlog)
 
 ;; Tag-driven per-category views, appended to whatever was set above
-;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/M/T and R=reference).
-;; The backlog/reference views (I/P/S/M/R) locally disable the :ref: skip
-;; so reference TODOs remain findable there. (Higher-horizon review is
-;; key F, owned by 80_gtd; R is the reference/backlog view.)
+;; (norang's N/h/SPC stay). Keys deliberately avoid org's built-in dispatcher
+;; letters (a t T m M s S L C) so those built-ins stay reachable — hence the
+;; lowercase c/d/v/o here and in 80_gtd. The backlog/reference views
+;; (I/P/d/v/R) locally disable the :backlog: skip so those TODOs stay
+;; findable. Higher-horizon review is key F (owned by 80_gtd); the individual
+;; area/goal/life views were dropped (use F).
 (setq org-agenda-custom-commands
       (append
        org-agenda-custom-commands
-       '(("I" "💡 Ideas / backlog (anywhere)" tags-todo "+idea"
+       '(("I" "💡 Ideas (anywhere)"               tags-todo "+idea"
           ((org-agenda-skip-function-global nil)))
          ("P" "🗂 Plans (worked-out, ready to schedule)" tags-todo "+plan"
           ((org-agenda-skip-function-global nil)))
-         ("S" "💤 Someday / Maybe"           tags-todo "+someday"
+         ("d" "💤 Someday / Maybe"                tags-todo "+someday"
           ((org-agenda-skip-function-global nil)))
-         ("M" "📎 Reference material"        tags "+reference"
+         ("v" "📎 Verweise (reference material)"  tags "+reference"
           ((org-agenda-skip-function-global nil)))
-         ("R" "🔖 Reference / backlog TODOs (all systems, :ref:)" tags-todo "+ref"
+         ("R" "🔖 Backlog — TODOs in reference systems (:backlog:)" tags-todo "+backlog"
           ((org-agenda-skip-function-global nil)))
-         ;; Horizons are reference headings (often no TODO state), so use
-         ;; `tags' (all matching headings), not `tags-todo'.
-         ("A" "🎯 Areas of focus (20K ft)"   tags "+area")
-         ("G" "🚀 Goals (30K ft)"            tags "+goal")
-         ("L" "🌟 Life / values (40–50K ft)" tags "+life")
-         ;; "Pure" action view — TODO state items in files/headings
-         ;; that carry NO category tag. The cleanest "what's actually
-         ;; on my plate right now" view across all of ~/emacs/.
-         ("T" "📋 Action TODOs only (excludes categorized)"
-          tags-todo "-someday-idea-plan-area-goal-life-reference-ref"))))
+         ;; Pure action view — TODO-state items with NO category tag.
+         ("o" "📋 Offene Aktionen (excludes categorized)"
+          tags-todo "-someday-idea-plan-area-goal-life-reference-backlog"))))
 
 (defun my/gtd-ensure-tree ()
   "Create $my/data-dir/data/org/ if missing. Does not touch files."
