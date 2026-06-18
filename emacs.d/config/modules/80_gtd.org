@@ -624,7 +624,8 @@ So bekommt ein neuer Nutzer die macOS-Umgebung (Reminders-Listen, „Org"-
 Kalender, Review-Rituale) automatisch — **ohne** wissen zu müssen, dass es sie
 gibt. Alles läuft über die **gekapselte Paket-API** (org-apple-reminders /
 org-apple-calendar), nie über Ad-hoc-JXA hier; ein Backend-Wechsel bleibt damit
-paket-intern. Idempotent (legt nichts doppelt an). Habits bewusst (noch) nicht.
+paket-intern. Idempotent (legt nichts doppelt an). Die „Habits"-Liste wird
+mit angelegt (leer); Habit-Inhalte/Reminder bleiben deine Wahl.
 
 #+begin_src emacs-lisp :tangle yes
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
@@ -632,7 +633,7 @@ paket-intern. Idempotent (legt nichts doppelt an). Habits bewusst (noch) nicht.
 (declare-function org-apple-reminders-ensure-recurring "org-apple-reminders")
 (declare-function org-apple-calendar-ensure-calendar "org-apple-calendar")
 
-(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale")
+(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale" "Habits")
   "Apple Reminders lists the GTD setup ensures exist on this Mac."
   :type '(repeat string) :group 'org)
 

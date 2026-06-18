@@ -382,7 +382,7 @@ structural project shape while user data is being migrated."
 (declare-function org-apple-reminders-ensure-recurring "org-apple-reminders")
 (declare-function org-apple-calendar-ensure-calendar "org-apple-calendar")
 
-(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale")
+(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale" "Habits")
   "Apple Reminders lists the GTD setup ensures exist on this Mac."
   :type '(repeat string) :group 'org)
 
