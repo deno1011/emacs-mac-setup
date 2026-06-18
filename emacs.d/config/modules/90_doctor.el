@@ -277,6 +277,18 @@ and :fix. The :label is supplied by this macro."
           :detail "org-apple-calendar not loaded (EventKit calendar read/ingest)"
           :fix "check modules/56_calendar; elpaca installs deno1011/org-apple-calendar"))))
 
+(my/doctor-define-check "GTD Apple environment (lists + Org calendar + rituals)"
+  (cond
+   ((not (eq system-type 'darwin))
+    (list :status :ok :detail "not macOS — skipped"))
+   ((and (boundp 'my/gtd--provision-marker)
+         (file-exists-p my/gtd--provision-marker))
+    (list :status :ok :detail "provisioned (lists, Org calendar, review rituals)"))
+   (t
+    (list :status :warn
+          :detail "GTD Apple environment not yet provisioned"
+          :fix "M-x my/gtd-provision-apple"))))
+
 (my/doctor-define-check "gh CLI authenticated"
   (cond
    ((not (fboundp 'my/gh-auth-status))

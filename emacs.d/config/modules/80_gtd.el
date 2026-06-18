@@ -376,3 +376,79 @@ structural project shape while user data is being migrated."
                  ((org-agenda-overriding-header "Flights")))
            (tags "+travel"
                  ((org-agenda-overriding-header "Travel"))))))))
+
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
+(declare-function org-apple-reminders-ensure-list "org-apple-reminders")
+(declare-function org-apple-reminders-ensure-recurring "org-apple-reminders")
+(declare-function org-apple-calendar-ensure-calendar "org-apple-calendar")
+
+(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale")
+  "Apple Reminders lists the GTD setup ensures exist on this Mac."
+  :type '(repeat string) :group 'org)
+
+(defcustom my/gtd-org-calendar "Org"
+  "Writable Apple calendar the GTD setup ensures exists (Emacs-authored events)."
+  :type 'string :group 'org)
+
+(defcustom my/gtd-ritual-list "GTD-Rituale"
+  "Apple Reminders list for the recurring review rituals (native, not synced)."
+  :type 'string :group 'org)
+
+(defun my/gtd--next-time (hour minute &optional weekday day-of-month)
+  "Next Emacs time at HOUR:MINUTE.
+WEEKDAY (0=Sunday) → next that weekday; DAY-OF-MONTH → next that day of month;
+otherwise the next HOUR:MINUTE today-or-tomorrow."
+  (let* ((now (current-time)) (dec (decode-time now))
+         (base (encode-time 0 minute hour (nth 3 dec) (nth 4 dec) (nth 5 dec))))
+    (cond
+     (weekday
+      (let* ((delta (mod (- weekday (nth 6 dec)) 7))
+             (cand (time-add base (* delta 86400))))
+        (if (time-less-p now cand) cand (time-add cand (* 7 86400)))))
+     (day-of-month
+      (let ((cand (encode-time 0 minute hour day-of-month (nth 4 dec) (nth 5 dec))))
+        (if (time-less-p now cand) cand
+          (let ((m (1+ (nth 4 dec))) (y (nth 5 dec)))
+            (when (> m 12) (setq m 1 y (1+ y)))
+            (encode-time 0 minute hour day-of-month m y)))))
+     (t (if (time-less-p base now) (time-add base 86400) base)))))
+
+(defun my/gtd-provision-apple ()
+  "Idempotently provision the GTD environment in Apple Reminders & Calendar.
+Ensures the GTD lists, the writable \"Org\" calendar, and the daily/weekly/
+monthly review reminders — all via the package APIs.  Safe to re-run."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (dolist (l my/gtd-apple-lists)
+    (org-apple-reminders-ensure-list l))
+  (when (fboundp 'org-apple-calendar-ensure-calendar)
+    (org-apple-calendar-ensure-calendar my/gtd-org-calendar))
+  (org-apple-reminders-ensure-recurring
+   my/gtd-ritual-list "🔁 Daily GTD — Agenda öffnen (C-c a g), 1–3 NEXTs wählen"
+   'daily (my/gtd--next-time 8 0))
+  (org-apple-reminders-ensure-recurring
+   my/gtd-ritual-list "🔁 Weekly Review — voller Durchlauf (C-c a r)"
+   'weekly (my/gtd--next-time 10 0 0))
+  (org-apple-reminders-ensure-recurring
+   my/gtd-ritual-list "🔁 Monthly Horizon — Areas/Goals/Life (C-c a F)"
+   'monthly (my/gtd--next-time 9 0 nil 1))
+  (message "GTD: Apple-Umgebung provisioniert (Listen, Org-Kalender, Rituale)"))
+
+(defconst my/gtd--provision-marker
+  (expand-file-name ".gtd-apple-provisioned" user-emacs-directory)
+  "Marker: the Apple GTD provisioning was offered/run once on this Mac.")
+
+(defun my/gtd--maybe-provision-on-first-run ()
+  "On first launch (no marker), auto-provision the Apple GTD environment.
+The macOS Reminders/Calendar access prompts that appear on first run are the
+consent; a marker then prevents re-running.  No blocking `y-or-n-p' (safe in a
+daemon).  Idempotent — re-running `my/gtd-provision-apple' by hand is harmless."
+  (when (and (eq system-type 'darwin)
+             (not noninteractive)
+             (not (file-exists-p my/gtd--provision-marker))
+             (fboundp 'my/bootstrap-ready-p) (my/bootstrap-ready-p))
+    (ignore-errors (my/gtd-provision-apple))
+    (ignore-errors (write-region "" nil my/gtd--provision-marker))))
+
+(when (and (eq system-type 'darwin) (not noninteractive))
+  (run-with-idle-timer 8 nil #'my/gtd--maybe-provision-on-first-run))
