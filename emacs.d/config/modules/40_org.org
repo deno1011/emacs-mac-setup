@@ -669,15 +669,39 @@ Run after adding new directories or moving files around."
 
 (setq org-agenda-files (my/-agenda-files-scanned))
 
+;; Reference-material exclusion (general, tag-based — not path-bound).
+;; Entries tagged :ref: live in a *reference system* (the wiki today, any
+;; other doc system tomorrow) — documented project TODOs, NOT active GTD
+;; actions. Skip them from EVERY agenda view via the global skip hook; the
+;; backlog/reference views below re-enable them locally so they stay
+;; findable. Safety net against forgetting: the Weekly Review opens C-c a W.
+(defun my/gtd-skip-reference ()
+  "Skip entries tagged :ref: (reference material) in active GTD agenda views.
+Return the position of the next heading to skip this entry, or nil to keep
+it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
+`#+FILETAGS: :ref:' line marks an entire reference file."
+  (when (member "ref" (org-get-tags))
+    (save-excursion (or (outline-next-heading) (point-max)))))
+
+(setq org-agenda-skip-function-global #'my/gtd-skip-reference)
+
 ;; Tag-driven per-category views, appended to whatever was set above
-;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/R/M/T).
+;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/R/M/T/W).
+;; The backlog/reference views (I/P/S/M/W) locally disable the :ref: skip
+;; so reference TODOs remain findable there.
 (setq org-agenda-custom-commands
       (append
        org-agenda-custom-commands
-       '(("I" "💡 Ideas / backlog (anywhere)" tags-todo "+idea")
-         ("P" "🗂 Plans (worked-out, ready to schedule)" tags-todo "+plan")
-         ("S" "💤 Someday / Maybe"           tags-todo "+someday")
-         ("M" "📎 Reference material"        tags-todo "+reference")
+       '(("I" "💡 Ideas / backlog (anywhere)" tags-todo "+idea"
+          ((org-agenda-skip-function-global nil)))
+         ("P" "🗂 Plans (worked-out, ready to schedule)" tags-todo "+plan"
+          ((org-agenda-skip-function-global nil)))
+         ("S" "💤 Someday / Maybe"           tags-todo "+someday"
+          ((org-agenda-skip-function-global nil)))
+         ("M" "📎 Reference material"        tags-todo "+reference"
+          ((org-agenda-skip-function-global nil)))
+         ("W" "🔖 Reference / backlog TODOs (all systems, :ref:)" tags-todo "+ref"
+          ((org-agenda-skip-function-global nil)))
          ("A" "🎯 Areas of focus (20K ft)"   tags-todo "+area")
          ("G" "🚀 Goals (30K ft)"            tags-todo "+goal")
          ("L" "🌟 Life / values (40–50K ft)" tags-todo "+life")
@@ -689,7 +713,7 @@ Run after adding new directories or moving files around."
          ;; that carry NO category tag. The cleanest "what's actually
          ;; on my plate right now" view across all of ~/emacs/.
          ("T" "📋 Action TODOs only (excludes categorized)"
-          tags-todo "-someday-idea-plan-area-goal-life-reference"))))
+          tags-todo "-someday-idea-plan-area-goal-life-reference-ref"))))
 #+end_src
 
 * GTD Starter — First-Install Bootstrap
