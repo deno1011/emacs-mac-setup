@@ -314,7 +314,7 @@ structural project shape while user data is being migrated."
 (setq org-agenda-custom-commands
       (append
        (my/gtd--without-commands
-        '("g" "r" "J" "X" "B" "H" "C" "E" "K" "A" "G" "L" "R" "f")
+        '("g" "r" "J" "X" "B" "H" "C" "E" "K" "A" "G" "L" "F" "f")
         org-agenda-custom-commands)
        '(("g" "GTD dashboard"
           ((agenda "" ((org-agenda-span 1)
@@ -366,7 +366,7 @@ structural project shape while user data is being migrated."
          ("A" "Areas" tags-todo "+area")
          ("G" "Goals" tags-todo "+goal")
          ("L" "Life / values" tags-todo "+life")
-         ("R" "Higher-horizon review"
+         ("F" "Higher-horizon review (Future/horizons)"
           ((tags-todo "+life"
                       ((org-agenda-overriding-header "Life / Values")))
            (tags-todo "+goal"

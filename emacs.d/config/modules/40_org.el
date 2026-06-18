@@ -622,9 +622,10 @@ it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
 (setq org-agenda-skip-function-global #'my/gtd-skip-reference)
 
 ;; Tag-driven per-category views, appended to whatever was set above
-;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/R/M/T/W).
-;; The backlog/reference views (I/P/S/M/W) locally disable the :ref: skip
-;; so reference TODOs remain findable there.
+;; (norang's N/h/SPC stay; these add I/P/S/A/G/L/M/T and R=reference).
+;; The backlog/reference views (I/P/S/M/R) locally disable the :ref: skip
+;; so reference TODOs remain findable there. (Higher-horizon review is
+;; key F, owned by 80_gtd; R is the reference/backlog view.)
 (setq org-agenda-custom-commands
       (append
        org-agenda-custom-commands
@@ -636,15 +637,11 @@ it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
           ((org-agenda-skip-function-global nil)))
          ("M" "📎 Reference material"        tags-todo "+reference"
           ((org-agenda-skip-function-global nil)))
-         ("W" "🔖 Reference / backlog TODOs (all systems, :ref:)" tags-todo "+ref"
+         ("R" "🔖 Reference / backlog TODOs (all systems, :ref:)" tags-todo "+ref"
           ((org-agenda-skip-function-global nil)))
          ("A" "🎯 Areas of focus (20K ft)"   tags-todo "+area")
          ("G" "🚀 Goals (30K ft)"            tags-todo "+goal")
          ("L" "🌟 Life / values (40–50K ft)" tags-todo "+life")
-         ("R" "📚 Higher-horizon review"
-          ((tags-todo "+life")
-           (tags-todo "+goal")
-           (tags-todo "+area")))
          ;; "Pure" action view — TODO state items in files/headings
          ;; that carry NO category tag. The cleanest "what's actually
          ;; on my plate right now" view across all of ~/emacs/.
