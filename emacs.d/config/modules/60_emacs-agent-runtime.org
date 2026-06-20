@@ -5,7 +5,7 @@
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp :tangle yes
-;;; 60_gptel.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
+;;; 60_emacs-agent-runtime.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
 
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)
@@ -52,7 +52,7 @@ tool/runtime layer used by gptel, Codex CLI, Claude Code, MCP, and direct
 * Repository Roles
 
 - =~/emacs= is the private live Emacs-plus runtime repo.
-- =~/emacs/config/modules/60-gptel.org= is the loader for gptel plus EAR.
+- =~/emacs/config/modules/60_emacs-agent-runtime.org= is the loader for gptel plus EAR.
 - =~/emacs-agent-runtime= is the neutral standalone runtime development repo.
 - =~/emacs-mac-setup= is the installer/bootstrap/template repo.
 

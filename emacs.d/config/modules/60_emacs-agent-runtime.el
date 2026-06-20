@@ -1,4 +1,4 @@
-;;; 60_gptel.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
+;;; 60_emacs-agent-runtime.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
 
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)

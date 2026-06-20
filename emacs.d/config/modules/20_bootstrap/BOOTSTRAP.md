@@ -151,8 +151,8 @@ The bootstrap exposes exactly these symbols to feature modules:
 
 | Symbol | Type | Used by |
 |---|---|---|
-| `my/data-dir` | defvar, absolute string path OR `:not-resolved` sentinel | `30_core`, `40_org`, `50_apple_reminders`, `60_gptel`, `70_wiki`, `80_gtd` (~40 call sites) |
-| `my/api-key-fetch` | function `(KEY-NAME) → string or nil` | `60_gptel` (6 call sites) |
+| `my/data-dir` | defvar, absolute string path OR `:not-resolved` sentinel | `30_core`, `40_org`, `50_apple_reminders`, `60_emacs-agent-runtime`, `70_wiki`, `80_gtd` (~40 call sites) |
+| `my/api-key-fetch` | function `(KEY-NAME) → string or nil` | `60_emacs-agent-runtime` (6 call sites) |
 | `my/bootstrap-ready-p` | function `() → t / nil` | guard around path-dependent setup in every feature module |
 | `my/bootstrap` | interactive command | M-x by the user to re-run the orchestrator |
 | `my/api-key-set` | interactive command | M-x focused on API key rotation |

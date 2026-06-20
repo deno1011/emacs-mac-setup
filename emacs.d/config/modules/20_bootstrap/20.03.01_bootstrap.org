@@ -10,7 +10,7 @@ This is the Layer-3 main entry of the bootstrap subsystem (see
 [[file:BOOTSTRAP.md][BOOTSTRAP.md]]). It defines the public
 contract — exactly two symbols plus a readiness predicate — that
 the feature modules (=30-core=, =40-org=, =50-apple-reminders=,
-=60-gptel=, =70-wiki=, =80-gtd=) depend on:
+=60_emacs-agent-runtime=, =70-wiki=, =80-gtd=) depend on:
 
   - =my/data-dir= — string path of the user's data folder, OR the
     sentinel =:not-resolved= when bootstrap has not (yet) settled it
@@ -165,7 +165,7 @@ under \"Why the :not-resolved sentinel\".
 
 Read by every feature module that stores data under a
 user-configurable directory (30-core, 40-org, 50-apple-reminders,
-60-gptel, 70-wiki, 80-gtd). The contract with these modules is
+60_emacs-agent-runtime, 70-wiki, 80-gtd). The contract with these modules is
 in BOOTSTRAP.md §4.")
 #+end_src
 

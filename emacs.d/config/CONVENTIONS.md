@@ -2,7 +2,7 @@
 
 This file covers the general code rules for **non-bootstrap configuration**
 under `emacs.d/config/`. It describes how the actual feature modules
-(`30_core.org`, `40_org.org`, `50_apple_reminders.org`, `60_gptel.org`,
+(`30_core.org`, `40_org.org`, `50_apple_reminders.org`, `60_emacs-agent-runtime.org`,
 `70_wiki.org`, `80_gtd.org`, plus any future ones) are organised, and
 which guardrails apply when editing them.
 
@@ -121,7 +121,7 @@ modules/
   30_core.org            ← base Emacs, magit, completion
   40_org.org             ← Org, agenda, GTD, capture, roam
   50_apple_reminders.org
-  60_gptel.org
+  60_emacs-agent-runtime.org
   70_wiki.org
   80_gtd.org
 ```

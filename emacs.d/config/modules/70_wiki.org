@@ -27,7 +27,7 @@ LLM-maintained Emacs-knowledge wiki using the Karpathy LLM-Wiki pattern.
 
 - Wiki content at =~/emacs/wiki/emacs/=
 - Schema at =~/emacs/wiki/emacs/WIKI.org=
-- Built on top of [[file:40-org.org][org-roam]] and [[file:60-gptel.org][gptel]]
+- Built on top of [[file:40-org.org][org-roam]] and [[file:60_emacs-agent-runtime.org][gptel/EAR]]
 - Pattern: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
 
 * Wiki Root and Preferences

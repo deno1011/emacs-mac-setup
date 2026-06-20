@@ -49,7 +49,7 @@ under \"Why the :not-resolved sentinel\".
 
 Read by every feature module that stores data under a
 user-configurable directory (30-core, 40-org, 50-apple-reminders,
-60-gptel, 70-wiki, 80-gtd). The contract with these modules is
+60_emacs-agent-runtime, 70-wiki, 80-gtd). The contract with these modules is
 in BOOTSTRAP.md §4.")
 
 (defvar my/bootstrap--failed-p nil
