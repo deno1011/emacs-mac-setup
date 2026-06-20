@@ -102,9 +102,8 @@ Doesn't touch files. Safe to call interactively."
 Builds the =wiki-maintainer= gptel directive dynamically from =WIKI.org=
 and =index.org= so schema edits propagate without restart. Call
 =M-x my/wiki-maintainer-refresh= after editing WIKI.org or after large
-ingests. The directive is /not/ auto-selected by
-=gptel-agent-runtime-directive-for-current-runtime=; the helpers below
-opt in explicitly per buffer.
+ingests. The directive is independent from EAR's default gptel runtime
+directive; the helpers below opt in explicitly per buffer.
 
 #+begin_src emacs-lisp
 (defun my/wiki-maintainer-build-prompt ()

@@ -1,11 +1,11 @@
-#+TITLE: gptel Agent Runtime Loader
+#+TITLE: gptel and Emacs Agent Runtime Loader
 #+STARTUP: overview
 #+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
 
 Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
 
 #+begin_src emacs-lisp :tangle yes
-;;; 60_gptel.el --- gptel agent runtime loader -*- lexical-binding: t; -*-
+;;; 60_gptel.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
 
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)
@@ -13,103 +13,146 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (defvar gptel-model)
 (defvar gptel-default-mode)
 (defvar gptel-directives)
-(defvar gptel-agent-runtime-ollama-host)
-(defvar gptel-agent-runtime-default-local-model)
-(defvar gptel-agent-runtime-default-local-model-label)
-(defvar gptel-agent-runtime-high-fidelity-model)
+(defvar gptel-tools)
+(defvar gptel-use-tools)
+(defvar my/emacs-agent-runtime-dir
+  (expand-file-name "~/emacs-agent-runtime"))
+(defvar my/gptel-ollama-host "localhost:11434")
+(defvar my/gptel-default-local-model 'qwen2.5:14b-instruct)
+(defvar my/gptel-default-local-model-label "Qwen 2.5 Instruct 14B (Ollama)")
+(defvar my/gptel-high-fidelity-model nil)
 
 (declare-function gptel-make-anthropic "gptel-anthropic")
 (declare-function gptel-make-openai "gptel-openai")
 (declare-function gptel-make-gemini "gptel-gemini")
 (declare-function gptel-make-ollama "gptel-ollama")
-(declare-function gptel-agent-runtime-start-ollama-if-needed "gptel-agent-runtime")
-(declare-function gptel-agent-runtime-sync-directive-for-current-runtime "gptel-agent-runtime")
-(declare-function gptel-agent-runtime-sync-tools "gptel-agent-runtime")
+(declare-function emacs-agent-runtime-mode "emacs-agent-runtime" (&optional arg))
+(declare-function emacs-agent-runtime-gptel-install-read-tools
+                  "ear-adapter-gptel" (&optional local))
+(declare-function ear-adapter-gptel-runtime-directive
+                  "ear-adapter-gptel" ())
+(declare-function emacs-agent-runtime-show-cli-request-preview
+                  "ear-adapter-cli" (agent prompt &optional continue context))
+(declare-function emacs-agent-runtime-queue-cli-agent-launch
+                  "ear-adapter-cli" (agent prompt &optional continue context))
+(declare-function ear-adapter-cli--current-context-text
+                  "ear-adapter-cli" ())
 #+end_src
 
-This file intentionally stays small. The AI implementation now lives in the
-separate package repository:
+This file intentionally stays small. The AI runtime implementation now lives in
+the neutral local runtime repository:
 
-[[https://github.com/deno1011/gptel-agent-runtime][deno1011/gptel-agent-runtime]]
+[[https://github.com/deno1011/emacs-agent-runtime][deno1011/emacs-agent-runtime]]
 
-The package was split out so it can later be cleaned up for MELPA. Runtime
-configuration still loads from the private Emacs repo, but the implementation
-is installed and updated from Git.
+The old =gptel-agent-runtime= package is deliberately not loaded here anymore.
+=gptel= stays the chat UI/backend client; =emacs-agent-runtime= is the shared
+tool/runtime layer used by gptel, Codex CLI, Claude Code, MCP, and direct
+=M-x= commands.
 
 * Repository Roles
 
 - =~/emacs= is the private live Emacs-plus runtime repo.
-- =~/emacs/config/modules/60-gptel.org= is only the loader for the AI package.
-- =~/gptel-agent-runtime= is the standalone package development repo.
+- =~/emacs/config/modules/60-gptel.org= is the loader for gptel plus EAR.
+- =~/emacs-agent-runtime= is the neutral standalone runtime development repo.
 - =~/emacs-mac-setup= is the installer/bootstrap/template repo.
 
-* Installation and Auto-Update
+* Runtime Loading
 
-Installs =gptel-agent-runtime= from GitHub via =package-vc-install= (Emacs 29+).
-After installation, schedules a silent background update check 10 seconds after
-Emacs becomes idle. Updated package code is active from the next Emacs session.
-
-For day-to-day development use the =main= branch. The =stable= branch currently
-points to the same version and can later become the slower-moving install target.
-
-Installation is handled by elpaca via the recipe in the use-package form
-below. Updates: =M-x elpaca-fetch gptel-agent-runtime= or =M-x elpaca-fetch-all=.
+For the current development phase this setup loads EAR from
+=~/emacs-agent-runtime=. That avoids the old GAR package recipe and keeps the
+runtime independent from one AI client. Later this can become an elpaca package
+install for other machines, but the interface should stay the same.
 
 #+begin_src emacs-lisp :tangle yes
-;; Elpaca handles install. The use-package form's `:ensure (RECIPE)' below
-;; tells elpaca to clone from deno1011/gptel-agent-runtime. Updates are
-;; user-triggered (M-x elpaca-fetch-all) rather than silent background
-;; pulls — keeps the install reproducible with the rest of the lockfile.
+(defun my/emacs-agent-runtime-load ()
+  "Load the local neutral Emacs Agent Runtime when available."
+  (let ((dir (file-name-as-directory
+              (expand-file-name my/emacs-agent-runtime-dir))))
+    (cond
+     ((featurep 'emacs-agent-runtime)
+      (when (boundp 'emacs-agent-runtime-cli-default-agent)
+        (setq emacs-agent-runtime-cli-default-agent "codex"))
+      t)
+     ((not (file-directory-p dir))
+      (message "emacs-agent-runtime directory missing: %s" dir)
+      nil)
+     (t
+      (add-to-list 'load-path dir)
+      (if (require 'emacs-agent-runtime nil t)
+          (progn
+            (when (fboundp 'emacs-agent-runtime-mode)
+              (emacs-agent-runtime-mode 1))
+            (when (boundp 'emacs-agent-runtime-cli-default-agent)
+              (setq emacs-agent-runtime-cli-default-agent "codex"))
+            (message "emacs-agent-runtime loaded from %s" dir)
+            t)
+        (message "emacs-agent-runtime not loadable from %s" dir)
+        nil)))))
+
+(defun my/emacs-agent-runtime-install-gptel-tools ()
+  "Install EAR's read-only tools and directive into gptel."
+  (when (my/emacs-agent-runtime-load)
+    (when (boundp 'gptel-use-tools)
+      (setq gptel-use-tools t))
+    (when (and (boundp 'gptel-directives)
+               (fboundp 'ear-adapter-gptel-runtime-directive))
+      (setq gptel-directives
+            (assq-delete-all 'emacs-agent-runtime gptel-directives))
+      (add-to-list
+       'gptel-directives
+       `(emacs-agent-runtime . ,(ear-adapter-gptel-runtime-directive))))
+    (when (fboundp 'emacs-agent-runtime-gptel-install-read-tools)
+      (emacs-agent-runtime-gptel-install-read-tools))))
+
+(defun my/emacs-agent-runtime-codex-preview (prompt)
+  "Preview a Codex CLI request using current region or buffer context."
+  (interactive (list (read-string "Codex prompt: " "Review this Emacs context.")))
+  (unless (my/emacs-agent-runtime-load)
+    (user-error "emacs-agent-runtime is not available"))
+  (emacs-agent-runtime-show-cli-request-preview
+   "codex" prompt nil
+   (when (fboundp 'ear-adapter-cli--current-context-text)
+     (ear-adapter-cli--current-context-text))))
+
+(defun my/emacs-agent-runtime-codex-launch (prompt)
+  "Queue an approval-gated Codex CLI launch using current context."
+  (interactive (list (read-string "Codex prompt: " "Review this Emacs context.")))
+  (unless (my/emacs-agent-runtime-load)
+    (user-error "emacs-agent-runtime is not available"))
+  (emacs-agent-runtime-queue-cli-agent-launch
+   "codex" prompt nil
+   (when (fboundp 'ear-adapter-cli--current-context-text)
+     (ear-adapter-cli--current-context-text))))
 #+end_src
 
 * Configuration
 
-The package expects the main Emacs config to have already defined runtime paths
+The runtime expects the main Emacs config to have already defined runtime paths
 such as =my/data-dir=, which happens in =~/.emacs.d/init.el= before
 =config.org= loads this file.
 
-After 2026-05-26 the package is provider-neutral: it only carries the
-runtime layer (agents, tools, memory, router, mission control) and forward-
-declares =my/gptel-backends= and =my/gptel-ollama-backend=. Backend
-registration (Anthropic, OpenAI, LM Studio, MLX, Ollama) and the default
+EAR is provider-neutral: it carries the runtime layer (tools, policies,
+approvals, memory, router, workflows, adapters). Backend registration
+(Anthropic, OpenAI, Gemini, Groq, LM Studio, MLX, Ollama) and the default gptel
 model selection live in the next section of this file.
 
 #+begin_src emacs-lisp :tangle yes
-;; Install gptel FIRST — gptel-agent-runtime depends on it. If elpaca
-;; queues the runtime ahead of gptel and tries to build it before gptel
-;; is ready, the runtime fails its dependency check ("Condition
-;; (finished . gptel) failed: gptel failed"). Putting gptel's
-;; use-package here (instead of in the "Backends Setup" section below)
-;; ensures elpaca queues + builds it ahead of the runtime.
+;; gptel remains the chat UI/backend client. The old gptel-agent-runtime package
+;; is intentionally not installed or loaded from this module anymore.
 (use-package gptel
   :ensure t
   :demand t
   :config
-  (setq gptel-default-mode 'org-mode))
-
-(use-package gptel-agent-runtime
-  :ensure (gptel-agent-runtime
-           :host github
-           :repo "deno1011/gptel-agent-runtime"
-           :branch "main")
-  ;; No `:files' spec on purpose. elpaca's `:defaults' already globs
-  ;; `*.el' at the top of the repo (which is where every `gar-*.el'
-  ;; lives) and excludes the standard `*-tests.el' patterns. An
-  ;; explicit `(:exclude "test" "docs" "scripts")' tripped elpaca's
-  ;; recipe parser with a "Wrong type argument: stringp, nil" —
-  ;; bare directory names without globs hit an edge case in
-  ;; `:exclude'. The repo's `docs/' dir isn't a `.el' file so it
-  ;; isn't picked up anyway; `test/' and `scripts/' don't exist at
-  ;; the top level.
-  :after gptel
-  :demand t
-  :config
-  (message "gptel-agent-runtime loaded from package"))
+  (setq gptel-default-mode 'org-mode)
+  (my/emacs-agent-runtime-load)
+  (when (boundp 'emacs-agent-runtime-cli-default-agent)
+    (setq emacs-agent-runtime-cli-default-agent "codex"))
+  (my/emacs-agent-runtime-install-gptel-tools))
 #+end_src
 
 * Backends Setup (Multi-Provider)
 
-This block runs after =gptel-agent-runtime= has loaded. It:
+This block runs after =gptel= has loaded. It:
 
 1. Ensures =gptel= itself is installed and configured for Org mode.
 2. Loads the provider modules (=gptel-anthropic=, =gptel-openai=,
@@ -130,23 +173,11 @@ for the duration of the HTTP request. See =modules/20-bootstrap.org=
 Step 8 for the storage model.
 
 #+begin_src emacs-lisp :tangle yes
-;; gptel itself is declared higher up in this file (before
-;; gptel-agent-runtime so it queues first). Backends are configured
-;; here once BOTH gptel AND gptel-agent-runtime have loaded.
-;;
-;; Wait for `gptel-agent-runtime' (not `gptel') because gptel-agent-
-;; runtime's `:config' block defines defvaralias mappings from our
-;; `my/gptel-backends' / `my/gptel-ollama-backend' to its own internal
-;; names. If we set `my/gptel-backends' BEFORE that alias is in place,
-;; gptel-agent-runtime overwrites the value when it later sets up the
-;; alias — Emacs emits "defvaralias: Overwriting value of
-;; my/gptel-backends by aliasing to ...". Sequencing on
-;; gptel-agent-runtime instead means the alias is established first,
-;; then our `setq' flows through it correctly.
-;;
-;; Both packages are built by elpaca on `after-init-hook'; this block
-;; runs once gptel-agent-runtime's `:config' has completed.
-(with-eval-after-load 'gptel-agent-runtime
+;; Backends are configured once gptel has loaded. EAR does not own gptel
+;; backends; it only contributes optional read-only tools and runtime context.
+(with-eval-after-load 'gptel
+
+(my/emacs-agent-runtime-load)
 
 (require 'gptel-anthropic nil t)
 (require 'gptel-openai nil t)
@@ -278,13 +309,9 @@ Step 8 for the storage model.
 ;; Only activated when `ollama' is found in PATH.
 ;; Install models first: ollama pull <name>
 (when (executable-find "ollama")
-  (when (fboundp 'gptel-agent-runtime-start-ollama-if-needed)
-    (gptel-agent-runtime-start-ollama-if-needed))
   (let ((backend (gptel-make-ollama "Ollama"
                    :stream t
-                   :host (if (boundp 'gptel-agent-runtime-ollama-host)
-                             gptel-agent-runtime-ollama-host
-                           "localhost:11434")
+                   :host my/gptel-ollama-host
                    :models '((qwen2.5:14b-instruct :capabilities (tool-use json))
                              (llama3.2 :capabilities (tool-use json))
                              (mistral :capabilities (tool-use json))
@@ -299,39 +326,36 @@ Step 8 for the storage model.
                     ("DeepSeek R1 (Ollama)"           ,backend . deepseek-r1)))))
   ;; Promote the new instruct model so the runtime's default-local-model
   ;; selection lands on it when Ollama has no model loaded yet.
-  (setq gptel-agent-runtime-default-local-model 'qwen2.5:14b-instruct
-        gptel-agent-runtime-default-local-model-label
+  (setq my/gptel-default-local-model 'qwen2.5:14b-instruct
+        my/gptel-default-local-model-label
         "Qwen 2.5 Instruct 14B (Ollama)")
   ;; Local default lives at the 14B; PR 11 router target points at
   ;; Opus for the rare list-completeness-critical cases that even Haiku
   ;; might miss. When no Anthropic key is set, both stay local-only.
-  (setq gptel-agent-runtime-high-fidelity-model
+  (setq my/gptel-high-fidelity-model
         (and (my/api-key-fetch "ANTHROPIC_API_KEY") 'claude-opus-4-7))
   ;; Ollama stays registered as an opt-in local backend. It no longer changes
   ;; the global gptel default during startup; choose it explicitly with
-  ;; `gptel-agent-runtime-select-model' when local-only work is desired.
+  ;; gptel's model/backend menu when local-only work is desired.
   nil)
 
 ;; -- Standard default: Gemini 2.0 Flash ------------------------------
 ;; Runs LAST so it overrides any earlier backend registration. 2.0 Flash has
 ;; the most generous free-tier quota (15 RPM / 1500 RPD) and is plenty for
 ;; daily use. Switch to 2.5 Flash/Pro or a local backend manually via
-;; `gptel-agent-runtime-select-model' / gptel-menu when needed.
+;; gptel-menu when needed.
 (when-let* ((entry (assoc "Gemini 2.0 Flash" my/gptel-backends))
             (backend (cadr entry))
             (model (cddr entry)))
   (setq gptel-backend backend
         gptel-model   model)
-  (when (fboundp 'gptel-agent-runtime-sync-directive-for-current-runtime)
-    (gptel-agent-runtime-sync-directive-for-current-runtime))
-  (when (fboundp 'gptel-agent-runtime-sync-tools)
-    (gptel-agent-runtime-sync-tools))
+  (my/emacs-agent-runtime-install-gptel-tools)
   (message "gptel default: Gemini 2.0 Flash%s"
            (if (my/api-key-fetch "GEMINI_API_KEY")
                ""
              " (M-x my/api-key-set GEMINI_API_KEY before sending requests)")))
 
-)  ;; end (with-eval-after-load 'gptel-agent-runtime ...)
+)  ;; end (with-eval-after-load 'gptel ...)
 #+end_src
 
 * Architecture Reference
@@ -341,6 +365,24 @@ For the implementation map, read:
 - =~/emacs/notes/gptel-agent-architecture.md=
 - the package repository README
 
-The package is still a first extraction. The next cleanup should split the
-monolithic package file into modules for core, backends, prompts, executor,
-tools, context, and planner behavior.
+The runtime boundary is now EAR: core registry, schemas, policy, approvals,
+events, connectors, workflows, memory, task state, and adapters. gptel is only
+one client over that runtime; Codex CLI and Claude Code use the CLI adapter.
+
+* How to talk with Codex from Emacs
+
+The default CLI agent is set to =codex= in this loader.
+
+- =C-c e i= shows the registered CLI adapters and whether =codex= is found.
+- =C-c e p= previews a Codex request with the current region or buffer context.
+- =C-c e l= queues an approval-gated Codex launch.
+- =C-c e a= opens pending approvals.
+- =C-c e X= executes an approved launch.
+- =C-c e s= shows CLI sessions and captured output.
+- =M-x my/emacs-agent-runtime-codex-preview= is a Codex-only preview shortcut.
+- =M-x my/emacs-agent-runtime-codex-launch= is a Codex-only approval shortcut.
+
+For normal chat in an Org buffer, use gptel as before. EAR also installs its
+read-only runtime tools into gptel, so gptel can inspect buffers, Org context,
+calendar/reminder snapshots, workflows, memory surfaces, and adapter metadata
+without mutating files.
