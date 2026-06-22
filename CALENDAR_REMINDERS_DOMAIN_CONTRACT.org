@@ -141,7 +141,8 @@ What each package MUST expose for the integration + the future chat-agent
 - Read: =lists=, snapshot fetch. [X]
 - Provision lists: =ensure-list NAME= (idempotent). [X]
 - Provision recurring (native, create-only): =ensure-recurring=. [X]
-- Promote/create task: =push-heading=. [X] / programmatic =create-task=? [ ]
+- Promote/create task: =push-heading= [X] + programmatic =create-task= [X]
+  (v1.19.0; non-interactive, parallels calendar =create-appointment=).
 - Sync: =sync= (bidirectional, non-recurring). [X]
 - Sync-scope MECHANISM: =excluded-lists= (+ =included-lists=). [X]
 - Subtask-aware push: container-vs-task-vs-subtask. [ ] (in progress)
@@ -168,5 +169,10 @@ From the audit, implement in this order — generic mechanism only:
    + a malformed-nested-container guard; define depth handling.
 3. *create-task* (reminders): a non-interactive provider entry point to create
    a dated task (for the chat-agent), parallel to calendar =create-appointment=.
+   DONE (v1.19.0, =org-apple-reminders-create-task=).
 4. *Recurrence create-only parity* (reminders ensure-recurring) — DONE; verify
    it stays read-only to the sync.
+
+Remaining gap *2 (subtask semantics)* is in-flight by the parallel developer
+(Codex) — the contract §5 is the shared spec; not implemented here to avoid
+collision.
