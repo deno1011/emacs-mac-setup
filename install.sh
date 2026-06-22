@@ -42,6 +42,9 @@ Env vars:
   EMACS_MAC_BRANCH      Distro branch to install onto (default: main)
   EMACS_MAC_REPO_URL    Distro repo URL
   EMACS_MAC_SRC_DIR     Where to clone the distro (default: ~/emacs-mac-setup-src)
+  EMACS_AGENT_RUNTIME_REPO_URL  EAR runtime repo URL
+  EMACS_AGENT_RUNTIME_BRANCH    EAR runtime branch (default: main)
+  EMACS_AGENT_RUNTIME_DIR       EAR runtime clone path (default: ~/emacs-agent-runtime)
   EMACS_DATA_DIR        Per-Mac data dir override (default: bootstrap derives from BW.Repo)
 HELP
       exit 0
@@ -70,6 +73,9 @@ fi
 REPO_URL="${EMACS_MAC_REPO_URL:-${_persisted_repo:-https://github.com/deno1011/emacs-mac-setup.git}}"
 BRANCH="${EMACS_MAC_BRANCH:-${_persisted_branch:-main}}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-${_persisted_src:-$HOME/emacs-mac-setup-src}}"
+EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-https://github.com/deno1011/emacs-agent-runtime.git}"
+EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-main}"
+EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-$HOME/emacs-agent-runtime}"
 echo "==> Target distro: branch=$BRANCH repo=$REPO_URL src=$SRC_DIR"
 [ -n "$_persisted_branch$_persisted_repo$_persisted_src" ] && \
   echo "    (precedence: env > distro-source.el > project defaults)"
@@ -82,6 +88,7 @@ DATA_DIR="${EMACS_DATA_DIR:-$HOME/emacs}"
 echo "==> Emacs-for-Mac installer"
 echo "    repo:    $REPO_URL  (branch: $BRANCH)"
 echo "    distro:  $SRC_DIR"
+echo "    EAR:     $EAR_DIR  ($EAR_REPO_URL branch: $EAR_BRANCH)"
 echo "    config:  $EMACS_D (-> $SRC_DIR/emacs.d)"
 echo "    data:    $DATA_DIR$([ -n "${EMACS_DATA_DIR:-}" ] && echo "  (from EMACS_DATA_DIR)")"
 echo "    app:     ~/Applications/Emacs Client.app  (daemon-aware wrapper)"
@@ -267,6 +274,25 @@ if [ -d "$SRC_DIR/.git" ]; then
 else
   echo "==> Cloning distro to $SRC_DIR..."
   git clone --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
+fi
+
+# 3b. Clone or update Emacs Agent Runtime -------------------------------
+#
+# The main distro loads EAR from ~/emacs-agent-runtime so the runtime can
+# remain a neutral package shared by gptel, Codex, Claude Code, MCP, and
+# direct M-x commands. A fresh user must therefore receive the runtime repo,
+# not only the loader module.
+if [ -d "$EAR_DIR/.git" ]; then
+  echo "==> Updating Emacs Agent Runtime at $EAR_DIR (branch: $EAR_BRANCH)..."
+  git -C "$EAR_DIR" fetch origin "$EAR_BRANCH"
+  git -C "$EAR_DIR" checkout "$EAR_BRANCH"
+  git -C "$EAR_DIR" merge --ff-only "origin/$EAR_BRANCH"
+elif [ -e "$EAR_DIR" ]; then
+  echo "==> $EAR_DIR exists but is not a git checkout — leaving it untouched"
+  echo "    EAR will load only if this directory already contains emacs-agent-runtime."
+else
+  echo "==> Cloning Emacs Agent Runtime to $EAR_DIR..."
+  git clone --branch "$EAR_BRANCH" "$EAR_REPO_URL" "$EAR_DIR"
 fi
 
 # 4. Real ~/.emacs.d/ — copy distro files in, leave runtime state alone --

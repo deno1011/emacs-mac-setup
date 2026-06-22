@@ -194,17 +194,24 @@ never overwritten.
 | `data/org/calendar.org` | appointments, hard deadlines, and dated commitments |
 | `data/org/archive.org` | default archive target for completed/cancelled items |
 | `data/org/gtd/{projects,next,waiting,someday,tickler,reference}.org` | optional split GTD operational files seeded when missing |
-| `data/org/gtd/{daily-coach,scheduling-policy,inbox-clarifier,weekly-review-coach,horizon-coach}.org` | GTD assistant skill manuals seeded when missing |
+| `data/org/gtd/sources.org` | neutral GTD source registry template for provider-backed inbox/calendar/reminder sources |
+| `data/org/gtd/{daily-coach,scheduling-policy,inbox-clarifier,weekly-review-coach,horizon-coach,life-coach,life-agent-roles}.org` | GTD, coaching, role, and Memento-ready assistant skill manuals seeded when missing |
 
 The seed that creates the in-system manual is
 [`emacs.d/config/starter-data/org/gtd.org`](emacs.d/config/starter-data/org/gtd.org).
-The GTD assistant skill manuals are seeded from
+The GTD/coaching assistant skill manuals are seeded from
 [`emacs.d/config/starter-data/org/gtd/`](emacs.d/config/starter-data/org/gtd/).
 The same directory also contains split GTD operational file templates
 for users who prefer smaller files or already have a split setup.
 The initially empty top-level headings in that file are intentional
 landing zones for capture and refile. They start empty so a new system
 contains real user actions, not installer sample tasks.
+
+The current EAR test-user setup intentionally enables God Mode, write tools,
+Codex approval bypass, and persistent jobs so coaching behavior can be tested
+end to end. Product-ready installs should later switch to source-aware,
+tenant-aware policies that can distinguish the owner's trusted Emacs/chat
+inputs from delegated or third-party messenger input.
 
 Existing installs get any newly added starter files by running
 `M-x my/starter-data-ensure` after updating the setup, or simply by

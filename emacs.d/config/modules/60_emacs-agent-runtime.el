@@ -31,6 +31,63 @@
 (declare-function ear-adapter-cli--current-context-text
                   "ear-adapter-cli" ())
 
+(defcustom my/emacs-agent-runtime-open-tool-policy t
+  "When non-nil, allow EAR write tools without interactive approvals.
+This personal setup switch is for logic testing during EAR development.  It only
+changes EAR policy; it does not bypass macOS, Codex, or filesystem sandbox
+permissions."
+  :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-god-mode t
+  "When non-nil, enable EAR/Codex/GPTel God Mode for test users.
+This intentionally opens the local AI runtime for coaching experiments:
+registered EAR tools are allowed by policy, gptel may export write tools, Codex
+CLI bypasses its approval/sandbox prompts, and the dangerous `emacs_command'
+bridge becomes available. This is the current test-user posture; product-ready
+installs should later lock this down with source-aware policies."
+  :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-jobs-store-file
+  (expand-file-name
+   "ear/jobs-store.el"
+   (if (and (boundp 'my/data-dir)
+            (stringp my/data-dir))
+       my/data-dir
+     user-emacs-directory))
+  "Personal durable EAR jobs store file.
+The reusable runtime defaults to in-memory jobs. This local setup enables a
+durable store so Life Coach and other generic jobs survive Emacs restarts."
+  :type 'file
+  :group 'emacs-agent-runtime)
+
+(defun my/emacs-agent-runtime-apply-open-tool-policy ()
+  "Apply the current test-user open policy to the loaded EAR runtime."
+  (when (and my/emacs-agent-runtime-jobs-store-file
+             (boundp 'ear-jobs-store-file))
+    (setq ear-jobs-store-file my/emacs-agent-runtime-jobs-store-file))
+  (when (boundp 'ear-jobs-auto-save-store)
+    (setq ear-jobs-auto-save-store t))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'ear-god-mode))
+    (setq ear-god-mode t))
+  (when (and my/emacs-agent-runtime-open-tool-policy
+             (boundp 'ear-policy-allow-write-tools))
+    (setq ear-policy-allow-write-tools t))
+  (when (and my/emacs-agent-runtime-open-tool-policy
+             (boundp 'emacs-agent-runtime-codex-inline-execute-auto-approved-writes))
+    (setq emacs-agent-runtime-codex-inline-execute-auto-approved-writes t))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'ear-adapter-gptel-export-write-tools-in-god-mode))
+    (setq ear-adapter-gptel-export-write-tools-in-god-mode t))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'emacs-agent-runtime-codex-chat-sandbox))
+    (setq emacs-agent-runtime-codex-chat-sandbox "danger-full-access"))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox))
+    (setq emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox t)))
+
 (defun my/emacs-agent-runtime-load ()
   "Load the local neutral Emacs Agent Runtime when available."
   (let ((dir (file-name-as-directory
@@ -39,6 +96,7 @@
      ((featurep 'emacs-agent-runtime)
       (when (boundp 'emacs-agent-runtime-cli-default-agent)
         (setq emacs-agent-runtime-cli-default-agent "codex"))
+      (my/emacs-agent-runtime-apply-open-tool-policy)
       t)
      ((not (file-directory-p dir))
       (message "emacs-agent-runtime directory missing: %s" dir)
@@ -51,6 +109,7 @@
               (emacs-agent-runtime-mode 1))
             (when (boundp 'emacs-agent-runtime-cli-default-agent)
               (setq emacs-agent-runtime-cli-default-agent "codex"))
+            (my/emacs-agent-runtime-apply-open-tool-policy)
             (message "emacs-agent-runtime loaded from %s" dir)
             t)
         (message "emacs-agent-runtime not loadable from %s" dir)

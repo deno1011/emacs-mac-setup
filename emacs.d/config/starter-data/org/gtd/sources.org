@@ -1,0 +1,26 @@
+#+TITLE: GTD Source Registry
+#+FILETAGS: :gtd:registry:
+
+This file registers provider-neutral GTD sources for EAR.
+
+Skills should reason in GTD roles such as inbox, waiting, someday, calendar, or
+reference. Provider-specific details such as Apple Reminders list IDs, Google
+Task list IDs, or future service identifiers belong here so skills do not need
+to know which backend is currently used.
+
+New installs start with no active provider-backed sources. Setup or sync tools
+may add concrete headings later.
+
+Example shape, not active because it is inside an Org example block:
+
+#+begin_example
+* Apple Reminders Inbox
+:PROPERTIES:
+:GTD_ROLE: inbox
+:SOURCE_KIND: reminders
+:SOURCE_PROVIDER: org-apple-reminders
+:SOURCE_ID: provider-owned-id-goes-here
+:SOURCE_NAME: Inbox
+:TARGET_TAG: inbox
+:END:
+#+end_example
