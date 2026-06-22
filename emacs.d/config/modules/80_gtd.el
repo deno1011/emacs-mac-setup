@@ -394,6 +394,17 @@ structural project shape while user data is being migrated."
   "Apple Reminders list for the recurring review rituals (native, not synced)."
   :type 'string :group 'org)
 
+;; The ritual list holds NATIVE recurring reminders, which the reminders
+;; two-way sync cannot round-trip (org repeater <-> EKRecurrenceRule is lossy)
+;; and would otherwise mangle/delete.  Carve it out of sync via the package's
+;; generic excluded-lists facility — driven by `my/gtd-ritual-list', so no
+;; hardcoded name and the package itself stays GTD-agnostic.  Every other list
+;; keeps syncing, so the GTD coaches retain full access.
+(with-eval-after-load 'org-apple-reminders
+  (when (boundp 'org-apple-reminders-excluded-lists)
+    (cl-pushnew my/gtd-ritual-list org-apple-reminders-excluded-lists
+                :test #'equal)))
+
 (defun my/gtd--next-time (hour minute &optional weekday day-of-month)
   "Next Emacs time at HOUR:MINUTE.
 WEEKDAY (0=Sunday) → next that weekday; DAY-OF-MONTH → next that day of month;
