@@ -1,0 +1,172 @@
+#+TITLE: Calendar & Reminders — Domain Contract
+#+STARTUP: overview
+#+OPTIONS: toc:2
+
+# Authoritative spec for how the two Apple-integration packages
+# (org-apple-calendar, org-apple-reminders) and the emacs-mac-setup config
+# divide responsibility. Packages are GENERIC MECHANISM; the setup config
+# owns all GTD/personal POLICY. New work conforms to this contract instead
+# of being patched in reactively.
+
+* 0. Purpose
+This contract draws the boundary between three layers so we stop patching
+reactively:
+
+1. *Provider packages* (=org-apple-calendar=, =org-apple-reminders=) — generic,
+   GTD-agnostic, reusable by anyone. They expose a *provider API* and own the
+   macOS/EventKit/JXA transport. They contain NO personal data, NO GTD
+   vocabulary, NO list/calendar names, NO recurrence policy.
+2. *Integration config* (=emacs-mac-setup=, the =modules/*.org=) — owns all
+   POLICY: which lists/calendars exist, which are native-only, the review
+   cadence, key bindings, ingest targets. Drives the packages through their
+   provider API only.
+3. *User data* (the git-crypt data repo) — the actual org content + per-user
+   classification/override =.eld= files.
+
+Rule of thumb: *if it names "GTD", "Anstehend", "Org", "Rituale", a person, or
+a cadence, it is POLICY and lives in layer 2/3 — never in a provider package.*
+
+* 1. The two domains
+The macOS side has two distinct stores; org is the single source of truth and
+Apple is a bridge for phone/watch reach.
+
+| Domain        | Org shape                        | Apple store        | Provider package      |
+|---------------+----------------------------------+--------------------+-----------------------|
+| *Appointment* | active timestamp =<...>=         | Calendar event     | org-apple-calendar    |
+| *Dated task*  | =SCHEDULED:= on a TODO/NEXT      | Reminder (due)     | org-apple-reminders   |
+
+- Appointment = a thing with a fixed clock time you must be at. Lives in
+  =calendar.org=, pushed to the writable "Org" calendar.
+- Dated task = an action that should surface on a day. Lives in the GTD files,
+  promoted to a Reminders list ("Anstehend") so the phone nudges it.
+- =SCHEDULED= ⇄ Apple *due date* (Apple shows a reminder on its due day, like
+  org SCHEDULED). DEADLINE is NOT synced.
+- One agenda (=C-c a=) overlays both; the user never reads the raw stores.
+
+* 2. Invariants (both domains)
+These hold across both packages and must never be violated.
+
+1. *Single source of truth = org.* Apple is a projection. Conflicts resolve by
+   last-modified, but org owns intent.
+2. *Single writer per target.* org-apple-calendar writes ONLY the one writable
+   "Org" calendar; every other calendar is read-only. Reminders writes only the
+   lists the config opts in.
+3. *Read everything, write little.* Reading all calendars/lists is free and
+   expected (mirror, free-slots, classification). Writing is narrow and explicit.
+4. *Roles, not raw busy.* Calendar events carry a role =busy|info|ignore=. Only
+   =busy= consumes free time. Roles are USER DATA (classification/override
+   =.eld=), resolved by the package, owned by the user.
+5. *Native recurrence is never round-tripped.* See §4.
+6. *Idempotent provisioning.* Every =ensure-*= entry point is safe to re-run.
+7. *No personal data in packages.* Names/cadences/policy are config.
+
+* 3. Ownership split — mechanism vs policy
+The recurring source of friction. Resolved explicitly:
+
+| Concern                         | MECHANISM (provider pkg)              | POLICY (setup config)                  |
+|---------------------------------+---------------------------------------+----------------------------------------|
+| Which lists sync                | sync-scope control var/predicate      | the actual list names to in/exclude    |
+| Which calendar is writable      | resolve-by-name + ensure-calendar     | the name ("Org")                       |
+| Event roles                     | role resolution + override storage    | per-user classification values         |
+| Review rituals                  | ensure-recurring (generic)            | titles, cadence, list name             |
+| Ingest deadlines                | ingest-candidates / -deadlines        | keywords, source calendars, target file|
+
+*Exclusions specifically:* the reminders package provides only the generic
+*mechanism* to keep a list out of sync. The setup config provides the *value*
+(which list). No GTD list name ever appears in the package. (Today:
+=org-apple-reminders-excluded-lists= is the mechanism; =80_gtd.org= sets it from
+=my/gtd-ritual-list=. Acceptable — it is a generic, empty-by-default knob.)
+
+* 4. Recurrence semantics (authoritative)
+Recurrence is the hardest boundary; the rules are deliberate and final.
+
+1. *Recurring series live NATIVELY in Apple, never in the org↔Apple sync.*
+   A repeating commitment (work rhythm, custody, training, the review rituals)
+   is created as a native recurring Apple item (=EKRecurrenceRule=) and Emacs
+   only READS it (mirror, free-slots, which correctly account for recurring
+   busy time).
+2. *Why:* org repeaters (=+1w=, =.+1w=, =++1w=) and =EKRecurrenceRule= do not
+   map losslessly (completion-relative repeaters have no RRULE; BYDAY/EXDATE
+   have no org repeater). A field-diff sync cannot tell "series rolled over"
+   from "user edited/completed" → it mangles or deletes the series. (Observed:
+   the review rituals were destroyed when their list was in the synced set.)
+3. *Carve-out:* any list/calendar that holds native recurring items is excluded
+   from the two-way sync via the §3 mechanism. Reading still works.
+4. *Create-only is allowed:* the provider MAY expose create-only recurrence
+   (=ensure-recurring= / =create-appointment= with a simple repeater →
+   =EKRecurrenceRule=). After creation Apple owns it; the sync must not touch it.
+5. *Editing a series = delete + recreate*, or edit natively in Apple. No
+   round-trip update of a recurring instance.
+6. *org-habit is separate:* a habit with =STYLE: habit= + =.+1d= is org-only
+   (streak graph in Emacs). If it is ALSO mirrored to a Reminder for a phone
+   nudge, only the non-recurring "due today" projection syncs; the org repeater
+   stays the recurrence owner. The future chat-agent logs completion into org,
+   avoiding the round-trip entirely.
+
+* 5. Subtask semantics (authoritative)
+Apple Reminders support nested subtasks; org uses subheadings. The mapping:
+
+1. *A reminder list section* in org is a top-level heading carrying
+   =REMINDER_LIST_*= properties; it is a CONTAINER, not a task — it must never
+   be pushed as a reminder.
+2. *A task* is a heading with a TODO keyword under a list section. Its
+   =REMINDER_ID= links it to one Apple reminder.
+3. *A subtask* is a child heading of a task heading. It maps to an Apple
+   reminder subtask (parent linkage), NOT to a separate top-level reminder.
+4. *Depth:* Apple supports one level of subtask. Deeper org nesting flattens or
+   stays org-only; the provider must define which (current target: one level
+   maps, deeper is org-only and not pushed).
+5. *A malformed/duplicated nested container* (a list-section heading repeated as
+   its own child) must be detected and NOT pushed as a reminder.
+6. *Completion:* completing a parent does not auto-complete org children; the
+   sync reflects each item's own state.
+
+* 6. Provider API contract
+What each package MUST expose for the integration + the future chat-agent
+(EAR) to drive it programmatically (non-interactively). Status: [X] present,
+[ ] missing/partial — verified in the audit section.
+
+** 6.1 org-apple-calendar
+- Read: =list-calendars=, =fetch-events=, =free-busy=, =free-slots=. [X]
+- Provision: =ensure-calendar NAME= (idempotent). [X]
+- Write appointment: =create-appointment TITLE START END &optional ...=. [X]
+- Adopt external event: =adopt-event= / =-by-uid= / =-at-point=. [X]
+- Lookup: =event-by-uid=. [X]
+- Roles: =set-event-role= / =override-role= + classification init. [X]
+- Mirror: =refresh-mirror=, =setup-auto-refresh=. [X]
+- Sync (non-recurring): =sync-appointments=. [X]
+- Recurrence: create-only via =create-appointment= recurrence arg. [X]
+
+** 6.2 org-apple-reminders
+- Read: =lists=, snapshot fetch. [X]
+- Provision lists: =ensure-list NAME= (idempotent). [X]
+- Provision recurring (native, create-only): =ensure-recurring=. [X]
+- Promote/create task: =push-heading=. [X] / programmatic =create-task=? [ ]
+- Sync: =sync= (bidirectional, non-recurring). [X]
+- Sync-scope MECHANISM: =excluded-lists= (+ =included-lists=). [X]
+- Subtask-aware push: container-vs-task-vs-subtask. [ ] (in progress)
+- Delete: =mark-for-delete= / =remove-from-apple= / =delete-reminder=. [X]
+
+* 7. Conformance checklist
+A package change conforms when:
+
+- [ ] It adds GENERIC mechanism only — no GTD/personal name or cadence.
+- [ ] Every =ensure-*= is idempotent and safe to re-run.
+- [ ] It never round-trips native recurrence (§4).
+- [ ] It honours the sync-scope mechanism in every phase (pull/push/prune).
+- [ ] Container/task/subtask are distinguished on push (§5).
+- [ ] Provider API is callable non-interactively (no required prompts) so the
+      chat-agent can drive it.
+- [ ] Literate packages: edits go in the =.org= source, never the tangled =.el=.
+
+* 8. Open provider-API gaps (drives implementation order)
+From the audit, implement in this order — generic mechanism only:
+
+1. *excluded-lists* (reminders): generic sync-scope carve-out — DONE as the
+   mechanism; keep policy in config. Formalised here.
+2. *Subtask semantics* (reminders): container/task/subtask distinction on push
+   + a malformed-nested-container guard; define depth handling.
+3. *create-task* (reminders): a non-interactive provider entry point to create
+   a dated task (for the chat-agent), parallel to calendar =create-appointment=.
+4. *Recurrence create-only parity* (reminders ensure-recurring) — DONE; verify
+   it stays read-only to the sync.
