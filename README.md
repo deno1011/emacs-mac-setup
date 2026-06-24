@@ -213,6 +213,21 @@ loaded by EAR itself and can ship neutral coaching, Memento, session, workflow,
 job, and future dreams guidance to new users.  The setup starter files remain
 the place for local GTD/profile manuals and provider-specific examples.
 
+Optional local retrieval uses QMD through EAR's neutral `ear-retrieval`
+boundary. QMD is not a hard dependency and is not installed by default. To add
+the reviewed CLI during install:
+
+```bash
+EMACS_QMD_INSTALL=1 bash ~/emacs-mac-setup-src/install.sh
+```
+
+The installer uses `npm install -g @tobilu/qmd@2.6.3` by default after ensuring
+Node is available. A Bun install can be requested with
+`EMACS_QMD_PACKAGE_MANAGER=bun`. Installing QMD only provides the `qmd` command;
+it does not start a daemon, download models, export projections, or index
+private Org files. EAR keeps Org as source of truth and expects generated
+Markdown projections under the configured QMD projection directory.
+
 The current EAR test-user setup intentionally enables God Mode, write tools,
 Codex approval bypass, and persistent jobs so coaching behavior can be tested
 end to end. Product-ready installs should later switch to source-aware,
@@ -406,6 +421,8 @@ when bootstrap halted (which is the case where you most need it).
 | `EMACS_AGENT_RUNTIME_REPO_URL=url` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones/updates EAR from a fork or alternate remote |
 | `EMACS_AGENT_RUNTIME_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh checks out a non-`main` EAR branch |
 | `EMACS_AGENT_RUNTIME_DIR=/path` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones EAR to a custom path and the Emacs loader uses that path |
+| `EMACS_QMD_INSTALL=1` | env var | optionally installs the reviewed QMD retrieval CLI; default is off |
+| `EMACS_QMD_PACKAGE_MANAGER=npm\|bun` | env var | chooses the QMD global installer when `EMACS_QMD_INSTALL=1` |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
 | `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
 | iCloud CalDAV / account secrets | `M-x my/caldav-setup` → macOS Keychain | per-Mac account & secret values (CalDAV URL with DSID, calendar UUID, Apple ID, app-password) live in the Keychain, never in a config file |
@@ -425,7 +442,8 @@ rsyncs `emacs.d/config/` to
 `~/.emacs.d/config/`, copies `init.el` + `early-init.el`,
 regenerates `env-snapshot.el`, and runs AOT byte-compile. Never
 touches `~/.emacs.d/custom.el`, `~/.emacs.d/secrets.el`, or your
-data folder.
+data folder. QMD remains skipped unless you explicitly pass
+`EMACS_QMD_INSTALL=1`.
 
 After the install, restart the daemon to pick up changes:
 

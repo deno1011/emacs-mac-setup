@@ -1,5 +1,7 @@
 ;;; 60_emacs-agent-runtime.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
+
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)
 (defvar gptel-backend)
@@ -69,6 +71,50 @@ module owns the personal macOS/Bitwarden/Keychain binding."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-qmd-enabled t
+  "When non-nil, enable the optional QMD retrieval backend in EAR metadata.
+This setup switch only tells EAR that QMD is an available retrieval backend.
+It does not install QMD, start a daemon, export projections, index Org files,
+or download models."
+  :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-command "qmd"
+  "QMD executable name used by EAR's optional QMD retrieval adapter."
+  :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-version "2.6.3"
+  "Reviewed QMD package version for this setup."
+  :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-projection-directory
+  (expand-file-name
+   "ear/qmd-projection/"
+   (if (and (boundp 'my/data-dir)
+            (stringp my/data-dir))
+       my/data-dir
+     user-emacs-directory))
+  "Directory for generated QMD Markdown projections.
+Org files remain the source of truth. QMD should index these projected files,
+not raw personal Org files."
+  :type 'directory
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-exclude-tags
+  '("noexport" "private" "secret" "crypt")
+  "Org tags excluded from QMD Markdown projection exports."
+  :type '(repeat string)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-apple-silicon-environment
+  '(("QMD_LLAMA_GPU" . "metal")
+    ("QMD_EMBED_PARALLELISM" . "2"))
+  "Conservative QMD environment hints for Apple Silicon machines."
+  :type '(alist :key-type string :value-type string)
+  :group 'emacs-agent-runtime)
+
 (defun my/emacs-agent-runtime-apply-credential-resolver ()
   "Wire personal setup credentials into EAR's generic API resolver when possible."
   (when (and my/emacs-agent-runtime-use-api-key-fetch-resolver
@@ -79,6 +125,29 @@ module owns the personal macOS/Bitwarden/Keychain binding."
       (setq ear-adapter-api-credential-resolver-name 'setup-keychain))
     (when (boundp 'ear-adapter-api-prefer-credential-resolver)
       (setq ear-adapter-api-prefer-credential-resolver t))))
+
+(defun my/emacs-agent-runtime-apply-qmd-config ()
+  "Apply setup-owned QMD defaults to EAR's optional retrieval boundary."
+  (when (boundp 'ear-retrieval-enabled-backends)
+    (setq ear-retrieval-enabled-backends
+          (if my/emacs-agent-runtime-qmd-enabled
+              (cl-union '(qmd) ear-retrieval-enabled-backends :test #'eq)
+            (remove 'qmd ear-retrieval-enabled-backends))))
+  (when (boundp 'ear-retrieval-qmd-command)
+    (setq ear-retrieval-qmd-command
+          my/emacs-agent-runtime-qmd-command))
+  (when (boundp 'ear-retrieval-qmd-pinned-version)
+    (setq ear-retrieval-qmd-pinned-version
+          my/emacs-agent-runtime-qmd-version))
+  (when (boundp 'ear-retrieval-qmd-projection-directory)
+    (setq ear-retrieval-qmd-projection-directory
+          my/emacs-agent-runtime-qmd-projection-directory))
+  (when (boundp 'ear-retrieval-qmd-projection-exclude-tags)
+    (setq ear-retrieval-qmd-projection-exclude-tags
+          my/emacs-agent-runtime-qmd-exclude-tags))
+  (when (boundp 'ear-retrieval-qmd-apple-silicon-environment)
+    (setq ear-retrieval-qmd-apple-silicon-environment
+          my/emacs-agent-runtime-qmd-apple-silicon-environment)))
 
 (defun my/emacs-agent-runtime-apply-open-tool-policy ()
   "Apply the current test-user open policy to the loaded EAR runtime."
@@ -121,6 +190,7 @@ module owns the personal macOS/Bitwarden/Keychain binding."
       (when (boundp 'emacs-agent-runtime-cli-default-agent)
         (setq emacs-agent-runtime-cli-default-agent "codex"))
       (my/emacs-agent-runtime-apply-credential-resolver)
+      (my/emacs-agent-runtime-apply-qmd-config)
       (my/emacs-agent-runtime-apply-open-tool-policy)
       t)
      ((not (file-directory-p dir))
@@ -135,6 +205,7 @@ module owns the personal macOS/Bitwarden/Keychain binding."
             (when (boundp 'emacs-agent-runtime-cli-default-agent)
               (setq emacs-agent-runtime-cli-default-agent "codex"))
             (my/emacs-agent-runtime-apply-credential-resolver)
+            (my/emacs-agent-runtime-apply-qmd-config)
             (my/emacs-agent-runtime-apply-open-tool-policy)
             (message "emacs-agent-runtime loaded from %s" dir)
             t)

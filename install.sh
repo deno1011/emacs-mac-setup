@@ -45,6 +45,10 @@ Env vars:
   EMACS_AGENT_RUNTIME_REPO_URL  EAR runtime repo URL
   EMACS_AGENT_RUNTIME_BRANCH    EAR runtime branch (default: main)
   EMACS_AGENT_RUNTIME_DIR       EAR runtime clone path (default: ~/emacs-agent-runtime)
+  EMACS_QMD_INSTALL     Set to 1 to install optional QMD retrieval CLI
+  EMACS_QMD_PACKAGE     QMD npm package (default: @tobilu/qmd)
+  EMACS_QMD_VERSION     QMD package version (default: 2.6.3)
+  EMACS_QMD_PACKAGE_MANAGER  npm or bun (default: npm)
   EMACS_DATA_DIR        Per-Mac data dir override (default: bootstrap derives from BW.Repo)
 HELP
       exit 0
@@ -82,6 +86,10 @@ SRC_DIR="${EMACS_MAC_SRC_DIR:-${_persisted_src:-$HOME/emacs-mac-setup-src}}"
 EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-${_persisted_ear_repo:-https://github.com/deno1011/emacs-agent-runtime.git}}"
 EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-${_persisted_ear_branch:-main}}"
 EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-${_persisted_ear_dir:-$HOME/emacs-agent-runtime}}"
+QMD_INSTALL="${EMACS_QMD_INSTALL:-0}"
+QMD_PACKAGE="${EMACS_QMD_PACKAGE:-@tobilu/qmd}"
+QMD_VERSION="${EMACS_QMD_VERSION:-2.6.3}"
+QMD_PACKAGE_MANAGER="${EMACS_QMD_PACKAGE_MANAGER:-npm}"
 echo "==> Target distro: branch=$BRANCH repo=$REPO_URL src=$SRC_DIR"
 [ -n "$_persisted_branch$_persisted_repo$_persisted_src$_persisted_ear_repo$_persisted_ear_branch$_persisted_ear_dir" ] && \
   echo "    (precedence: env > distro-source.el > project defaults)"
@@ -98,6 +106,11 @@ echo "    EAR:     $EAR_DIR  ($EAR_REPO_URL branch: $EAR_BRANCH)"
 echo "    config:  $EMACS_D (-> $SRC_DIR/emacs.d)"
 echo "    data:    $DATA_DIR$([ -n "${EMACS_DATA_DIR:-}" ] && echo "  (from EMACS_DATA_DIR)")"
 echo "    app:     ~/Applications/Emacs Client.app  (daemon-aware wrapper)"
+if [ "$QMD_INSTALL" = "1" ]; then
+  echo "    qmd:     install $QMD_PACKAGE@$QMD_VERSION via $QMD_PACKAGE_MANAGER"
+else
+  echo "    qmd:     optional retrieval CLI not installed (set EMACS_QMD_INSTALL=1)"
+fi
 echo ""
 
 # 1. Homebrew --------------------------------------------------------------
@@ -299,6 +312,37 @@ elif [ -e "$EAR_DIR" ]; then
 else
   echo "==> Cloning Emacs Agent Runtime to $EAR_DIR..."
   git clone --branch "$EAR_BRANCH" "$EAR_REPO_URL" "$EAR_DIR"
+fi
+
+# 3c. Optional QMD retrieval CLI -----------------------------------------
+#
+# QMD is an optional retrieval backend for EAR. Installing it makes the
+# `qmd' CLI available; this script deliberately does NOT start QMD, export
+# projections, index Org files, download models, or run a daemon.
+if [ "$QMD_INSTALL" = "1" ]; then
+  echo "==> Installing optional QMD retrieval CLI: $QMD_PACKAGE@$QMD_VERSION"
+  case "$QMD_PACKAGE_MANAGER" in
+    npm)
+      if ! command -v npm >/dev/null 2>&1; then
+        echo "==> npm not found; installing node via Homebrew"
+        brew install node
+      fi
+      npm install -g "$QMD_PACKAGE@$QMD_VERSION"
+      ;;
+    bun)
+      if ! command -v bun >/dev/null 2>&1; then
+        echo "==> bun not found; installing bun via Homebrew"
+        brew install bun
+      fi
+      bun install -g "$QMD_PACKAGE@$QMD_VERSION"
+      ;;
+    *)
+      echo "ERROR: EMACS_QMD_PACKAGE_MANAGER must be npm or bun, got: $QMD_PACKAGE_MANAGER" >&2
+      exit 1
+      ;;
+  esac
+else
+  echo "==> Skipping optional QMD retrieval CLI install"
 fi
 
 # 4. Real ~/.emacs.d/ — copy distro files in, leave runtime state alone --

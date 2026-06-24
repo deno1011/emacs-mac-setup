@@ -53,6 +53,7 @@ The form only re-opens if something is missing.
 | Literate config | `~/.emacs.d/config/` | this repo (refreshed by `install.sh`) |
 | `async-tasks` framework | `~/.emacs.d/config/modules/10_tasks.el` | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) (vendored by install.sh) |
 | Emacs Agent Runtime | `~/emacs-agent-runtime/` | [`deno1011/emacs-agent-runtime`](https://github.com/deno1011/emacs-agent-runtime) (cloned/updated by `install.sh`) |
+| QMD retrieval CLI | optional global CLI | [`@tobilu/qmd`](https://github.com/tobi/qmd), only with `EMACS_QMD_INSTALL=1` |
 | Personal data (agenda, GTD, wiki) | `~/emacs-data/` (or whatever Repo name you picked) | your private GitHub repo |
 | Bitwarden master + email | macOS Keychain (`emacs_credentials` service) | Bitwarden |
 | GitHub PAT + API keys | Bitwarden item `emacs_credentials`, mirrored to Keychain | Bitwarden |
@@ -89,7 +90,9 @@ Pulls the latest distro code on whichever branch you installed from.
 Re-fetches `async-tasks.el` from upstream so the vendored framework
 stays current and updates `~/emacs-agent-runtime/`. Never touches
 `~/emacs-data/` or your Keychain entries except to add missing starter files
-through the bootstrap.
+through the bootstrap. Optional QMD retrieval support is configured in EAR, but
+the `qmd` CLI is only installed when you explicitly run the installer with
+`EMACS_QMD_INSTALL=1`; it does not index your Org files automatically.
 
 ## Uninstall
 
