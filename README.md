@@ -387,8 +387,8 @@ config-discovery cost drops from 1-5 seconds to ~150 ms.
 
 ### Layer D — `M-x my/doctor` (health check)
 
-The interactive equivalent of `doom doctor`. Runs 11 checks in 4
-sections:
+The interactive equivalent of `doom doctor`. Runs health checks across the
+install:
 
 ```
 Toolchain       — brew, gcc-15, libgccjit, native-comp,
@@ -397,6 +397,8 @@ Bootstrap state — my/bootstrap-ready-p, my/data-dir,
                   data folder is correct clone
 Credentials     — every Keychain entry classified
                   set / skipped / missing-optional / missing-required
+EAR / retrieval — EAR source mode, runtime load state, optional QMD CLI,
+                  QMD install manager, projection directory
 External        — gh CLI authentication
 ```
 
@@ -414,7 +416,7 @@ when bootstrap halted (which is the case where you most need it).
 | `M-x my/bootstrap` | Re-run the orchestrator (idempotent; reflects current Keychain state). |
 | `M-x my/credential-set` | Set or rotate ANY of the 9 bootstrap credentials. Unified completing-read menu. |
 | `M-x my/api-key-set` | Focused on the 4 LLM API keys (convenience). |
-| `M-x my/doctor` | Run 11 health checks, render `*Doctor*` buffer. |
+| `M-x my/doctor` | Run health checks, render `*Doctor*` buffer. |
 | `M-x my/doctor-rerun` | Re-run after applying a fix. |
 
 ---

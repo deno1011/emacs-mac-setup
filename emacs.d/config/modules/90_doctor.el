@@ -15,6 +15,15 @@
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
 (declare-function my/git-remote-url                "20.01.02_bootstrap_git")
 (declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
+(defvar my/emacs-agent-runtime-source)
+(defvar my/emacs-agent-runtime-dir)
+(defvar my/emacs-agent-runtime-elpaca-repo)
+(defvar my/emacs-agent-runtime-qmd-command)
+(defvar my/emacs-agent-runtime-qmd-package-manager)
+(defvar my/emacs-agent-runtime-qmd-projection-directory)
+(declare-function my/emacs-agent-runtime-qmd-install-command
+                  "60_emacs-agent-runtime")
+(declare-function ear-list-tools "ear-core")
 
 ;;; Public API (callable from M-x or feature modules):
 ;;;
@@ -288,6 +297,115 @@ and :fix. The :label is supplied by this macro."
     (list :status :warn
           :detail "GTD Apple environment not yet provisioned"
           :fix "M-x my/gtd-provision-apple"))))
+
+(my/doctor-define-check "EAR source mode"
+  (let ((source (and (boundp 'my/emacs-agent-runtime-source)
+                     my/emacs-agent-runtime-source)))
+    (cond
+     ((eq source 'local)
+      (let ((dir (and (boundp 'my/emacs-agent-runtime-dir)
+                      (expand-file-name my/emacs-agent-runtime-dir))))
+        (cond
+         ((and dir (file-directory-p dir) (file-readable-p dir))
+          (list :status :ok
+                :detail (format "local checkout: %s%s"
+                                dir
+                                (if (featurep 'emacs-agent-runtime)
+                                    " (loaded)"
+                                  " (not loaded yet)"))))
+         (t
+          (list :status :fail
+                :detail (format "local checkout missing: %S" dir)
+                :fix "bash ~/emacs-mac-setup-src/install.sh")))))
+     ((eq source 'elpaca)
+      (cond
+       ((featurep 'emacs-agent-runtime)
+        (list :status :ok :detail "elpaca source selected; EAR is loaded"))
+       ((locate-library "emacs-agent-runtime")
+        (list :status :ok
+              :detail (format "elpaca source selected; package is loadable at %s"
+                              (locate-library "emacs-agent-runtime"))))
+       (t
+        (list :status :warn
+              :detail (format "elpaca source selected but EAR is not loadable yet%s"
+                              (if (and (boundp 'my/emacs-agent-runtime-elpaca-repo)
+                                       (stringp my/emacs-agent-runtime-elpaca-repo))
+                                  (format " (repo %s)" my/emacs-agent-runtime-elpaca-repo)
+                                ""))
+              :fix "M-x elpaca-fetch emacs-agent-runtime, then M-x elpaca-merge emacs-agent-runtime and restart"))))
+     (t
+      (list :status :warn
+            :detail (format "unknown or unset source mode: %S" source)
+            :fix "Customize my/emacs-agent-runtime-source to local or elpaca")))))
+
+(my/doctor-define-check "EAR runtime loaded"
+  (cond
+   ((featurep 'emacs-agent-runtime)
+    (list :status :ok
+          :detail (format "loaded%s"
+                          (if (fboundp 'ear-list-tools)
+                              (format ", tools=%d" (length (ear-list-tools)))
+                            ""))))
+   ((locate-library "emacs-agent-runtime")
+    (list :status :warn
+          :detail "emacs-agent-runtime is loadable but not loaded yet"
+          :fix "restart Emacs or evaluate (my/emacs-agent-runtime-load)"))
+   (t
+    (list :status :fail
+          :detail "emacs-agent-runtime is not on load-path"
+          :fix "Check my/emacs-agent-runtime-source and my/emacs-agent-runtime-dir"))))
+
+(my/doctor-define-check "QMD optional retrieval CLI"
+  (let* ((cmd (if (and (boundp 'my/emacs-agent-runtime-qmd-command)
+                       (stringp my/emacs-agent-runtime-qmd-command))
+                  my/emacs-agent-runtime-qmd-command
+                "qmd"))
+         (path (executable-find cmd))
+         (install (when (fboundp 'my/emacs-agent-runtime-qmd-install-command)
+                    (my/emacs-agent-runtime-qmd-install-command))))
+    (cond
+     (path
+      (list :status :ok
+            :detail (format "%s at %s" cmd path)))
+     (t
+      (list :status :warn
+            :detail (format "%s not found; QMD retrieval remains unavailable" cmd)
+            :fix (or install "M-x my/emacs-agent-runtime-qmd-install"))))))
+
+(my/doctor-define-check "QMD install package manager"
+  (let* ((manager (if (and (boundp 'my/emacs-agent-runtime-qmd-package-manager)
+                           (symbolp my/emacs-agent-runtime-qmd-package-manager))
+                      (symbol-name my/emacs-agent-runtime-qmd-package-manager)
+                    "npm"))
+         (path (executable-find manager)))
+    (cond
+     (path
+      (list :status :ok :detail (format "%s at %s" manager path)))
+     (t
+      (list :status :warn
+            :detail (format "%s not on exec-path; QMD install command cannot run yet"
+                            manager)
+            :fix (if (string= manager "bun")
+                     "brew install bun"
+                   "brew install node"))))))
+
+(my/doctor-define-check "QMD projection directory"
+  (let ((dir (and (boundp 'my/emacs-agent-runtime-qmd-projection-directory)
+                  my/emacs-agent-runtime-qmd-projection-directory)))
+    (cond
+     ((not (stringp dir))
+      (list :status :warn
+            :detail "QMD projection directory is not configured"))
+     ((file-directory-p dir)
+      (list :status :ok :detail dir))
+     ((file-directory-p (file-name-directory (directory-file-name dir)))
+      (list :status :warn
+            :detail (format "projection directory not created yet: %s" dir)
+            :fix "Run qmd_projection_export only after reviewing qmd_projection_plan"))
+     (t
+      (list :status :warn
+            :detail (format "projection parent missing: %s" dir)
+            :fix "Check my/data-dir and my/emacs-agent-runtime-qmd-projection-directory")))))
 
 (my/doctor-define-check "gh CLI authenticated"
   (cond
