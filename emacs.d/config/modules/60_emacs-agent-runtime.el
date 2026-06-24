@@ -84,9 +84,20 @@ or download models."
   :type 'string
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-qmd-package "@tobilu/qmd"
+  "QMD package name used by the setup-owned install command."
+  :type 'string
+  :group 'emacs-agent-runtime)
+
 (defcustom my/emacs-agent-runtime-qmd-version "2.6.3"
   "Reviewed QMD package version for this setup."
   :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-qmd-package-manager 'npm
+  "Package manager used by `my/emacs-agent-runtime-qmd-install'."
+  :type '(choice (const :tag "npm" npm)
+                 (const :tag "bun" bun))
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-qmd-projection-directory
@@ -148,6 +159,37 @@ not raw personal Org files."
   (when (boundp 'ear-retrieval-qmd-apple-silicon-environment)
     (setq ear-retrieval-qmd-apple-silicon-environment
           my/emacs-agent-runtime-qmd-apple-silicon-environment)))
+
+(defun my/emacs-agent-runtime-qmd-install-command ()
+  "Return the configured shell command for installing QMD."
+  (pcase my/emacs-agent-runtime-qmd-package-manager
+    ('npm
+     (format "npm install -g %s"
+             (shell-quote-argument
+              (format "%s@%s"
+                      my/emacs-agent-runtime-qmd-package
+                      my/emacs-agent-runtime-qmd-version))))
+    ('bun
+     (format "bun install -g %s"
+             (shell-quote-argument
+              (format "%s@%s"
+                      my/emacs-agent-runtime-qmd-package
+                      my/emacs-agent-runtime-qmd-version))))
+    (_
+     (user-error "Unsupported QMD package manager: %S"
+                 my/emacs-agent-runtime-qmd-package-manager))))
+
+(defun my/emacs-agent-runtime-qmd-install ()
+  "Install the optional QMD CLI through the configured Emacs setup command.
+This command only installs the CLI package. It does not start QMD, export
+projections, index Org files, or download models intentionally."
+  (interactive)
+  (let* ((manager (symbol-name my/emacs-agent-runtime-qmd-package-manager))
+         (cmd (my/emacs-agent-runtime-qmd-install-command)))
+    (unless (executable-find manager)
+      (user-error "%s is not on `exec-path`; install Node/npm or Bun first"
+                  manager))
+    (compile cmd)))
 
 (defun my/emacs-agent-runtime-apply-open-tool-policy ()
   "Apply the current test-user open policy to the loaded EAR runtime."
