@@ -94,6 +94,16 @@ the data folder doesn't affect where config loads from.")
   (when (file-exists-p secrets)
     (load secrets nil 'nomessage)))
 
+;; 4b. Installer metadata — repo/branch/path choices ----------------------
+;;
+;; install.sh writes this file from the selected install sources.  It is not a
+;; secret: it only records which distro checkout and EAR checkout this Emacs
+;; should use.  Load it before config.org so module defvars such as
+;; `my/emacs-agent-runtime-dir' can pick up a non-default separate EAR repo.
+(let ((distro-source (expand-file-name "distro-source.el" user-emacs-directory)))
+  (when (file-exists-p distro-source)
+    (load distro-source nil 'nomessage)))
+
 ;; 5. Entry point — config.org (or pre-tangled config.el if present) -----
 (let ((config-org (expand-file-name "config.org" my/config-dir))
       (config-el  (expand-file-name "config.el"  my/config-dir)))

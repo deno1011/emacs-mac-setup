@@ -207,6 +207,12 @@ The initially empty top-level headings in that file are intentional
 landing zones for capture and refile. They start empty so a new system
 contains real user actions, not installer sample tasks.
 
+Reusable EAR behavior that is not specific to one user's GTD data lives in the
+separate `emacs-agent-runtime` checkout.  Its package `knowledge/` directory is
+loaded by EAR itself and can ship neutral coaching, Memento, session, workflow,
+job, and future dreams guidance to new users.  The setup starter files remain
+the place for local GTD/profile manuals and provider-specific examples.
+
 The current EAR test-user setup intentionally enables God Mode, write tools,
 Codex approval bypass, and persistent jobs so coaching behavior can be tested
 end to end. Product-ready installs should later switch to source-aware,
@@ -397,6 +403,9 @@ when bootstrap halted (which is the case where you most need it).
 | `~/.emacs.d/override_init.el` | create the file | init.el loads it and skips its own logic; survives install.sh overwrites |
 | `EMACS_DATA_DIR=/path` | env var | overrides the auto-derived data folder path |
 | `EMACS_MAC_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh installs from a non-`main` branch |
+| `EMACS_AGENT_RUNTIME_REPO_URL=url` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones/updates EAR from a fork or alternate remote |
+| `EMACS_AGENT_RUNTIME_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh checks out a non-`main` EAR branch |
+| `EMACS_AGENT_RUNTIME_DIR=/path` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones EAR to a custom path and the Emacs loader uses that path |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
 | `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
 | iCloud CalDAV / account secrets | `M-x my/caldav-setup` → macOS Keychain | per-Mac account & secret values (CalDAV URL with DSID, calendar UUID, Apple ID, app-password) live in the Keychain, never in a config file |
@@ -410,8 +419,9 @@ bash ~/emacs-mac-setup-src/install.sh
 ```
 
 Pulls the latest distro on whichever branch you installed from
-(persisted via `~/.emacs.d/distro-source.el`), refreshes
-`async-tasks.el` from upstream, rsyncs `emacs.d/config/` to
+(persisted via `~/.emacs.d/distro-source.el`), updates the separate
+`~/emacs-agent-runtime` checkout, refreshes `async-tasks.el` from upstream,
+rsyncs `emacs.d/config/` to
 `~/.emacs.d/config/`, copies `init.el` + `early-init.el`,
 regenerates `env-snapshot.el`, and runs AOT byte-compile. Never
 touches `~/.emacs.d/custom.el`, `~/.emacs.d/secrets.el`, or your

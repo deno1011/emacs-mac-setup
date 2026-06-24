@@ -62,6 +62,24 @@ durable store so Life Coach and other generic jobs survive Emacs restarts."
   :type 'file
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-use-api-key-fetch-resolver t
+  "When non-nil, wire EAR's API credential resolver to `my/api-key-fetch'.
+The reusable EAR package only exposes a generic resolver hook. This setup
+module owns the personal macOS/Bitwarden/Keychain binding."
+  :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defun my/emacs-agent-runtime-apply-credential-resolver ()
+  "Wire personal setup credentials into EAR's generic API resolver when possible."
+  (when (and my/emacs-agent-runtime-use-api-key-fetch-resolver
+             (fboundp 'my/api-key-fetch)
+             (boundp 'ear-adapter-api-credential-resolver))
+    (setq ear-adapter-api-credential-resolver #'my/api-key-fetch)
+    (when (boundp 'ear-adapter-api-credential-resolver-name)
+      (setq ear-adapter-api-credential-resolver-name 'setup-keychain))
+    (when (boundp 'ear-adapter-api-prefer-credential-resolver)
+      (setq ear-adapter-api-prefer-credential-resolver t))))
+
 (defun my/emacs-agent-runtime-apply-open-tool-policy ()
   "Apply the current test-user open policy to the loaded EAR runtime."
   (when (and my/emacs-agent-runtime-jobs-store-file
@@ -78,6 +96,12 @@ durable store so Life Coach and other generic jobs survive Emacs restarts."
   (when (and my/emacs-agent-runtime-open-tool-policy
              (boundp 'emacs-agent-runtime-codex-inline-execute-auto-approved-writes))
     (setq emacs-agent-runtime-codex-inline-execute-auto-approved-writes t))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'emacs-agent-runtime-codex-inline-tool-request-max-rounds))
+    (setq emacs-agent-runtime-codex-inline-tool-request-max-rounds nil))
+  (when (and my/emacs-agent-runtime-god-mode
+             (boundp 'emacs-agent-runtime-codex-inline-tool-request-confirm-after-rounds))
+    (setq emacs-agent-runtime-codex-inline-tool-request-confirm-after-rounds 10))
   (when (and my/emacs-agent-runtime-god-mode
              (boundp 'ear-adapter-gptel-export-write-tools-in-god-mode))
     (setq ear-adapter-gptel-export-write-tools-in-god-mode t))
@@ -96,6 +120,7 @@ durable store so Life Coach and other generic jobs survive Emacs restarts."
      ((featurep 'emacs-agent-runtime)
       (when (boundp 'emacs-agent-runtime-cli-default-agent)
         (setq emacs-agent-runtime-cli-default-agent "codex"))
+      (my/emacs-agent-runtime-apply-credential-resolver)
       (my/emacs-agent-runtime-apply-open-tool-policy)
       t)
      ((not (file-directory-p dir))
@@ -109,6 +134,7 @@ durable store so Life Coach and other generic jobs survive Emacs restarts."
               (emacs-agent-runtime-mode 1))
             (when (boundp 'emacs-agent-runtime-cli-default-agent)
               (setq emacs-agent-runtime-cli-default-agent "codex"))
+            (my/emacs-agent-runtime-apply-credential-resolver)
             (my/emacs-agent-runtime-apply-open-tool-policy)
             (message "emacs-agent-runtime loaded from %s" dir)
             t)

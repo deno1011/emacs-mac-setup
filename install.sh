@@ -65,19 +65,25 @@ EMACS_D="$HOME/.emacs.d"
 _persisted_branch=""
 _persisted_repo=""
 _persisted_src=""
+_persisted_ear_repo=""
+_persisted_ear_branch=""
+_persisted_ear_dir=""
 if [ -f "$EMACS_D/distro-source.el" ]; then
   _persisted_branch="$(awk -F'"' '/my\/distro-branch/   {print $2; exit}' "$EMACS_D/distro-source.el")"
   _persisted_repo="$(  awk -F'"' '/my\/distro-repo-url/ {print $2; exit}' "$EMACS_D/distro-source.el")"
   _persisted_src="$(   awk -F'"' '/my\/distro-src-dir/  {print $2; exit}' "$EMACS_D/distro-source.el")"
+  _persisted_ear_repo="$(  awk -F'"' '/my\/emacs-agent-runtime-repo-url/ {print $2; exit}' "$EMACS_D/distro-source.el")"
+  _persisted_ear_branch="$(awk -F'"' '/my\/emacs-agent-runtime-branch/   {print $2; exit}' "$EMACS_D/distro-source.el")"
+  _persisted_ear_dir="$(   awk -F'"' '/my\/emacs-agent-runtime-dir/      {print $2; exit}' "$EMACS_D/distro-source.el")"
 fi
 REPO_URL="${EMACS_MAC_REPO_URL:-${_persisted_repo:-https://github.com/deno1011/emacs-mac-setup.git}}"
 BRANCH="${EMACS_MAC_BRANCH:-${_persisted_branch:-main}}"
 SRC_DIR="${EMACS_MAC_SRC_DIR:-${_persisted_src:-$HOME/emacs-mac-setup-src}}"
-EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-https://github.com/deno1011/emacs-agent-runtime.git}"
-EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-main}"
-EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-$HOME/emacs-agent-runtime}"
+EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-${_persisted_ear_repo:-https://github.com/deno1011/emacs-agent-runtime.git}}"
+EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-${_persisted_ear_branch:-main}}"
+EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-${_persisted_ear_dir:-$HOME/emacs-agent-runtime}}"
 echo "==> Target distro: branch=$BRANCH repo=$REPO_URL src=$SRC_DIR"
-[ -n "$_persisted_branch$_persisted_repo$_persisted_src" ] && \
+[ -n "$_persisted_branch$_persisted_repo$_persisted_src$_persisted_ear_repo$_persisted_ear_branch$_persisted_ear_dir" ] && \
   echo "    (precedence: env > distro-source.el > project defaults)"
 # Override DATA_DIR per-Mac with EMACS_DATA_DIR=<path>. init.el reads the
 # same env var so the installer's seed location and Emacs's runtime data
@@ -373,8 +379,11 @@ cat > "$EMACS_D/distro-source.el" <<EOF
 (setq my/distro-repo-url "$REPO_URL")
 (setq my/distro-branch "$BRANCH")
 (setq my/distro-src-dir "$SRC_DIR")
+(setq my/emacs-agent-runtime-repo-url "$EAR_REPO_URL")
+(setq my/emacs-agent-runtime-branch "$EAR_BRANCH")
+(setq my/emacs-agent-runtime-dir "$EAR_DIR")
 EOF
-echo "==> Wrote $EMACS_D/distro-source.el (branch=$BRANCH)"
+echo "==> Wrote $EMACS_D/distro-source.el (branch=$BRANCH, EAR=$EAR_BRANCH)"
 
 # 6. Seed the literate config into ~/.emacs.d/config/.
 #
