@@ -95,6 +95,10 @@ the `qmd` CLI is installed only from inside Emacs via
 `M-x my/emacs-agent-runtime-qmd-install`; it does not index your Org files
 automatically.
 
+After a fresh install, run `M-x my/doctor`. It checks that EAR is loadable, that
+the reusable starter pack is present, and that the optional QMD retrieval pack
+files are available without installing QMD or reading private Org data.
+
 ## Uninstall
 
 ```bash

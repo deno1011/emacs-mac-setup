@@ -355,6 +355,49 @@ and :fix. The :label is supplied by this macro."
           :detail "emacs-agent-runtime is not on load-path"
           :fix "Check my/emacs-agent-runtime-source and my/emacs-agent-runtime-dir"))))
 
+(my/doctor-define-check "EAR fresh-user package assets"
+  (let* ((source (and (boundp 'my/emacs-agent-runtime-source)
+                      my/emacs-agent-runtime-source))
+         (local-dir (and (boundp 'my/emacs-agent-runtime-dir)
+                         (stringp my/emacs-agent-runtime-dir)
+                         (expand-file-name my/emacs-agent-runtime-dir)))
+         (library-file (locate-library "emacs-agent-runtime"))
+         (local-root (and local-dir
+                          (file-directory-p local-dir)
+                          (file-name-as-directory local-dir)))
+         (library-root (and library-file
+                            (file-name-directory library-file)))
+         (root (cond
+                ((eq source 'elpaca) library-root)
+                ((eq source 'local) local-root)
+                (local-root local-root)
+                (library-root library-root)))
+         (required
+         '(("starter pack" . "packs/starter/manifest.org")
+            ("starter knowledge" . "knowledge/starter-coaching.org")
+            ("starter workflows" . "workflows/daily-gtd-coach.org")
+            ("starter sessions" . "sessions/defaults.org")
+            ("qmd retrieval pack" . "packs/qmd-retrieval/manifest.org")
+            ("qmd retrieval knowledge" . "packs/qmd-retrieval/knowledge/qmd-retrieval.org")
+            ("qmd retrieval workflows" . "packs/qmd-retrieval/workflows/qmd-retrieval.org")))
+         missing)
+    (if (not root)
+        (list :status :fail
+              :detail "EAR root not found; cannot verify reusable package assets"
+              :fix "Check my/emacs-agent-runtime-source and my/emacs-agent-runtime-dir")
+      (dolist (asset required)
+        (unless (file-exists-p (expand-file-name (cdr asset) root))
+          (push (car asset) missing)))
+      (if missing
+          (list :status :fail
+                :detail (format "missing reusable assets under %s: %s"
+                                root
+                                (string-join (nreverse missing) ", "))
+                :fix "Update the emacs-agent-runtime checkout/package and rerun M-x my/doctor")
+        (list :status :ok
+              :detail (format "starter assets and optional qmd-retrieval pack present under %s"
+                              root))))))
+
 (my/doctor-define-check "QMD optional retrieval CLI"
   (let* ((cmd (if (and (boundp 'my/emacs-agent-runtime-qmd-command)
                        (stringp my/emacs-agent-runtime-qmd-command))

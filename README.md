@@ -397,8 +397,9 @@ Bootstrap state — my/bootstrap-ready-p, my/data-dir,
                   data folder is correct clone
 Credentials     — every Keychain entry classified
                   set / skipped / missing-optional / missing-required
-EAR / retrieval — EAR source mode, runtime load state, optional QMD CLI,
-                  QMD install manager, projection directory
+EAR / retrieval — EAR source mode, runtime load state, fresh-user package
+                  assets, optional QMD CLI, QMD install manager,
+                  projection directory
 External        — gh CLI authentication
 ```
 
