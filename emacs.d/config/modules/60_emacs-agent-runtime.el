@@ -71,6 +71,34 @@ module owns the personal macOS/Bitwarden/Keychain binding."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-source 'local
+  "Where this setup loads Emacs Agent Runtime from.
+Use `local' for active development from `my/emacs-agent-runtime-dir'. Use
+`elpaca' for normal user/product installs managed by the package manager."
+  :type '(choice (const :tag "Local checkout" local)
+                 (const :tag "Elpaca package" elpaca))
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-elpaca-repo "deno1011/emacs-agent-runtime"
+  "GitHub repo used when `my/emacs-agent-runtime-source' is `elpaca'."
+  :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-elpaca-branch "main"
+  "Git branch used when installing EAR through Elpaca."
+  :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-elpaca-files
+  '("*.el"
+    "knowledge/*.org"
+    "workflows/*.org"
+    "sessions/*.org"
+    "packs/*/*.org")
+  "Files included in the Elpaca package recipe for EAR."
+  :type '(repeat sexp)
+  :group 'emacs-agent-runtime)
+
 (defcustom my/emacs-agent-runtime-qmd-enabled t
   "When non-nil, enable the optional QMD retrieval backend in EAR metadata.
 This setup switch only tells EAR that QMD is an available retrieval backend.
@@ -223,18 +251,50 @@ projections, index Org files, or download models intentionally."
              (boundp 'emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox))
     (setq emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox t)))
 
+(defun my/emacs-agent-runtime--apply-loaded-config ()
+  "Apply setup-owned defaults after EAR has loaded."
+  (when (fboundp 'emacs-agent-runtime-mode)
+    (emacs-agent-runtime-mode 1))
+  (when (boundp 'emacs-agent-runtime-cli-default-agent)
+    (setq emacs-agent-runtime-cli-default-agent "codex"))
+  (my/emacs-agent-runtime-apply-credential-resolver)
+  (my/emacs-agent-runtime-apply-qmd-config)
+  (my/emacs-agent-runtime-apply-open-tool-policy)
+  t)
+
+(defun my/emacs-agent-runtime-queue-elpaca ()
+  "Queue EAR through Elpaca when the setup is in package mode."
+  (when (and (eq my/emacs-agent-runtime-source 'elpaca)
+             (fboundp 'elpaca))
+    (eval
+     `(elpaca
+        (emacs-agent-runtime
+         :host github
+         :repo ,my/emacs-agent-runtime-elpaca-repo
+         :branch ,my/emacs-agent-runtime-elpaca-branch
+         :files ,my/emacs-agent-runtime-elpaca-files)
+        (require 'emacs-agent-runtime nil t)))
+    (when (fboundp 'elpaca-wait)
+      (elpaca-wait))))
+
+(my/emacs-agent-runtime-queue-elpaca)
+
 (defun my/emacs-agent-runtime-load ()
-  "Load the local neutral Emacs Agent Runtime when available."
+  "Load Emacs Agent Runtime from the configured source."
   (let ((dir (file-name-as-directory
               (expand-file-name my/emacs-agent-runtime-dir))))
     (cond
      ((featurep 'emacs-agent-runtime)
-      (when (boundp 'emacs-agent-runtime-cli-default-agent)
-        (setq emacs-agent-runtime-cli-default-agent "codex"))
-      (my/emacs-agent-runtime-apply-credential-resolver)
-      (my/emacs-agent-runtime-apply-qmd-config)
-      (my/emacs-agent-runtime-apply-open-tool-policy)
-      t)
+      (my/emacs-agent-runtime--apply-loaded-config))
+     ((eq my/emacs-agent-runtime-source 'elpaca)
+      (if (require 'emacs-agent-runtime nil t)
+          (my/emacs-agent-runtime--apply-loaded-config)
+        (message "emacs-agent-runtime not available from Elpaca package")
+        nil))
+     ((not (eq my/emacs-agent-runtime-source 'local))
+      (message "Unknown my/emacs-agent-runtime-source: %S"
+               my/emacs-agent-runtime-source)
+      nil)
      ((not (file-directory-p dir))
       (message "emacs-agent-runtime directory missing: %s" dir)
       nil)
@@ -242,13 +302,7 @@ projections, index Org files, or download models intentionally."
       (add-to-list 'load-path dir)
       (if (require 'emacs-agent-runtime nil t)
           (progn
-            (when (fboundp 'emacs-agent-runtime-mode)
-              (emacs-agent-runtime-mode 1))
-            (when (boundp 'emacs-agent-runtime-cli-default-agent)
-              (setq emacs-agent-runtime-cli-default-agent "codex"))
-            (my/emacs-agent-runtime-apply-credential-resolver)
-            (my/emacs-agent-runtime-apply-qmd-config)
-            (my/emacs-agent-runtime-apply-open-tool-policy)
+            (my/emacs-agent-runtime--apply-loaded-config)
             (message "emacs-agent-runtime loaded from %s" dir)
             t)
         (message "emacs-agent-runtime not loadable from %s" dir)

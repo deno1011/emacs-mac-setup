@@ -213,6 +213,13 @@ loaded by EAR itself and can ship neutral coaching, Memento, session, workflow,
 job, and future dreams guidance to new users.  The setup starter files remain
 the place for local GTD/profile manuals and provider-specific examples.
 
+The setup supports two EAR source modes. `my/emacs-agent-runtime-source` defaults
+to `local`, loading the development checkout at `~/emacs-agent-runtime` so
+changes can be tested quickly by tangling/reloading or restarting Emacs. Normal
+user/product installs can set it to `elpaca`, which installs EAR from
+`deno1011/emacs-agent-runtime` as an Elpaca package. QMD is not an Elpaca
+dependency of EAR; it stays an optional external CLI managed by this config.
+
 Optional local retrieval uses QMD through EAR's neutral `ear-retrieval`
 boundary. QMD is not a hard dependency and is not installed by `install.sh`.
 To add the reviewed CLI from inside Emacs, run:
@@ -422,6 +429,7 @@ when bootstrap halted (which is the case where you most need it).
 | `EMACS_AGENT_RUNTIME_REPO_URL=url` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones/updates EAR from a fork or alternate remote |
 | `EMACS_AGENT_RUNTIME_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh checks out a non-`main` EAR branch |
 | `EMACS_AGENT_RUNTIME_DIR=/path` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones EAR to a custom path and the Emacs loader uses that path |
+| `my/emacs-agent-runtime-source` | Emacs custom variable | `local` for development checkout, `elpaca` for package-managed installs |
 | `M-x my/emacs-agent-runtime-qmd-install` | Emacs command | optionally installs the reviewed QMD retrieval CLI from config; never runs from `install.sh` |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
 | `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
