@@ -94,9 +94,25 @@ Use `local' for active development from `my/emacs-agent-runtime-dir'. Use
     "knowledge/*.org"
     "workflows/*.org"
     "sessions/*.org"
-    "packs/*/*.org")
+    "packs/*/*.org"
+    "packs/*/*/*.org")
   "Files included in the Elpaca package recipe for EAR."
   :type '(repeat sexp)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-context-directories
+  (list
+   (expand-file-name
+    "ear/context/"
+    (if (and (boundp 'my/data-dir)
+             (stringp my/data-dir))
+        my/data-dir
+      user-emacs-directory)))
+  "Setup/user-owned EAR context hint directories.
+These directories can contain Org files with EAR_CONTEXT_* properties. They
+are loaded in addition to context hints provided by runtime packs, so private
+path routing does not need to live in EAR core or in reusable packs."
+  :type '(repeat directory)
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-qmd-enabled t
@@ -188,6 +204,12 @@ not raw personal Org files."
     (setq ear-retrieval-qmd-apple-silicon-environment
           my/emacs-agent-runtime-qmd-apple-silicon-environment)))
 
+(defun my/emacs-agent-runtime-apply-context-config ()
+  "Apply setup-owned context hint directories to EAR."
+  (when (boundp 'ear-context-extra-directories)
+    (setq ear-context-extra-directories
+          my/emacs-agent-runtime-context-directories)))
+
 (defun my/emacs-agent-runtime-qmd-install-command ()
   "Return the configured shell command for installing QMD."
   (pcase my/emacs-agent-runtime-qmd-package-manager
@@ -258,6 +280,7 @@ projections, index Org files, or download models intentionally."
   (when (boundp 'emacs-agent-runtime-cli-default-agent)
     (setq emacs-agent-runtime-cli-default-agent "codex"))
   (my/emacs-agent-runtime-apply-credential-resolver)
+  (my/emacs-agent-runtime-apply-context-config)
   (my/emacs-agent-runtime-apply-qmd-config)
   (my/emacs-agent-runtime-apply-open-tool-policy)
   t)
