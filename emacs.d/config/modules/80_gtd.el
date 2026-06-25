@@ -379,10 +379,9 @@ structural project shape while user data is being migrated."
 
 (declare-function my/bootstrap-ready-p "20.03.01_bootstrap")
 (declare-function org-apple-reminders-ensure-list "org-apple-reminders")
-(declare-function org-apple-reminders-ensure-recurring "org-apple-reminders")
 (declare-function org-apple-calendar-ensure-calendar "org-apple-calendar")
 
-(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "GTD-Rituale" "Habits")
+(defcustom my/gtd-apple-lists '("Inbox" "Anstehend" "Einkaufsliste" "Habits")
   "Apple Reminders lists the GTD setup ensures exist on this Mac."
   :type '(repeat string) :group 'org)
 
@@ -390,60 +389,24 @@ structural project shape while user data is being migrated."
   "Writable Apple calendar the GTD setup ensures exists (Emacs-authored events)."
   :type 'string :group 'org)
 
-(defcustom my/gtd-ritual-list "GTD-Rituale"
-  "Apple Reminders list for the recurring review rituals (native, not synced)."
-  :type 'string :group 'org)
-
-;; The ritual list holds NATIVE recurring reminders, which the reminders
-;; two-way sync cannot round-trip (org repeater <-> EKRecurrenceRule is lossy)
-;; and would otherwise mangle/delete.  Carve it out of sync via the package's
-;; generic excluded-lists facility — driven by `my/gtd-ritual-list', so no
-;; hardcoded name and the package itself stays GTD-agnostic.  Every other list
-;; keeps syncing, so the GTD coaches retain full access.
-(with-eval-after-load 'org-apple-reminders
-  (when (boundp 'org-apple-reminders-excluded-lists)
-    (cl-pushnew my/gtd-ritual-list org-apple-reminders-excluded-lists
-                :test #'equal)))
-
-(defun my/gtd--next-time (hour minute &optional weekday day-of-month)
-  "Next Emacs time at HOUR:MINUTE.
-WEEKDAY (0=Sunday) → next that weekday; DAY-OF-MONTH → next that day of month;
-otherwise the next HOUR:MINUTE today-or-tomorrow."
-  (let* ((now (current-time)) (dec (decode-time now))
-         (base (encode-time 0 minute hour (nth 3 dec) (nth 4 dec) (nth 5 dec))))
-    (cond
-     (weekday
-      (let* ((delta (mod (- weekday (nth 6 dec)) 7))
-             (cand (time-add base (* delta 86400))))
-        (if (time-less-p now cand) cand (time-add cand (* 7 86400)))))
-     (day-of-month
-      (let ((cand (encode-time 0 minute hour day-of-month (nth 4 dec) (nth 5 dec))))
-        (if (time-less-p now cand) cand
-          (let ((m (1+ (nth 4 dec))) (y (nth 5 dec)))
-            (when (> m 12) (setq m 1 y (1+ y)))
-            (encode-time 0 minute hour day-of-month m y)))))
-     (t (if (time-less-p base now) (time-add base 86400) base)))))
+;; Review-cadence rituals are deliberately NOT provisioned as native Apple
+;; recurring reminders.  The org-side tickler items (Weekly Review, Arbeitsziele
+;; …) are the visible plan an agent/coach reads, and the Apple recurrence
+;; round-trip was lossy.  The package API `org-apple-reminders-ensure-recurring'
+;; stays available for ad-hoc manual creation in Emacs if ever wanted.
 
 (defun my/gtd-provision-apple ()
   "Idempotently provision the GTD environment in Apple Reminders & Calendar.
-Ensures the GTD lists, the writable \"Org\" calendar, and the daily/weekly/
-monthly review reminders — all via the package APIs.  Safe to re-run."
+Ensures the GTD lists and the writable \"Org\" calendar via the package APIs.
+Recurring review rituals are NOT provisioned in Apple (they live org-side as
+tickler items).  Safe to re-run."
   (interactive)
   (unless (eq system-type 'darwin) (user-error "macOS only"))
   (dolist (l my/gtd-apple-lists)
     (org-apple-reminders-ensure-list l))
   (when (fboundp 'org-apple-calendar-ensure-calendar)
     (org-apple-calendar-ensure-calendar my/gtd-org-calendar))
-  (org-apple-reminders-ensure-recurring
-   my/gtd-ritual-list "🔁 Daily GTD — Agenda öffnen (C-c a g), 1–3 NEXTs wählen"
-   'daily (my/gtd--next-time 8 0))
-  (org-apple-reminders-ensure-recurring
-   my/gtd-ritual-list "🔁 Weekly Review — voller Durchlauf (C-c a r)"
-   'weekly (my/gtd--next-time 10 0 0))
-  (org-apple-reminders-ensure-recurring
-   my/gtd-ritual-list "🔁 Monthly Horizon — Areas/Goals/Life (C-c a F)"
-   'monthly (my/gtd--next-time 9 0 nil 1))
-  (message "GTD: Apple-Umgebung provisioniert (Listen, Org-Kalender, Rituale)"))
+  (message "GTD: Apple-Umgebung provisioniert (Listen, Org-Kalender)"))
 
 (defconst my/gtd--provision-marker
   (expand-file-name ".gtd-apple-provisioned" user-emacs-directory)

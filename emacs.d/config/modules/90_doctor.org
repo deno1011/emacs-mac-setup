@@ -347,13 +347,13 @@ and :fix. The :label is supplied by this macro."
 #+end_src
 
 #+begin_src emacs-lisp :tangle yes
-(my/doctor-define-check "GTD Apple environment (lists + Org calendar + rituals)"
+(my/doctor-define-check "GTD Apple environment (lists + Org calendar)"
   (cond
    ((not (eq system-type 'darwin))
     (list :status :ok :detail "not macOS — skipped"))
    ((and (boundp 'my/gtd--provision-marker)
          (file-exists-p my/gtd--provision-marker))
-    (list :status :ok :detail "provisioned (lists, Org calendar, review rituals)"))
+    (list :status :ok :detail "provisioned (lists, Org calendar)"))
    (t
     (list :status :warn
           :detail "GTD Apple environment not yet provisioned"
