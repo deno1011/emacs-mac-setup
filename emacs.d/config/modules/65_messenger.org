@@ -181,6 +181,31 @@ Or manually with the template in the adapter repo
 per linked number — stop any terminal =node index.js= before loading the
 service. See the adapter README for details.
 
+* Messaging contacts (friends) — with guardrails
+
+The adapter exports the WhatsApp contact list (name → JID) to
+=<bridge>/contacts.json= (set =WA_EXPORT_CONTACTS=false= to disable). Emacs
+reads it: =(messenger-contacts)=, =(messenger-resolve-name "Max")= → a JID.
+
+Outbound is *guardrailed* — because messaging various contacts via the
+unofficial client is the #1 WhatsApp ban trigger. =messenger-send= NEVER
+prompts (safe for the agent) and refuses unless the recipient is approved:
+
+- *Replies are free:* anyone who has messaged you (seen this session) can be
+  replied to without approval — consent-based.
+- *Initiating to a new contact* is blocked (=messenger-send-block-unknown=, t)
+  until you approve it: =M-x messenger-allow-recipient= (adds the JID to
+  =messenger-send-allowlist=), or interactively =M-x messenger-send-to-name=
+  (resolves the name, confirms, approves, sends).
+- *Rate limited:* =messenger-send-min-interval= (2s) and
+  =messenger-send-max-per-hour= (30) cap bursts — keep it human-paced.
+
+So an agent that wants to "message Max to organize dinner" must get your
+approval first (you run the confirm command, or pre-approve Max's JID). Keep it
+to a few real contacts who know you; do not bulk-message. Persist your own
+"coach" reply JID in =messenger-send-allowlist= (personal value, set it in your
+own init — not in this shared module) so replies survive restarts.
+
 * Connecting a DIFFERENT channel (not WhatsApp)
 
 The bridge is channel-agnostic: WhatsApp is just one adapter. ANY process that
