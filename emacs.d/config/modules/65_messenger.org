@@ -183,9 +183,19 @@ service. See the adapter README for details.
 
 * Messaging contacts (friends) — with guardrails
 
-The adapter exports the WhatsApp contact list (name → JID) to
-=<bridge>/contacts.json= (set =WA_EXPORT_CONTACTS=false= to disable). Emacs
-reads it: =(messenger-contacts)=, =(messenger-resolve-name "Max")= → a JID.
+The adapter exports contacts (name → JID) to =<bridge>/contacts.json=
+automatically — on by default (=WA_EXPORT_CONTACTS=true=), so a new user gets
+it without any extra step. Emacs reads it: =(messenger-contacts)=,
+=(messenger-resolve-name "Max")= → a JID.
+
+*Honest limitation (WhatsApp privacy):* a freshly linked device does NOT
+receive your full address book. So contacts.json starts empty and *fills
+incrementally from conversations* — whoever messages you (their pushName) and
+contacts WhatsApp pushes via app-state. This is captured automatically. For a
+contact you have NOT talked to via this channel yet, address them by number:
+=(messenger-send "<countrycode><number>@s.whatsapp.net" TEXT "whatsapp")= (after
+approval). There is no reliable way to bulk-fetch the address book on a linked
+device — do not rely on a complete contacts.json at first run.
 
 Outbound is *guardrailed* — because messaging various contacts via the
 unofficial client is the #1 WhatsApp ban trigger. =messenger-send= NEVER
