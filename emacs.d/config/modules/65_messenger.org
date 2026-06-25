@@ -49,6 +49,86 @@ so it is always listening. Disable the auto-start by setting
       (messenger-bridge-start))))
 #+end_src
 
+** WhatsApp adapter launchd service (from Emacs)
+
+=M-x my/whatsapp-adapter-install-service= writes the launchd plist with the
+right node binary + adapter path and (re)loads it, so the adapter runs in the
+background after login. It refuses until the adapter is cloned and QR-linked
+(=auth/= present) — do the one-time =node index.js= QR scan first. The doctor's
+"linked" step points here. This keeps the mechanism in the config (reproducible
+on a reinstall) while the interactive QR stays a manual step.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/whatsapp-adapter-dir (expand-file-name "~/whatsapp-bridge-adapter")
+  "Local clone of the WhatsApp bridge adapter.")
+
+(defvar my/whatsapp-adapter-node nil
+  "Path to the node binary for the service; nil = auto-detect.")
+
+(defun my/whatsapp-adapter--node ()
+  "Best-effort path to a node binary."
+  (or my/whatsapp-adapter-node
+      (executable-find "node")
+      (seq-find #'file-executable-p
+                '("/opt/homebrew/opt/node/bin/node"
+                  "/opt/homebrew/bin/node"
+                  "/usr/local/bin/node"))
+      "node"))
+
+(defconst my/whatsapp-adapter--service-label "com.deno1011.whatsapp-bridge")
+
+(defun my/whatsapp-adapter-install-service ()
+  "Generate and (re)load a launchd service for the WhatsApp bridge adapter.
+Writes ~/Library/LaunchAgents/<label>.plist with the detected node binary and
+`my/whatsapp-adapter-dir', then reloads it.  Requires the adapter cloned and
+QR-linked (auth/ present)."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (let* ((dir (expand-file-name my/whatsapp-adapter-dir))
+         (node (my/whatsapp-adapter--node))
+         (plist (expand-file-name
+                 (format "Library/LaunchAgents/%s.plist"
+                         my/whatsapp-adapter--service-label)
+                 "~")))
+    (unless (file-directory-p dir)
+      (user-error "Adapter not found at %s — clone it first" dir))
+    (unless (file-directory-p (expand-file-name "auth" dir))
+      (user-error "Not QR-linked yet (no auth/) — run `node index.js' and scan the QR first"))
+    (make-directory (file-name-directory plist) t)
+    (with-temp-file plist
+      (insert (format "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"
+  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key>
+  <array><string>%s</string><string>%s/index.js</string></array>
+  <key>WorkingDirectory</key><string>%s</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/whatsapp-bridge.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/whatsapp-bridge.err.log</string>
+</dict>
+</plist>
+" my/whatsapp-adapter--service-label node dir dir)))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (if (zerop (call-process "launchctl" nil nil nil "load" plist))
+        (message "WhatsApp adapter service loaded: %s" plist)
+      (user-error "launchctl load failed for %s" plist))))
+
+(defun my/whatsapp-adapter-uninstall-service ()
+  "Unload and remove the WhatsApp adapter launchd service."
+  (interactive)
+  (let ((plist (expand-file-name
+                (format "Library/LaunchAgents/%s.plist"
+                        my/whatsapp-adapter--service-label)
+                "~")))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (when (file-exists-p plist) (delete-file plist))
+    (message "WhatsApp adapter service removed")))
+#+end_src
+
 * WhatsApp adapter (separate process)
 
 The WhatsApp channel is [[https://github.com/deno1011/whatsapp-bridge-adapter][whatsapp-bridge-adapter]] — a Node/Baileys process,
@@ -93,15 +173,34 @@ talks only to you. The session persists in =./auth= (no QR on later runs).
 
 ** Run it as a background service (launchd)
 
-A template is in the adapter repo: =launchd/com.deno1011.whatsapp-bridge.plist=.
-Copy it to =~/Library/LaunchAgents/=, edit the paths/node binary, then:
+Easiest: =M-x my/whatsapp-adapter-install-service= (writes + loads the plist
+with the right paths; =M-x my/whatsapp-adapter-uninstall-service= to remove).
+Or manually with the template in the adapter repo
+(=launchd/com.deno1011.whatsapp-bridge.plist=): edit paths, copy to
+=~/Library/LaunchAgents/=, =launchctl load=. Only ONE adapter instance may run
+per linked number — stop any terminal =node index.js= before loading the
+service. See the adapter README for details.
 
-#+begin_example
-launchctl load  ~/Library/LaunchAgents/com.deno1011.whatsapp-bridge.plist
-launchctl start com.deno1011.whatsapp-bridge
-#+end_example
+* Connecting a DIFFERENT channel (not WhatsApp)
 
-See the adapter README for details.
+The bridge is channel-agnostic: WhatsApp is just one adapter. ANY process that
+speaks the file protocol is a channel — Telegram, Signal, SMS, a web form, etc.
+To add one, run an adapter (any language) that:
+
+1. Reads =MESSENGER_BRIDGE_DIR= = `messenger-bridge-directory' (same path).
+2. *Inbound:* on an incoming message, atomically write a JSON file into
+   =inbox/= (write =.<name>.tmp= then rename to =<name>.json=) with the schema
+   =({id, channel, chat, text, timestamp (ISO-8601 UTC), meta})=. Emacs picks
+   it up and runs `messenger-on-message-functions'.
+3. *Outbound:* poll =outbox/=; for each =*.json=, deliver =text= to =chat= on
+   your channel, then move the file to =sent/=.
+
+Set the message's =channel= field (e.g. "telegram") and use it when replying:
+=(messenger-send CHAT TEXT "telegram")=. Multiple adapters can run at once
+against the same bridge — each owns its =channel= name and its own =chat= ids.
+The mock adapter (=adapters/mock_adapter.py= in the bridge repo) is the minimal
+reference implementation to copy. Nothing in Emacs changes per channel; only a
+new adapter process is added.
 
 * Notes
 
