@@ -24,6 +24,7 @@
 (declare-function my/emacs-agent-runtime-qmd-install-command
                   "60_emacs-agent-runtime")
 (declare-function ear-list-tools "ear-core")
+(declare-function messenger-bridge--subdir "messenger-bridge")
 
 ;;; Public API (callable from M-x or feature modules):
 ;;;
@@ -297,6 +298,53 @@ and :fix. The :label is supplied by this macro."
     (list :status :warn
           :detail "GTD Apple environment not yet provisioned"
           :fix "M-x my/gtd-provision-apple"))))
+
+(my/doctor-define-check "Messenger bridge"
+  (cond
+   ((not (featurep 'messenger-bridge))
+    (list :status :ok :detail "not loaded (messaging optional) — skipped"))
+   ((and (boundp 'messenger-bridge--watch) messenger-bridge--watch
+         (fboundp 'file-notify-valid-p)
+         (file-notify-valid-p messenger-bridge--watch))
+    (list :status :ok
+          :detail (format "watching %s"
+                          (ignore-errors (messenger-bridge--subdir "inbox")))))
+   ((and (boundp 'messenger-bridge--timer) messenger-bridge--timer)
+    (list :status :ok :detail "poll-watching (file-notify re-arming)"))
+   (t
+    (list :status :warn
+          :detail "loaded but not started"
+          :fix "M-x messenger-bridge-start"))))
+
+(defvar my/whatsapp-adapter-dir (expand-file-name "~/whatsapp-bridge-adapter")
+  "Local clone of the WhatsApp bridge adapter (for this onboarding check).")
+
+;; Onboarding guide for the WhatsApp channel. The QR scan is inherently
+;; interactive (you scan with your phone) + a secondary-number/ToS decision, so
+;; it is never auto-run — the doctor instead detects how far setup got and
+;; prints the exact next command, walking a new user through to the QR.
+(my/doctor-define-check "WhatsApp adapter (optional messaging channel)"
+  (let* ((dir my/whatsapp-adapter-dir)
+         (nm (expand-file-name "node_modules" dir))
+         (auth (expand-file-name "auth" dir)))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (file-directory-p dir))
+      (list :status :ok
+            :detail "not installed — WhatsApp messaging is optional"
+            :fix "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git ~/whatsapp-bridge-adapter && cd ~/whatsapp-bridge-adapter && npm install && cp .env.example .env"))
+     ((not (file-directory-p nm))
+      (list :status :warn
+            :detail "adapter cloned but dependencies missing"
+            :fix "cd ~/whatsapp-bridge-adapter && npm install"))
+     ((not (file-directory-p auth))
+      (list :status :warn
+            :detail "adapter ready but WhatsApp NOT linked (no QR scanned yet)"
+            :fix "cd ~/whatsapp-bridge-adapter && node index.js   # scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
+     (t
+      (list :status :ok
+            :detail "linked (auth present) — run via launchd for persistence (see launchd/ in the repo)")))))
 
 (my/doctor-define-check "EAR source mode"
   (let ((source (and (boundp 'my/emacs-agent-runtime-source)

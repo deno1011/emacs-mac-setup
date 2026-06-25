@@ -1,0 +1,111 @@
+#+TITLE: messenger-bridge — channel-agnostic messaging
+#+STARTUP: overview
+
+Installs and starts [[https://github.com/deno1011/emacs-messenger-bridge][emacs-messenger-bridge]] — a generic, channel-agnostic
+message bridge so Emacs (and the agent in =60_emacs-agent-runtime=) can send
+and receive messages through an external channel adapter (WhatsApp, Telegram,
+…) via a plain directory of JSON files. The bridge knows nothing about any
+specific messenger; concrete adapters are separate processes.
+
+The Emacs side here is generic. The concrete *channel* (e.g. the WhatsApp
+adapter) is a separate process — see "WhatsApp adapter" below.
+
+* Install and start
+
+Cloned from GitHub via elpaca. The bridge auto-starts (watch + self-healing
+poll on =messenger-bridge-directory=, default =~/.emacs.d/messenger-bridge/=)
+so it is always listening. Disable the auto-start by setting
+=my/messenger-autostart= to nil before this module loads.
+
+- =messenger-send CHAT TEXT &optional CHANNEL META= — queue an outbound message.
+- =messenger-on-message-functions= — abnormal hook, one arg = inbound message
+  plist =(:id :channel :chat :text :timestamp :meta)=. The agent (EAR) hooks
+  in here; until then a default handler logs to =*messenger-bridge*=.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 65_messenger.el --- channel-agnostic message bridge -*- lexical-binding: t; -*-
+
+(declare-function messenger-bridge-start "messenger-bridge")
+(declare-function messenger-bridge-stop "messenger-bridge")
+(declare-function messenger-send "messenger-bridge")
+(defvar messenger-bridge-directory)
+
+(defvar my/messenger-autostart t
+  "When non-nil, start the messenger bridge automatically on load.")
+
+(when (not noninteractive)
+  (use-package messenger-bridge
+    :ensure (messenger-bridge
+             :host github
+             :repo "deno1011/emacs-messenger-bridge"
+             :branch "main"
+             :depth nil)
+    :demand t
+    :commands (messenger-send messenger-bridge-start messenger-bridge-stop)
+    :config
+    ;; messenger-bridge-directory defaults to ~/.emacs.d/messenger-bridge/.
+    ;; The WhatsApp adapter's MESSENGER_BRIDGE_DIR must point at the same path.
+    (when my/messenger-autostart
+      (messenger-bridge-start))))
+#+end_src
+
+* WhatsApp adapter (separate process)
+
+The WhatsApp channel is [[https://github.com/deno1011/whatsapp-bridge-adapter][whatsapp-bridge-adapter]] — a Node/Baileys process,
+*not* an Emacs package (so not installed via elpaca). It links a WhatsApp
+number (like WhatsApp Web) and relays messages to/from the bridge's
+=inbox/=outbox/=.
+
+The QR scan is interactive (you scan with your phone) and involves a
+secondary-number/ToS decision, so it is *not* auto-provisioned. Instead
+=M-x my/doctor= walks you through it: it detects how far setup got (not
+cloned → npm install → not linked → linked) and prints the exact next command,
+including the =node index.js= step that shows the QR.
+
+⚠️ Unofficial (Baileys) → against WhatsApp ToS, the number can be banned. Use a
+*secondary* number.
+
+** One-time setup
+
+#+begin_example
+git clone https://github.com/deno1011/whatsapp-bridge-adapter.git
+cd whatsapp-bridge-adapter
+npm install
+cp .env.example .env
+#+end_example
+
+Edit =.env=:
+- =MESSENGER_BRIDGE_DIR= — MUST equal =messenger-bridge-directory= in Emacs
+  (default =~/.emacs.d/messenger-bridge=).
+- =WA_ALLOWED_JIDS= — safety whitelist (leave empty for the first run).
+
+** First run + whitelist
+
+#+begin_example
+node index.js          # prints a QR; scan in WhatsApp > Linked Devices
+#+end_example
+
+The =.env= is auto-loaded. With =WA_ALLOWED_JIDS= empty nothing inbound is
+relayed; message the linked number (or your "Note to Self") — the adapter logs
+the sender JID (incl. the newer =@lid= form). Put that JID into
+=WA_ALLOWED_JIDS= and restart. Now only that chat is relayed, so the agent
+talks only to you. The session persists in =./auth= (no QR on later runs).
+
+** Run it as a background service (launchd)
+
+A template is in the adapter repo: =launchd/com.deno1011.whatsapp-bridge.plist=.
+Copy it to =~/Library/LaunchAgents/=, edit the paths/node binary, then:
+
+#+begin_example
+launchctl load  ~/Library/LaunchAgents/com.deno1011.whatsapp-bridge.plist
+launchctl start com.deno1011.whatsapp-bridge
+#+end_example
+
+See the adapter README for details.
+
+* Notes
+
+- Recurring/self-chat echo and a dead file-notify watch are handled
+  (echo-id skip in the adapter; poll self-heal in the bridge), so the channel
+  stays reliable for long-running use.
+- Doctor (=M-x my/doctor=) reports whether the bridge is loaded + watching.
