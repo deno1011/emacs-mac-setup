@@ -216,6 +216,42 @@ to a few real contacts who know you; do not bulk-message. Persist your own
 "coach" reply JID in =messenger-send-allowlist= (personal value, set it in your
 own init — not in this shared module) so replies survive restarts.
 
+* Signal channel (signal-bridge-adapter)
+
+Signal runs alongside WhatsApp on the SAME bridge — channel-routed: each adapter
+only handles messages whose =channel= matches (=signal= / =whatsapp=), so the
+agent sees a unified inbox and replies with =(messenger-send CHAT TEXT "signal")=
+or ="whatsapp"=. Signal tolerates third-party clients far more than WhatsApp
+(signal-cli is widely used), so ban risk is low.
+
+Adapter: [[https://github.com/deno1011/signal-bridge-adapter][signal-bridge-adapter]] (Node + signal-cli), a separate process linked as a
+SECONDARY device of your existing Signal account — no new number.
+
+** One-time setup
+
+#+begin_example
+brew install signal-cli
+git clone https://github.com/deno1011/signal-bridge-adapter.git
+cd signal-bridge-adapter && npm install
+cp .env.example .env          # set MESSENGER_BRIDGE_DIR (SAME as WhatsApp) + SIGNAL_ACCOUNT
+npm run link                  # prints a QR — scan in Signal ▸ Linked Devices
+npm start                     # then whitelist your sender number per the README
+#+end_example
+
+Run it as a launchd service like the WhatsApp adapter
+(=launchd/com.deno1011.signal-bridge.plist= in the repo). =M-x my/doctor=
+reports the Signal adapter setup state too.
+
+** Sending on Signal vs WhatsApp
+
+#+begin_example
+(messenger-send "+4915123456789" "Hi via Signal"   "signal")
+(messenger-send "4917625546460@s.whatsapp.net" "Hi via WhatsApp" "whatsapp")
+#+end_example
+
+Same guardrails (approval + rate limit) apply to both. The =chat= form differs
+per channel: Signal = =+E.164= number; WhatsApp = a =@s.whatsapp.net=/=@lid= JID.
+
 * Connecting a DIFFERENT channel (not WhatsApp)
 
 The bridge is channel-agnostic: WhatsApp is just one adapter. ANY process that

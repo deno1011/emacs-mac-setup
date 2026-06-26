@@ -410,6 +410,29 @@ and :fix. The :label is supplied by this macro."
      (t
       (list :status :ok
             :detail "linked (auth present) — run via launchd for persistence (see launchd/ in the repo)")))))
+
+(my/doctor-define-check "Signal adapter (optional messaging channel)"
+  (let* ((dir (expand-file-name "~/signal-bridge-adapter"))
+         (nm (expand-file-name "node_modules" dir))
+         (cli (executable-find "signal-cli")))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (file-directory-p dir))
+      (list :status :ok
+            :detail "not installed — Signal messaging is optional"
+            :fix "brew install signal-cli && git clone https://github.com/deno1011/signal-bridge-adapter.git ~/signal-bridge-adapter && cd ~/signal-bridge-adapter && npm install && cp .env.example .env"))
+     ((not cli)
+      (list :status :warn
+            :detail "adapter cloned but signal-cli missing"
+            :fix "brew install signal-cli"))
+     ((not (file-directory-p nm))
+      (list :status :warn
+            :detail "adapter cloned but dependencies missing"
+            :fix "cd ~/signal-bridge-adapter && npm install"))
+     (t
+      (list :status :ok
+            :detail "ready — link once (npm run link, scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then npm start / launchd")))))
 #+end_src
 
 * External services
