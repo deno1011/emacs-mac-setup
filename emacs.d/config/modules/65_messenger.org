@@ -199,7 +199,18 @@ set in .env."
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
                          my/signal-adapter--service-label)
-                 "~")))
+                 "~"))
+         ;; launchd has a minimal PATH; the adapter spawns signal-cli by name,
+         ;; so bake a PATH (node + signal-cli dirs + standard) into the plist.
+         (path (mapconcat
+                #'identity
+                (delete-dups
+                 (append
+                  (list (directory-file-name (file-name-directory node)))
+                  (let ((s (executable-find "signal-cli")))
+                    (and s (list (directory-file-name (file-name-directory s)))))
+                  '("/opt/homebrew/bin" "/usr/local/bin" "/usr/bin" "/bin")))
+                ":")))
     (unless (file-directory-p dir)
       (user-error "Adapter not found at %s — clone it first" dir))
     (unless (executable-find "signal-cli")
@@ -215,13 +226,15 @@ set in .env."
   <key>ProgramArguments</key>
   <array><string>%s</string><string>%s/index.js</string></array>
   <key>WorkingDirectory</key><string>%s</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>%s</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>/tmp/signal-bridge.out.log</string>
   <key>StandardErrorPath</key><string>/tmp/signal-bridge.err.log</string>
 </dict>
 </plist>
-" my/signal-adapter--service-label node dir dir)))
+" my/signal-adapter--service-label node dir dir path)))
     (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
     (if (zerop (call-process "launchctl" nil nil nil "load" plist))
         (message "Signal adapter service loaded: %s" plist)
