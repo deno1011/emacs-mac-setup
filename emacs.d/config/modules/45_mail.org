@@ -1,0 +1,295 @@
+#+TITLE: mu4e — Multi-account Email (mbsync + macOS Keychain)
+#+STARTUP: overview
+
+Email in Emacs via [[https://www.djcbsoftware.nl/code/mu/mu4e.html][mu4e]], synced with [[https://isync.sourceforge.io/][mbsync (isync)]] into a local Maildir
+and indexed by =mu=.
+
+Architecture — *data-driven and account-agnostic*:
+- This shared module holds only the MACHINERY + provider presets. Your actual
+  accounts (addresses, names) go in =~/.emacs.d/secrets.el= via =my/mail-accounts=;
+  passwords go in the macOS *Keychain*. Nothing personal lives in this repo.
+- =mbsync= pulls IMAP → =~/Mail/<id>/= (offline, fast); =mu= indexes it.
+- =mu4e-contexts= switch identity + SMTP per account automatically.
+- Sending via =smtpmail=; passwords read from the Keychain via =auth-source= and
+  by =mbsync= via a =security(1)= =PassCmd= — same credential, two readers.
+
+Requirements (macOS): =brew install mu isync=. mu4e ships *with* =mu= (it is not
+an elpaca/MELPA package), so this module adds it to =load-path= from the brew
+prefix rather than installing it.
+
+The module is inert until =my/mail-accounts= is set and =mu= is installed, so it
+is safe to ship enabled for everyone.
+
+* Provider presets + account model
+
+#+begin_src emacs-lisp :tangle yes
+;;; 45_mail.el --- Multi-account mu4e email (mbsync + Keychain) -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+
+(defconst my/mail-providers
+  '((gmx     :imap-host "imap.gmx.net"          :smtp-host "mail.gmx.net")
+    (icloud  :imap-host "imap.mail.me.com"      :smtp-host "smtp.mail.me.com")
+    (gmail   :imap-host "imap.gmail.com"        :smtp-host "smtp.gmail.com")
+    (outlook :imap-host "outlook.office365.com" :smtp-host "smtp.office365.com")
+    (mailde  :imap-host "imap.mail.de"          :smtp-host "smtp.mail.de")
+    (webde   :imap-host "imap.web.de"           :smtp-host "smtp.web.de")
+    (ionos   :imap-host "imap.ionos.de"         :smtp-host "smtp.ionos.de"))
+  "Known IMAP/SMTP hosts per provider key.
+Ports default to 993 (IMAPS) / 587 (submission, STARTTLS); override per account
+with :imap-port / :smtp-port.  For an unlisted provider, give :imap-host and
+:smtp-host on the account directly.")
+
+(defvar my/mail-accounts nil
+  "List of mail-account plists.  Set in ~/.emacs.d/secrets.el, e.g.:
+
+  (setq my/mail-accounts
+    \\='((:id \"gmx\" :provider gmx :address \"you@gmx.net\" :name \"You\")))
+
+Keys:
+  :id        slug — Maildir ~/Mail/<id>/ and context name (required)
+  :address   email address (required)
+  :name      display name for outgoing mail (required)
+  :provider  key from `my/mail-providers' (fills hosts), or give hosts:
+  :imap-host :smtp-host   explicit hosts (override preset / unknown provider)
+  :imap-port :smtp-port   default 993 / 587
+  :user      login user if it differs from :address
+  :sent-folder :drafts-folder :trash-folder :archive-folder
+             remote folder names if not Sent/Drafts/Trash/Archive
+             (iCloud: \"Sent Messages\", \"Deleted Messages\").")
+
+(defvar my/mail-root (expand-file-name "~/Mail")
+  "Root Maildir directory; each account lives in <root>/<id>/.")
+#+end_src
+
+* Account-field helpers
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail--preset (acct)
+  "Provider preset plist for ACCT, or nil."
+  (cdr (assq (plist-get acct :provider) my/mail-providers)))
+
+(defun my/mail--host (acct which)
+  "Host for ACCT.  WHICH is :imap or :smtp.  Explicit override beats preset."
+  (let ((key (if (eq which :imap) :imap-host :smtp-host)))
+    (or (plist-get acct key)
+        (plist-get (my/mail--preset acct) key)
+        (user-error "mail: account %S has no %s host" (plist-get acct :id) which))))
+
+(defun my/mail--user (acct) (or (plist-get acct :user) (plist-get acct :address)))
+(defun my/mail--imap-port (acct) (or (plist-get acct :imap-port) 993))
+(defun my/mail--smtp-port (acct) (or (plist-get acct :smtp-port) 587))
+(defun my/mail--maildir (acct) (expand-file-name (plist-get acct :id) my/mail-root))
+
+(defun my/mail--account-by-id (id)
+  (cl-find id my/mail-accounts :key (lambda (a) (plist-get a :id)) :test #'equal))
+#+end_src
+
+* Generate ~/.mbsyncrc
+
+The =mbsync= config is generated from =my/mail-accounts=, so you never hand-write
+it.  Passwords are not written into the file — =PassCmd= reads them from the
+Keychain at sync time.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail--mbsyncrc-account (acct)
+  "Return the ~/.mbsyncrc stanza for one ACCT."
+  (let* ((id   (plist-get acct :id))
+         (host (my/mail--host acct :imap))
+         (user (my/mail--user acct))
+         (port (my/mail--imap-port acct))
+         (dir  (file-name-as-directory (my/mail--maildir acct))))
+    (format "IMAPAccount %s
+Host %s
+Port %d
+User %s
+PassCmd \"security find-internet-password -s %s -a %s -w\"
+TLSType IMAPS
+SystemCertificates yes
+
+IMAPStore %s-remote
+Account %s
+
+MaildirStore %s-local
+Path %s
+Inbox %sInbox
+SubFolders Verbatim
+
+Channel %s
+Far :%s-remote:
+Near :%s-local:
+Patterns *
+Create Both
+Expunge Both
+SyncState *
+"
+            id host port user host user
+            id id
+            id dir dir
+            id id id)))
+
+(defun my/mail-generate-mbsyncrc ()
+  "Write ~/.mbsyncrc (mode 600) from `my/mail-accounts' and create the maildirs."
+  (interactive)
+  (unless my/mail-accounts
+    (user-error "mail: set my/mail-accounts in ~/.emacs.d/secrets.el first"))
+  (let ((file (expand-file-name "~/.mbsyncrc")))
+    (with-temp-file file
+      (insert "# Generated by 45_mail.el from my/mail-accounts — do not edit by hand.\n\n")
+      (dolist (acct my/mail-accounts)
+        (make-directory (my/mail--maildir acct) t)
+        (insert (my/mail--mbsyncrc-account acct) "\n")))
+    (set-file-modes file #o600)
+    (message "mail: wrote %s (%d account(s))" file (length my/mail-accounts))))
+#+end_src
+
+* Store a password in the Keychain
+
+One password per account, stored as an Internet password for *both* the IMAP and
+SMTP hosts, so =mbsync= (=security find-internet-password=) and =smtpmail=
+(=auth-source= → macos-keychain-internet) read the same secret.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail-store-password (id password)
+  "Store PASSWORD in the macOS Keychain for account ID (IMAP + SMTP hosts)."
+  (interactive
+   (list (completing-read
+          "Account id: "
+          (mapcar (lambda (a) (plist-get a :id)) my/mail-accounts) nil t)
+         (read-passwd "Password (app-specific where the provider requires it): ")))
+  (let* ((acct (or (my/mail--account-by-id id) (user-error "mail: no account %s" id)))
+         (user (my/mail--user acct)))
+    (dolist (spec (list (cons (my/mail--host acct :imap) "imap")
+                        (cons (my/mail--host acct :smtp) "smtp")))
+      (apply #'call-process "security" nil nil nil
+             "add-internet-password" "-U"
+             "-s" (car spec) "-a" user "-r" (cdr spec) "-w" password
+             nil))
+    (message "mail: stored Keychain password for %s (%s)" id user)))
+#+end_src
+
+* mu4e configuration
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail--mu4e-load-path ()
+  "Directory of brew's mu4e elisp, or nil."
+  (seq-find #'file-directory-p
+            '("/opt/homebrew/share/emacs/site-lisp/mu/mu4e"
+              "/opt/homebrew/share/emacs/site-lisp/mu4e"
+              "/usr/local/share/emacs/site-lisp/mu/mu4e"
+              "/usr/local/share/emacs/site-lisp/mu4e")))
+
+(defun my/mail--folder (acct key default)
+  "Maildir-relative folder for ACCT: /<id>/<name>."
+  (concat "/" (plist-get acct :id) "/" (or (plist-get acct key) default)))
+
+(declare-function make-mu4e-context "mu4e-context")
+(declare-function mu4e-message-field "mu4e-message")
+;; Forward declarations — set in `my/mail-configure' once mu4e is loaded.
+(defvar mu4e-maildir)
+(defvar mu4e-get-mail-command)
+(defvar mu4e-change-filenames-when-moving)
+(defvar mu4e-update-interval)
+(defvar mu4e-contexts)
+(defvar mu4e-context-policy)
+(defvar mu4e-compose-context-policy)
+
+(defun my/mail--context (acct)
+  "Build a mu4e-context for ACCT (identity, folders, SMTP)."
+  (let* ((id   (plist-get acct :id))
+         (root (concat "/" id)))
+    (make-mu4e-context
+     :name id
+     :match-func
+     (lambda (msg)
+       (when msg
+         (string-prefix-p root (or (mu4e-message-field msg :maildir) ""))))
+     :vars
+     `((user-mail-address     . ,(plist-get acct :address))
+       (user-full-name        . ,(plist-get acct :name))
+       (mu4e-sent-folder      . ,(my/mail--folder acct :sent-folder "Sent"))
+       (mu4e-drafts-folder    . ,(my/mail--folder acct :drafts-folder "Drafts"))
+       (mu4e-trash-folder     . ,(my/mail--folder acct :trash-folder "Trash"))
+       (mu4e-refile-folder    . ,(my/mail--folder acct :archive-folder "Archive"))
+       (smtpmail-smtp-user    . ,(my/mail--user acct))
+       (smtpmail-smtp-server  . ,(my/mail--host acct :smtp))
+       (smtpmail-smtp-service . ,(my/mail--smtp-port acct))
+       (smtpmail-stream-type  . starttls)))))
+
+(defun my/mail-configure ()
+  "Set mu4e variables from `my/mail-accounts'.  Call once mu4e is loaded."
+  (when my/mail-accounts
+    (require 'smtpmail)
+    (require 'auth-source)
+    (add-to-list 'auth-sources 'macos-keychain-internet)
+    (setq mu4e-maildir my/mail-root
+          mu4e-get-mail-command "mbsync -a"
+          mu4e-change-filenames-when-moving t   ; required for mbsync
+          mu4e-update-interval nil              ; manual fetch (press U) — no surprise syncs
+          message-send-mail-function #'smtpmail-send-it
+          mu4e-contexts (mapcar #'my/mail--context my/mail-accounts)
+          mu4e-context-policy 'pick-first
+          mu4e-compose-context-policy 'ask)))
+
+;; Make `M-x mu4e' available (autoload from the brew prefix) and configure it
+;; the moment it loads. Costs nothing at startup when mu is absent.
+(let ((lp (my/mail--mu4e-load-path)))
+  (when (and (eq system-type 'darwin) lp)
+    (add-to-list 'load-path lp)
+    (autoload 'mu4e "mu4e" "Launch mu4e." t)
+    (with-eval-after-load 'mu4e (my/mail-configure))))
+#+end_src
+
+* One-shot setup
+
+=M-x my/mail-setup= ties it together: checks the tools, writes =~/.mbsyncrc=,
+runs =mu init= with all your addresses, then tells you the remaining manual
+steps (store passwords, first sync, index).
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail-setup ()
+  "Check deps, write ~/.mbsyncrc, run `mu init', and print the next steps."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
+  (unless (executable-find "mu")     (user-error "mu missing — brew install mu"))
+  (unless my/mail-accounts
+    (user-error "Set my/mail-accounts in ~/.emacs.d/secrets.el first"))
+  (my/mail-generate-mbsyncrc)
+  (let ((args (append (list "init" (concat "--maildir=" (expand-file-name my/mail-root)))
+                      (mapcar (lambda (a) (concat "--my-address=" (plist-get a :address)))
+                              my/mail-accounts))))
+    (with-current-buffer (get-buffer-create "*mu-init*")
+      (erase-buffer)
+      (apply #'call-process "mu" nil t nil args)))
+  (when (fboundp 'my/mail-configure) (ignore-errors (my/mail-configure)))
+  (message
+   (concat "mail: ~/.mbsyncrc + mu init done. Next: "
+           "(1) M-x my/mail-store-password per account, "
+           "(2) `mbsync -a' in a shell, (3) `mu index', (4) M-x mu4e.")))
+#+end_src
+
+* Setup for a new user
+
+1. =brew install mu isync=
+2. Put your accounts in =~/.emacs.d/secrets.el= (kept out of the repo):
+   #+begin_src emacs-lisp :tangle no
+   (setq my/mail-accounts
+     '((:id "gmx" :provider gmx :address "you@gmx.net" :name "Your Name")))
+   #+end_src
+3. =M-x my/mail-store-password= → pick the account, enter its password (an
+   *app-specific* password where the provider requires one: iCloud, Gmail, …).
+4. =M-x my/mail-setup= → writes =~/.mbsyncrc=, runs =mu init=.
+5. In a shell: =mbsync -a= (first sync; approve the Keychain access prompt),
+   then =mu index=.
+6. =M-x mu4e=.
+
+Per-provider notes:
+- *GMX / web.de*: enable IMAP in the provider's web settings first.
+- *iCloud*: needs an app-specific password (appleid.apple.com); remote folders
+  are "Sent Messages" / "Deleted Messages" → set :sent-folder/:trash-folder.
+- *Gmail / Outlook/Office365*: plain-password IMAP is increasingly blocked;
+  use an app-password if 2FA allows, otherwise an XOAUTH2 helper is required
+  (a follow-up; corporate tenants often forbid third-party clients entirely).
+
+=M-x my/doctor= reports the mail setup state at each step.

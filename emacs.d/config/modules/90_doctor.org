@@ -433,6 +433,32 @@ and :fix. The :label is supplied by this macro."
      (t
       (list :status :ok
             :detail "ready — M-x my/signal-adapter-link (scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then M-x my/signal-adapter-install-service")))))
+
+(my/doctor-define-check "Email (mu4e) — optional"
+  (let* ((mu (executable-find "mu"))
+         (mbsync (executable-find "mbsync"))
+         (accts (and (boundp 'my/mail-accounts) my/mail-accounts))
+         (rc (file-exists-p (expand-file-name "~/.mbsyncrc"))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (and mu mbsync))
+      (list :status :ok
+            :detail "not installed — email is optional"
+            :fix "brew install mu isync"))
+     ((not accts)
+      (list :status :warn
+            :detail "mu/isync installed but no accounts configured"
+            :fix "Set my/mail-accounts in ~/.emacs.d/secrets.el (see 45_mail.org), then M-x my/mail-setup"))
+     ((not rc)
+      (list :status :warn
+            :detail (format "%d mail account(s) defined but ~/.mbsyncrc missing"
+                            (length accts))
+            :fix "M-x my/mail-setup"))
+     (t
+      (list :status :ok
+            :detail (format "%d account(s), ~/.mbsyncrc present — then M-x my/mail-store-password, `mbsync -a', `mu index', M-x mu4e"
+                            (length accts)))))))
 #+end_src
 
 * External services
