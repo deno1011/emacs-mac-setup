@@ -178,6 +178,65 @@ Devices > Link New Device.  Links as a SECONDARY device (no new number)."
   (interactive)
   (my/messenger--link-term "signal-link" my/signal-adapter-dir
                            "exec npm run link"))
+
+(defconst my/signal-adapter--service-label "com.deno1011.signal-bridge")
+
+(defun my/signal-adapter-install-service ()
+  "Generate and (re)load a launchd service for the Signal bridge adapter.
+Writes ~/Library/LaunchAgents/<label>.plist with the detected node binary and
+`my/signal-adapter-dir', then reloads it.  Requires the adapter cloned, deps
+installed, signal-cli linked (=M-x my/signal-adapter-link=) and SIGNAL_ACCOUNT
+set in .env."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (let* ((dir (expand-file-name my/signal-adapter-dir))
+         (node (or (executable-find "node")
+                   (seq-find #'file-executable-p
+                             '("/opt/homebrew/opt/node/bin/node"
+                               "/opt/homebrew/bin/node"
+                               "/usr/local/bin/node"))
+                   "node"))
+         (plist (expand-file-name
+                 (format "Library/LaunchAgents/%s.plist"
+                         my/signal-adapter--service-label)
+                 "~")))
+    (unless (file-directory-p dir)
+      (user-error "Adapter not found at %s — clone it first" dir))
+    (unless (executable-find "signal-cli")
+      (user-error "signal-cli not found — `brew install signal-cli', then link"))
+    (make-directory (file-name-directory plist) t)
+    (with-temp-file plist
+      (insert (format "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"
+  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key>
+  <array><string>%s</string><string>%s/index.js</string></array>
+  <key>WorkingDirectory</key><string>%s</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/signal-bridge.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/signal-bridge.err.log</string>
+</dict>
+</plist>
+" my/signal-adapter--service-label node dir dir)))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (if (zerop (call-process "launchctl" nil nil nil "load" plist))
+        (message "Signal adapter service loaded: %s" plist)
+      (user-error "launchctl load failed for %s" plist))))
+
+(defun my/signal-adapter-uninstall-service ()
+  "Unload and remove the Signal adapter launchd service."
+  (interactive)
+  (let ((plist (expand-file-name
+                (format "Library/LaunchAgents/%s.plist"
+                        my/signal-adapter--service-label)
+                "~")))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (when (file-exists-p plist) (delete-file plist))
+    (message "Signal adapter service removed")))
 #+end_src
 
 * WhatsApp adapter (separate process)
@@ -190,8 +249,8 @@ number (like WhatsApp Web) and relays messages to/from the bridge's
 The QR scan is interactive (you scan with your phone) and involves a
 secondary-number/ToS decision, so it is *not* auto-provisioned. Instead
 =M-x my/doctor= walks you through it: it detects how far setup got (not
-cloned → npm install → not linked → linked) and prints the exact next command,
-including the =node index.js= step that shows the QR.
+cloned → npm install → not linked → linked) and prints the exact next command.
+The QR step is =M-x my/whatsapp-adapter-link=, which renders it inside Emacs.
 
 ⚠️ Unofficial (Baileys) → against WhatsApp ToS, the number can be banned. Use a
 *secondary* number.
@@ -212,14 +271,15 @@ Edit =.env=:
 
 ** First run + whitelist
 
-#+begin_example
-node index.js          # prints a QR; scan in WhatsApp > Linked Devices
-#+end_example
+Run =M-x my/whatsapp-adapter-link= — it opens a =*whatsapp-link*= buffer
+running the adapter (handling the keg-only-node PATH for you) and renders the
+QR; scan it in WhatsApp ▸ Linked Devices. (Raw equivalent: =node index.js= in
+the adapter dir.)
 
 The =.env= is auto-loaded. With =WA_ALLOWED_JIDS= empty nothing inbound is
 relayed; message the linked number (or your "Note to Self") — the adapter logs
-the sender JID (incl. the newer =@lid= form). Put that JID into
-=WA_ALLOWED_JIDS= and restart. Now only that chat is relayed, so the agent
+the sender JID (incl. the newer =@lid= form) right in that buffer. Put that JID
+into =WA_ALLOWED_JIDS= and restart. Now only that chat is relayed, so the agent
 talks only to you. The session persists in =./auth= (no QR on later runs).
 
 ** Run it as a background service (launchd)
@@ -290,16 +350,23 @@ SECONDARY device of your existing Signal account — no new number.
 
 #+begin_example
 brew install signal-cli
-git clone https://github.com/deno1011/signal-bridge-adapter.git
-cd signal-bridge-adapter && npm install
+git clone https://github.com/deno1011/signal-bridge-adapter.git ~/signal-bridge-adapter
+cd ~/signal-bridge-adapter && npm install
 cp .env.example .env          # set MESSENGER_BRIDGE_DIR (SAME as WhatsApp) + SIGNAL_ACCOUNT
-npm run link                  # prints a QR — scan in Signal ▸ Linked Devices
-npm start                     # then whitelist your sender number per the README
 #+end_example
 
-Run it as a launchd service like the WhatsApp adapter
-(=launchd/com.deno1011.signal-bridge.plist= in the repo). =M-x my/doctor=
-reports the Signal adapter setup state too.
+Then, inside Emacs (these handle the keg-only-node PATH for you, so prefer them
+over a raw terminal):
+
+- =M-x my/signal-adapter-link= — renders the device-link QR in a buffer; scan
+  it in Signal ▸ Settings ▸ Linked Devices ▸ Link New Device. Then set
+  =SIGNAL_ACCOUNT= in =.env=.
+- =M-x my/signal-adapter-install-service= — writes + loads the launchd service
+  (fills the node path + dir automatically); =M-x my/signal-adapter-uninstall-service=
+  to remove. Start it once from a terminal (=npm start=) to discover and
+  whitelist your sender number in =SIGNAL_ALLOWED= per the README.
+
+=M-x my/doctor= reports the Signal adapter setup state at every step.
 
 ** Sending on Signal vs WhatsApp
 

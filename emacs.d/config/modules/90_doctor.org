@@ -406,10 +406,10 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p auth))
       (list :status :warn
             :detail "adapter ready but WhatsApp NOT linked (no QR scanned yet)"
-            :fix "cd ~/whatsapp-bridge-adapter && node index.js   # scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
+            :fix "M-x my/whatsapp-adapter-link — scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
      (t
       (list :status :ok
-            :detail "linked (auth present) — run via launchd for persistence (see launchd/ in the repo)")))))
+            :detail "linked (auth present) — M-x my/whatsapp-adapter-install-service for persistence")))))
 
 (my/doctor-define-check "Signal adapter (optional messaging channel)"
   (let* ((dir (expand-file-name "~/signal-bridge-adapter"))
@@ -432,7 +432,7 @@ and :fix. The :label is supplied by this macro."
             :fix "cd ~/signal-bridge-adapter && npm install"))
      (t
       (list :status :ok
-            :detail "ready — link once (npm run link, scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then npm start / launchd")))))
+            :detail "ready — M-x my/signal-adapter-link (scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then M-x my/signal-adapter-install-service")))))
 #+end_src
 
 * External services
