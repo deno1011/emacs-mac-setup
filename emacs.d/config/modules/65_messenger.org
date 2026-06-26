@@ -127,6 +127,46 @@ QR-linked (auth/ present)."
     (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
     (when (file-exists-p plist) (delete-file plist))
     (message "WhatsApp adapter service removed")))
+
+(defvar my/signal-adapter-dir (expand-file-name "~/signal-bridge-adapter")
+  "Local clone of the Signal bridge adapter.")
+
+(defun my/messenger--link-term (name dir command)
+  "Run COMMAND in DIR inside an ansi-term buffer NAME so a login QR renders
+in Emacs.  Uses a login shell so PATH (node/npm/signal-cli) is available."
+  (let ((dir (expand-file-name dir)))
+    (unless (file-directory-p dir)
+      (user-error "Adapter not installed: %s — clone it first" dir))
+    (require 'term)
+    (let* ((default-directory (file-name-as-directory dir))
+           (shell (or (getenv "SHELL") "/bin/zsh"))
+           (bufname (format "*%s*" name)))
+      (when (get-buffer bufname)
+        (let ((kill-buffer-query-functions nil)) (kill-buffer bufname)))
+      (let ((buf (make-term name shell nil "-lc"
+                            (format "cd %s && %s"
+                                    (shell-quote-argument dir) command))))
+        (with-current-buffer buf (term-mode) (term-char-mode))
+        (switch-to-buffer buf)
+        (message "Scan the QR shown in *%s*; close the buffer when linked" name)
+        buf))))
+
+(defun my/whatsapp-adapter-link ()
+  "Open a terminal buffer running the WhatsApp adapter so its login QR
+renders in Emacs.  Scan it in WhatsApp > Linked Devices (use a SECONDARY
+number).  Stop the launchd service first if running; delete auth/ to force a
+fresh QR when re-linking (an already-linked adapter shows no QR)."
+  (interactive)
+  (my/messenger--link-term "whatsapp-link" my/whatsapp-adapter-dir
+                           "exec node index.js"))
+
+(defun my/signal-adapter-link ()
+  "Open a terminal buffer running `npm run link' for the Signal adapter so
+its device-link QR renders in Emacs.  Scan it in Signal > Settings > Linked
+Devices > Link New Device.  Links as a SECONDARY device (no new number)."
+  (interactive)
+  (my/messenger--link-term "signal-link" my/signal-adapter-dir
+                           "exec npm run link"))
 #+end_src
 
 * WhatsApp adapter (separate process)
