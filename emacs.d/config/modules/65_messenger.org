@@ -133,19 +133,30 @@ QR-linked (auth/ present)."
 
 (defun my/messenger--link-term (name dir command)
   "Run COMMAND in DIR inside an ansi-term buffer NAME so a login QR renders
-in Emacs.  Uses a login shell so PATH (node/npm/signal-cli) is available."
+in Emacs.  Prepends the detected node bin dir to PATH (Homebrew node is
+keg-only and not on the login PATH), so node/npm resolve."
   (let ((dir (expand-file-name dir)))
     (unless (file-directory-p dir)
       (user-error "Adapter not installed: %s — clone it first" dir))
     (require 'term)
     (let* ((default-directory (file-name-as-directory dir))
            (shell (or (getenv "SHELL") "/bin/zsh"))
+           (nodebin (let ((n (or (executable-find "node")
+                                  (seq-find #'file-executable-p
+                                            '("/opt/homebrew/opt/node/bin/node"
+                                              "/opt/homebrew/bin/node"
+                                              "/usr/local/bin/node")))))
+                      (and n (directory-file-name (file-name-directory n)))))
+           (full (format "%scd %s && %s"
+                         (if nodebin
+                             (format "export PATH=%s:$PATH; "
+                                     (shell-quote-argument nodebin))
+                           "")
+                         (shell-quote-argument dir) command))
            (bufname (format "*%s*" name)))
       (when (get-buffer bufname)
         (let ((kill-buffer-query-functions nil)) (kill-buffer bufname)))
-      (let ((buf (make-term name shell nil "-lc"
-                            (format "cd %s && %s"
-                                    (shell-quote-argument dir) command))))
+      (let ((buf (make-term name shell nil "-lc" full)))
         (with-current-buffer buf (term-mode) (term-char-mode))
         (switch-to-buffer buf)
         (message "Scan the QR shown in *%s*; close the buffer when linked" name)
