@@ -234,19 +234,27 @@ service. See the adapter README for details.
 
 * Messaging contacts (friends) — with guardrails
 
-The adapter exports contacts (name → JID) to =<bridge>/contacts.json=
-automatically — on by default (=WA_EXPORT_CONTACTS=true=), so a new user gets
-it without any extra step. Emacs reads it: =(messenger-contacts)=,
-=(messenger-resolve-name "Max")= → a JID.
+Contacts are *channel-agnostic* here. Each ADAPTER fetches its own channel's
+contacts and writes them, normalized, to =<bridge>/contacts/<channel>.json= (a
+JSON array of ={e164, handle, name}=). The BRIDGE merges every channel's file
+on the *E.164 number*, so one name resolves across WhatsApp, Signal, … :
 
-*Honest limitation (WhatsApp privacy):* a freshly linked device does NOT
-receive your full address book. So contacts.json starts empty and *fills
-incrementally from conversations* — whoever messages you (their pushName) and
-contacts WhatsApp pushes via app-state. This is captured automatically. For a
-contact you have NOT talked to via this channel yet, address them by number:
-=(messenger-send "<countrycode><number>@s.whatsapp.net" TEXT "whatsapp")= (after
-approval). There is no reliable way to bulk-fetch the address book on a linked
-device — do not rely on a complete contacts.json at first run.
+- =M-x messenger-contacts-import= (re)builds the merged table; =(messenger-contacts)=
+  returns it (list of plists =(:e164 :name :channels ((CHANNEL . HANDLE) …))=).
+- =(messenger-resolve "Mesic")= → the matching record (error if ambiguous).
+- =(messenger-contact-handle REC "signal")= → the =(channel . handle)= to send;
+  omit the channel for the preferred one (=messenger-contacts-name-precedence=).
+- Same E.164 on two channels = ONE record on both; name picked by precedence.
+  A channel that hides the number (WhatsApp =@lid=) stays channel-local.
+
+*Honest limitation (per channel):* a freshly linked *WhatsApp* device does NOT
+receive your full address book — =contacts/whatsapp.json= fills *incrementally*
+from conversations (pushNames) and whatever app-state pushes; do not expect it
+complete at first run. *Signal* (signal-cli, linked) DOES expose the linked
+account's contacts (number + profile name), so =contacts/signal.json= populates
+on connect. For someone not yet in any channel file, address them by number:
+=(messenger-send "+E164" TEXT "signal")= or =(... "<num>@s.whatsapp.net" … "whatsapp")=
+(after approval).
 
 Outbound is *guardrailed* — because messaging various contacts via the
 unofficial client is the #1 WhatsApp ban trigger. =messenger-send= NEVER
