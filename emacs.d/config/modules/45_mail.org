@@ -85,6 +85,66 @@ Keys:
   (cl-find id my/mail-accounts :key (lambda (a) (plist-get a :id)) :test #'equal))
 #+end_src
 
+* Accounts in the Keychain
+
+Personal data — *which* accounts you have — lives in the macOS Keychain, not in
+any file or repo.  The account list (plists; no passwords) is stored as one
+generic password; the passwords are separate Internet passwords.  So the distro
+seed stays 100% generic and there is no private repo to manage.
+
+#+begin_src emacs-lisp :tangle yes
+(defconst my/mail--accounts-service "emacs-mail-accounts"
+  "Keychain generic-password service holding the serialized account list.")
+
+(defun my/mail-accounts-load ()
+  "Return the account list stored in the macOS Keychain, or nil."
+  (when (eq system-type 'darwin)
+    (let ((out (with-temp-buffer
+                 (when (eq 0 (call-process "security" nil t nil
+                                           "find-generic-password"
+                                           "-a" (user-login-name)
+                                           "-s" my/mail--accounts-service "-w"))
+                   (string-trim (buffer-string))))))
+      (and out (> (length out) 0)
+           (ignore-errors (car (read-from-string out)))))))
+
+(defun my/mail-accounts-save ()
+  "Write `my/mail-accounts' to the macOS Keychain (no passwords in it)."
+  (interactive)
+  (call-process "security" nil nil nil
+                "add-generic-password" "-U"
+                "-a" (user-login-name) "-s" my/mail--accounts-service
+                "-w" (prin1-to-string my/mail-accounts))
+  (message "mail: %d account(s) saved to Keychain" (length my/mail-accounts)))
+
+;;;###autoload
+(defun my/mail-add-account (id provider address name)
+  "Add a mail account to the Keychain and offer to store its password.
+Everything personal stays in the Keychain — nothing is written to a file."
+  (interactive
+   (list (read-string "Account id (slug, e.g. gmx): ")
+         (intern (completing-read
+                  "Provider: "
+                  (mapcar (lambda (p) (symbol-name (car p))) my/mail-providers)
+                  nil nil))
+         (read-string "Email address: ")
+         (read-string "Your display name: ")))
+  (setq my/mail-accounts
+        (cons (list :id id :provider provider :address address :name name)
+              (cl-remove id my/mail-accounts
+                         :key (lambda (a) (plist-get a :id)) :test #'equal)))
+  (my/mail-accounts-save)
+  (when (and (fboundp 'my/mail-store-password)
+             (y-or-n-p "Store this account's password in the Keychain now? "))
+    (my/mail-store-password id (read-passwd "Password: ")))
+  (message "mail: account %s added — now M-x my/mail-setup, then it syncs." id))
+
+;; Load the account list from the Keychain at startup.  Falls back to any value
+;; already set (e.g. in secrets.el), but the Keychain is the intended home, so
+;; no personal data needs to live in a file or a private repo.
+(setq my/mail-accounts (or (my/mail-accounts-load) my/mail-accounts))
+#+end_src
+
 * Generate ~/.mbsyncrc
 
 The =mbsync= config is generated from =my/mail-accounts=, so you never hand-write
@@ -179,9 +239,18 @@ SMTP hosts, so =mbsync= (=security find-internet-password=) and =smtpmail=
               "/usr/local/share/emacs/site-lisp/mu/mu4e"
               "/usr/local/share/emacs/site-lisp/mu4e")))
 
-(defun my/mail--folder (acct key default)
-  "Maildir-relative folder for ACCT: /<id>/<name>."
-  (concat "/" (plist-get acct :id) "/" (or (plist-get acct key) default)))
+(defun my/mail--folder (acct key candidates)
+  "Maildir-relative special folder for ACCT.
+Priority: explicit override (plist KEY) > the first of CANDIDATES that exists in
+the account's Maildir (auto-detect, so German/localized names just work) > the
+first candidate as a fallback."
+  (let* ((id   (plist-get acct :id))
+         (dir  (my/mail--maildir acct))
+         (name (or (plist-get acct key)
+                   (seq-find (lambda (c) (file-directory-p (expand-file-name c dir)))
+                             candidates)
+                   (car candidates))))
+    (concat "/" id "/" name)))
 
 (declare-function make-mu4e-context "mu4e-context")
 (declare-function mu4e-message-field "mu4e-message")
@@ -207,10 +276,16 @@ SMTP hosts, so =mbsync= (=security find-internet-password=) and =smtpmail=
      :vars
      `((user-mail-address     . ,(plist-get acct :address))
        (user-full-name        . ,(plist-get acct :name))
-       (mu4e-sent-folder      . ,(my/mail--folder acct :sent-folder "Sent"))
-       (mu4e-drafts-folder    . ,(my/mail--folder acct :drafts-folder "Drafts"))
-       (mu4e-trash-folder     . ,(my/mail--folder acct :trash-folder "Trash"))
-       (mu4e-refile-folder    . ,(my/mail--folder acct :archive-folder "Archive"))
+       (mu4e-sent-folder      . ,(my/mail--folder acct :sent-folder
+                                   '("Sent" "Gesendet" "Sent Messages" "Sent Items"
+                                     "Gesendete Objekte" "Gesendete Elemente")))
+       (mu4e-drafts-folder    . ,(my/mail--folder acct :drafts-folder
+                                   '("Drafts" "Entwürfe" "Entwurf")))
+       (mu4e-trash-folder     . ,(my/mail--folder acct :trash-folder
+                                   '("Trash" "Gelöscht" "Deleted Messages"
+                                     "Deleted Items" "Papierkorb")))
+       (mu4e-refile-folder    . ,(my/mail--folder acct :archive-folder
+                                   '("Archive" "Archiv" "All Mail" "Alle Nachrichten")))
        (smtpmail-smtp-user    . ,(my/mail--user acct))
        (smtpmail-smtp-server  . ,(my/mail--host acct :smtp))
        (smtpmail-smtp-service . ,(my/mail--smtp-port acct))
@@ -269,20 +344,101 @@ steps (store passwords, first sync, index).
            "(2) `mbsync -a' in a shell, (3) `mu index', (4) M-x mu4e.")))
 #+end_src
 
+* Automatic first sync
+
+Once accounts + =~/.mbsyncrc= + the Keychain password are in place, the *first*
+sync should just happen — a new user shouldn't have to know about =mbsync=.  So
+on load (deferred, never blocking startup) the module detects "configured but
+never synced" and runs =mbsync -a= then =mu index= *asynchronously*, reporting
+progress in the echo area.  It is one-shot: a sentinel marks success and it
+never auto-runs again (ongoing fetches are =mu4e='s job, via =U= / update
+interval).  It stays silent unless the password is actually present, so it never
+prompts or fails noisily on a half-configured machine.
+
+#+begin_src emacs-lisp :tangle yes
+(defvar my/mail--sync-process nil)
+
+(defun my/mail--sentinel-file () (expand-file-name ".first-sync-done" my/mail-root))
+(defun my/mail--synced-p () (file-exists-p (my/mail--sentinel-file)))
+(defun my/mail--mark-synced ()
+  (ignore-errors (make-directory my/mail-root t)
+                 (write-region "" nil (my/mail--sentinel-file) nil 'quiet)))
+
+(defun my/mail--password-ready-p ()
+  "Non-nil if the first account's IMAP password is in the Keychain."
+  (let* ((acct (car my/mail-accounts))
+         (host (and acct (ignore-errors (my/mail--host acct :imap))))
+         (user (and acct (my/mail--user acct))))
+    (and host user
+         (eq 0 (call-process "security" nil nil nil
+                             "find-internet-password" "-s" host "-a" user)))))
+
+(defun my/mail--sync-filter (proc string)
+  (when (buffer-live-p (process-buffer proc))
+    (with-current-buffer (process-buffer proc)
+      (goto-char (point-max)) (insert string)))
+  ;; Surface the most recent progress-looking line to the echo area.
+  (let ((line (car (last (split-string (string-trim string) "\n")))))
+    (when (and line (string-match-p "[0-9]+/[0-9]+\\|Channel\\|Box\\|near\\|far" line))
+      (message "mail: %s" (string-trim line)))))
+
+;;;###autoload
+(defun my/mail-sync ()
+  "Run `mbsync -a' asynchronously, then `mu index', with progress in messages."
+  (interactive)
+  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
+  (when (process-live-p my/mail--sync-process) (user-error "mail: a sync is already running"))
+  (let ((buf (get-buffer-create "*mail-sync*")))
+    (with-current-buffer buf (erase-buffer))
+    (message "mail: first sync starting (mbsync -a)… approve the Keychain prompt if it appears")
+    (setq my/mail--sync-process
+          (make-process
+           :name "mbsync" :buffer buf
+           :command (list (executable-find "mbsync") "-a")
+           :filter #'my/mail--sync-filter
+           :sentinel
+           (lambda (proc _ev)
+             (when (memq (process-status proc) '(exit signal))
+               (if (eq 0 (process-exit-status proc))
+                   (progn
+                     (message "mail: sync done — indexing…")
+                     (call-process "mu" nil "*mail-sync*" nil "index")
+                     (my/mail--mark-synced)
+                     (message "mail: ready ✓  (M-x mu4e)"))
+                 (message "mail: sync FAILED (see *mail-sync*). Check: IMAP enabled at the provider + M-x my/mail-store-password"))))))))
+
+;;;###autoload
+(defun my/mail-first-sync-maybe ()
+  "If mail is configured but never synced (and the password is ready), kick off
+the first sync asynchronously, deferred so it never blocks startup."
+  (when (and (eq system-type 'darwin)
+             (executable-find "mbsync")
+             my/mail-accounts
+             (file-exists-p (expand-file-name "~/.mbsyncrc"))
+             (not (my/mail--synced-p))
+             (my/mail--password-ready-p))
+    (run-with-idle-timer 3 nil #'my/mail-sync)))
+
+;; Auto-run the first sync on load (deferred, one-shot, password-gated).
+(my/mail-first-sync-maybe)
+#+end_src
+
 * Setup for a new user
 
+No file holds your accounts — everything personal is in the macOS Keychain, so
+the distro seed stays generic and there is no private repo to manage.
+
 1. =brew install mu isync=
-2. Put your accounts in =~/.emacs.d/secrets.el= (kept out of the repo):
-   #+begin_src emacs-lisp :tangle no
-   (setq my/mail-accounts
-     '((:id "gmx" :provider gmx :address "you@gmx.net" :name "Your Name")))
-   #+end_src
-3. =M-x my/mail-store-password= → pick the account, enter its password (an
-   *app-specific* password where the provider requires one: iCloud, Gmail, …).
-4. =M-x my/mail-setup= → writes =~/.mbsyncrc=, runs =mu init=.
-5. In a shell: =mbsync -a= (first sync; approve the Keychain access prompt),
-   then =mu index=.
-6. =M-x mu4e=.
+2. =M-x my/mail-add-account= → enter id / provider / address / name, and the
+   password when prompted (an *app-specific* password where the provider needs
+   one: iCloud, Gmail, …). Repeat per account.
+3. =M-x my/mail-setup= → writes =~/.mbsyncrc=, runs =mu init=.
+4. The *first sync runs by itself* on the next reload (deferred + async, with
+   progress in the echo area) — or =M-x my/mail-sync= now. Then =M-x mu4e=.
+
+Special folders (Sent/Drafts/Trash/Archive) are auto-detected from the synced
+Maildir, so localized names (GMX's Gesendet/Entwürfe/Gelöscht, iCloud's
+"Sent Messages") just work; set :sent-folder etc. only if detection misses.
 
 Per-provider notes:
 - *GMX / web.de*: enable IMAP in the provider's web settings first.

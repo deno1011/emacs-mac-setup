@@ -385,7 +385,7 @@ over a raw terminal):
 
 #+begin_example
 (messenger-send "+4915123456789" "Hi via Signal"   "signal")
-(messenger-send "4917625546460@s.whatsapp.net" "Hi via WhatsApp" "whatsapp")
+(messenger-send "4915123456789@s.whatsapp.net" "Hi via WhatsApp" "whatsapp")
 #+end_example
 
 Same guardrails (approval + rate limit) apply to both. The =chat= form differs
