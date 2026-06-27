@@ -1,0 +1,708 @@
+;;; 45_mail.el --- Multi-account mu4e email (mbsync + Keychain) -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+
+;; Forward declarations — defined later in this module (the OAuth section) and
+;; in init.el; declared here so the mbsyncrc generator that references them
+;; byte-compiles without free-variable warnings.
+(defvar my/config-dir)
+(defvar my/mail--python)
+
+(defconst my/mail-providers
+  '((gmx     :imap-host "imap.gmx.net"          :smtp-host "mail.gmx.net")
+    (icloud  :imap-host "imap.mail.me.com"      :smtp-host "smtp.mail.me.com" :auth-mechs "LOGIN")
+    (gmail   :imap-host "imap.gmail.com"        :smtp-host "smtp.gmail.com"   :auth-mechs "PLAIN")
+    (outlook :imap-host "outlook.office365.com" :smtp-host "smtp.office365.com" :auth-mechs "LOGIN")
+    (mailde  :imap-host "imap.mail.de"          :smtp-host "smtp.mail.de")
+    (webde   :imap-host "imap.web.de"           :smtp-host "smtp.web.de")
+    (ionos   :imap-host "imap.ionos.de"         :smtp-host "smtp.ionos.de")
+    ;; Direct Microsoft OAuth2 (XOAUTH2) — outlook.com/office365, no proxy.
+    ;; Needs the cyrus-sasl XOAUTH2 plugin (M-x my/mail-oauth-setup builds it)
+    ;; and the token helper; :oauth makes the PassCmd return an access token.
+    (office365 :imap-host "outlook.office365.com" :smtp-host "smtp.office365.com"
+               :auth-mechs "XOAUTH2" :oauth t)
+    ;; DavMail: a local proxy (see below) that does the Microsoft OAuth and
+    ;; exposes plain IMAP/SMTP on localhost — for Office365 *work/school*
+    ;; accounts where direct XOAUTH2 may be blocked by tenant policy.
+    (davmail :imap-host "localhost" :imap-port 1143
+             :smtp-host "localhost" :smtp-port 1025 :no-tls t
+             :auth-mechs "LOGIN"))   ; force LOGIN over the plaintext localhost link
+  "Known IMAP/SMTP hosts per provider key.
+Ports default to 993 (IMAPS) / 587 (submission, STARTTLS); override per
+account with :imap-port / :smtp-port.  :auth-mechs pins the mbsync SASL
+mechanism (iCloud and Gmail/Outlook need LOGIN, else isync fails with a SASL
+callback error).  For an unlisted provider, give :imap-host / :smtp-host on
+the account directly.")
+
+(defvar my/mail-accounts nil
+  "List of mail-account plists.  Set in ~/.emacs.d/secrets.el, e.g.:
+
+  (setq my/mail-accounts
+    \\='((:id \"gmx\" :provider gmx :address \"you@gmx.net\" :name \"You\")))
+
+Keys:
+  :id        slug — Maildir ~/Mail/<id>/ and context name (required)
+  :address   email address (required)
+  :name      display name for outgoing mail (required)
+  :provider  key from `my/mail-providers' (fills hosts), or give hosts:
+  :imap-host :smtp-host   explicit hosts (override preset / unknown provider)
+  :imap-port :smtp-port   default 993 / 587
+  :user      login user if it differs from :address
+  :sent-folder :drafts-folder :trash-folder :archive-folder
+             remote folder names if not Sent/Drafts/Trash/Archive
+             (iCloud: \"Sent Messages\", \"Deleted Messages\").")
+
+(defvar my/mail-root (expand-file-name "~/Mail")
+  "Root Maildir directory; each account lives in <root>/<id>/.")
+
+(defun my/mail--preset (acct)
+  "Provider preset plist for ACCT, or nil."
+  (cdr (assq (plist-get acct :provider) my/mail-providers)))
+
+(defun my/mail--host (acct which)
+  "Host for ACCT.  WHICH is :imap or :smtp.  Explicit override beats preset."
+  (let ((key (if (eq which :imap) :imap-host :smtp-host)))
+    (or (plist-get acct key)
+        (plist-get (my/mail--preset acct) key)
+        (user-error "mail: account %S has no %s host" (plist-get acct :id) which))))
+
+(defun my/mail--user (acct) (or (plist-get acct :user) (plist-get acct :address)))
+(defun my/mail--imap-port (acct)
+  (or (plist-get acct :imap-port) (plist-get (my/mail--preset acct) :imap-port) 993))
+(defun my/mail--smtp-port (acct)
+  (or (plist-get acct :smtp-port) (plist-get (my/mail--preset acct) :smtp-port) 587))
+(defun my/mail--maildir (acct) (expand-file-name (plist-get acct :id) my/mail-root))
+(defun my/mail--oauth-p (acct)
+  "Non-nil if ACCT uses XOAUTH2 (explicit :oauth or via its provider preset)."
+  (or (plist-get acct :oauth) (plist-get (my/mail--preset acct) :oauth)))
+
+(defun my/mail--account-by-id (id)
+  (cl-find id my/mail-accounts :key (lambda (a) (plist-get a :id)) :test #'equal))
+
+(defconst my/mail--accounts-service "emacs-mail-accounts"
+  "Keychain generic-password service holding the serialized account list.")
+
+(defun my/mail--hex-decode (s)
+  "Decode hex string S (as `security -w' emits for non-ASCII) to a UTF-8 string."
+  (decode-coding-string
+   (apply #'unibyte-string
+          (mapcar (lambda (i) (string-to-number (substring s i (+ i 2)) 16))
+                  (number-sequence 0 (1- (length s)) 2)))
+   'utf-8))
+
+(defun my/mail-accounts-load ()
+  "Return the account list stored in the macOS Keychain, or nil."
+  (when (eq system-type 'darwin)
+    (let ((out (with-temp-buffer
+                 (when (eq 0 (call-process "security" nil t nil
+                                           "find-generic-password"
+                                           "-a" (user-login-name)
+                                           "-s" my/mail--accounts-service "-w"))
+                   (string-trim (buffer-string))))))
+      (when (and out (> (length out) 0))
+        ;; `security -w' hex-encodes any value containing non-ASCII bytes
+        ;; (e.g. German folder names like "Entwürfe") — decode that back.
+        (when (string-match-p "\\`[0-9a-f]+\\'" out)
+          (setq out (ignore-errors (my/mail--hex-decode out))))
+        (let ((v (and out (ignore-errors (car (read-from-string out))))))
+          (and (listp v) v))))))   ; guard against partial/garbage reads
+
+(defun my/mail-accounts-save ()
+  "Write `my/mail-accounts' to the macOS Keychain (no passwords in it).
+Escape non-ASCII so `security' stores/returns plain text, not a hex blob."
+  (interactive)
+  (call-process "security" nil nil nil
+                "add-generic-password" "-U"
+                "-a" (user-login-name) "-s" my/mail--accounts-service
+                "-w" (let ((print-escape-nonascii t))
+                       (prin1-to-string my/mail-accounts)))
+  (message "mail: %d account(s) saved to Keychain" (length my/mail-accounts)))
+
+;;;###autoload
+(defun my/mail-add-account (id provider address name)
+  "Add a mail account to the Keychain and offer to store its password.
+Everything personal stays in the Keychain — nothing is written to a file."
+  (interactive
+   (list (read-string "Account id (slug, e.g. gmx): ")
+         (intern (completing-read
+                  "Provider: "
+                  (mapcar (lambda (p) (symbol-name (car p))) my/mail-providers)
+                  nil nil))
+         (read-string "Email address: ")
+         (read-string "Your display name: ")))
+  (setq my/mail-accounts
+        (cons (list :id id :provider provider :address address :name name)
+              (cl-remove id my/mail-accounts
+                         :key (lambda (a) (plist-get a :id)) :test #'equal)))
+  (my/mail-accounts-save)
+  (when (and (fboundp 'my/mail-store-password)
+             (y-or-n-p "Store this account's password in the Keychain now? "))
+    (my/mail-store-password id (read-passwd "Password: ")))
+  (message "mail: account %s added — now M-x my/mail-setup, then it syncs." id))
+
+;; Load the account list from the Keychain at startup.  Falls back to any value
+;; already set (e.g. in secrets.el), but the Keychain is the intended home, so
+;; no personal data needs to live in a file or a private repo.
+(setq my/mail-accounts (or (my/mail-accounts-load) my/mail-accounts))
+
+(defun my/mail--mbsyncrc-account (acct)
+  "Return the ~/.mbsyncrc stanza for one ACCT."
+  (let* ((id   (plist-get acct :id))
+         (host (my/mail--host acct :imap))
+         (user (my/mail--user acct))
+         (port (my/mail--imap-port acct))
+         (dir  (file-name-as-directory (my/mail--maildir acct)))
+         (mechs (or (plist-get acct :auth-mechs)
+                    (plist-get (my/mail--preset acct) :auth-mechs)))
+         (auth (if mechs (format "AuthMechs %s\n" mechs) ""))
+         (no-tls (or (plist-get acct :no-tls)
+                     (plist-get (my/mail--preset acct) :no-tls)))
+         (tls (if no-tls "TLSType None\n"
+                "TLSType IMAPS\nSystemCertificates yes\n"))
+         (oauth (my/mail--oauth-p acct))
+         ;; OAuth (XOAUTH2): PassCmd returns a fresh access token from the
+         ;; helper; otherwise read the password from the macOS Keychain.
+         (passcmd (if oauth
+                      (format "%s %s token %s"
+                              my/mail--python (my/mail-oauth--helper-file) id)
+                    (format "security find-internet-password -s %s -a %s -w"
+                            host user))))
+    (format "IMAPAccount %s
+Host %s
+Port %d
+User %s
+PassCmd \"%s\"
+%s%s
+IMAPStore %s-remote
+Account %s
+
+MaildirStore %s-local
+Path %s
+Inbox %sInbox
+SubFolders Verbatim
+
+Channel %s
+Far :%s-remote:
+Near :%s-local:
+Patterns *
+Create Both
+Expunge Both
+SyncState *
+"
+            id host port user passcmd auth tls
+            id id
+            id dir dir
+            id id id)))
+
+(defun my/mail-generate-mbsyncrc ()
+  "Write ~/.mbsyncrc (mode 600) from `my/mail-accounts' and create the maildirs."
+  (interactive)
+  (unless my/mail-accounts
+    (user-error "mail: set my/mail-accounts in ~/.emacs.d/secrets.el first"))
+  (let ((file (expand-file-name "~/.mbsyncrc")))
+    (with-temp-file file
+      (insert "# Generated by 45_mail.el from my/mail-accounts — do not edit by hand.\n\n")
+      (dolist (acct my/mail-accounts)
+        (make-directory (my/mail--maildir acct) t)
+        (insert (my/mail--mbsyncrc-account acct) "\n")))
+    (set-file-modes file #o600)
+    (message "mail: wrote %s (%d account(s))" file (length my/mail-accounts))))
+
+(defun my/mail-store-password (id password)
+  "Store PASSWORD in the macOS Keychain for account ID (IMAP + SMTP hosts)."
+  (interactive
+   (list (completing-read
+          "Account id: "
+          (mapcar (lambda (a) (plist-get a :id)) my/mail-accounts) nil t)
+         (read-passwd "Password (app-specific where the provider requires it): ")))
+  (let* ((acct (or (my/mail--account-by-id id) (user-error "mail: no account %s" id)))
+         (user (my/mail--user acct)))
+    (dolist (spec (list (cons (my/mail--host acct :imap) "imap")
+                        (cons (my/mail--host acct :smtp) "smtp")))
+      (apply #'call-process "security" nil nil nil
+             "add-internet-password" "-U"
+             "-s" (car spec) "-a" user "-r" (cdr spec) "-w" password
+             nil))
+    (message "mail: stored Keychain password for %s (%s)" id user)))
+
+(defun my/mail--mu4e-load-path ()
+  "Directory of brew's mu4e elisp, or nil."
+  (seq-find #'file-directory-p
+            '("/opt/homebrew/share/emacs/site-lisp/mu/mu4e"
+              "/opt/homebrew/share/emacs/site-lisp/mu4e"
+              "/usr/local/share/emacs/site-lisp/mu/mu4e"
+              "/usr/local/share/emacs/site-lisp/mu4e")))
+
+(defun my/mail--folder (acct key candidates)
+  "Maildir-relative special folder for ACCT.
+Priority: explicit override (plist KEY) > the first of CANDIDATES that exists in
+the account's Maildir (auto-detect, so German/localized names just work) > the
+first candidate as a fallback."
+  (let* ((id   (plist-get acct :id))
+         (dir  (my/mail--maildir acct))
+         (name (or (plist-get acct key)
+                   (seq-find (lambda (c) (file-directory-p (expand-file-name c dir)))
+                             candidates)
+                   (car candidates))))
+    (concat "/" id "/" name)))
+
+(declare-function make-mu4e-context "mu4e-context")
+(declare-function mu4e-message-field "mu4e-message")
+;; Forward declarations — external vars/functions touched later in this file.
+(defvar org-capture-templates)
+(defvar elpaca-ignored-dependencies)
+(defvar mu4e-headers-mode-map)
+(defvar mu4e-views-completion-method)
+(defvar mu4e-views-default-view-method)
+(defvar mu4e-views-auto-view-selected-message)
+(defvar mu4e-views-next-previous-message-behaviour)
+(declare-function mu4e-views-mu4e-use-view-msg-method "mu4e-views")
+(declare-function mu4e-views-mu4e-select-view-msg-method "mu4e-views")
+(declare-function mu4e-views-cursor-msg-view-window-down "mu4e-views")
+(declare-function mu4e-views-cursor-msg-view-window-up "mu4e-views")
+;; Set in `my/mail-configure' once mu4e is loaded.
+(defvar mu4e-maildir)
+(defvar mu4e-get-mail-command)
+(defvar mu4e-change-filenames-when-moving)
+(defvar mu4e-update-interval)
+(defvar mu4e-contexts)
+(defvar mu4e-context-policy)
+(defvar mu4e-compose-context-policy)
+
+(defun my/mail--context (acct)
+  "Build a mu4e-context for ACCT (identity, folders, SMTP)."
+  (let* ((id   (plist-get acct :id))
+         (root (concat "/" id)))
+    (make-mu4e-context
+     :name id
+     :match-func
+     (lambda (msg)
+       (when msg
+         (string-prefix-p root (or (mu4e-message-field msg :maildir) ""))))
+     :vars
+     `((user-mail-address     . ,(plist-get acct :address))
+       (user-full-name        . ,(plist-get acct :name))
+       (mu4e-sent-folder      . ,(my/mail--folder acct :sent-folder
+                                   '("Sent" "Gesendet" "Sent Messages" "Sent Items"
+                                     "Gesendete Objekte" "Gesendete Elemente")))
+       (mu4e-drafts-folder    . ,(my/mail--folder acct :drafts-folder
+                                   '("Drafts" "Entwürfe" "Entwurf")))
+       (mu4e-trash-folder     . ,(my/mail--folder acct :trash-folder
+                                   '("Deleted Messages" "Deleted Items" "Trash"
+                                     "Gelöscht" "Gelöschte Elemente" "Papierkorb")))
+       (mu4e-refile-folder    . ,(my/mail--folder acct :archive-folder
+                                   '("Archive" "Archiv" "All Mail" "Alle Nachrichten")))
+       (smtpmail-smtp-user    . ,(my/mail--user acct))
+       (smtpmail-smtp-server  . ,(my/mail--host acct :smtp))
+       (smtpmail-smtp-service . ,(my/mail--smtp-port acct))
+       (smtpmail-stream-type  . starttls)))))
+
+(defun my/mail-configure ()
+  "Set mu4e variables from `my/mail-accounts'.  Call once mu4e is loaded."
+  (when my/mail-accounts
+    (require 'smtpmail)
+    (require 'auth-source)
+    (add-to-list 'auth-sources 'macos-keychain-internet)
+    ;; XOAUTH2 SMTP: consult our token backend first (it only matches OAuth
+    ;; SMTP hosts; everything else falls through to the Keychain).
+    (when (cl-some #'my/mail--oauth-p my/mail-accounts)
+      (add-to-list 'auth-sources 'my/mail-oauth))
+    (setq mu4e-maildir my/mail-root
+          mu4e-get-mail-command "mbsync -a"
+          mu4e-change-filenames-when-moving t   ; required for mbsync
+          mu4e-update-interval nil              ; manual fetch (press U) — no surprise syncs
+          message-send-mail-function #'smtpmail-send-it
+          mu4e-contexts (mapcar #'my/mail--context my/mail-accounts)
+          mu4e-context-policy 'pick-first
+          mu4e-compose-context-policy 'ask)))
+
+;; Make `M-x mu4e' available (autoload from the brew prefix) and configure it
+;; the moment it loads. Costs nothing at startup when mu is absent.
+(let ((lp (my/mail--mu4e-load-path)))
+  (when (and (eq system-type 'darwin) lp)
+    (add-to-list 'load-path lp)
+    (autoload 'mu4e "mu4e" "Launch mu4e." t)
+    (with-eval-after-load 'mu4e (my/mail-configure))))
+
+(with-eval-after-load 'mu4e (require 'mu4e-org nil t))
+
+(with-eval-after-load 'org
+  (require 'mu4e-org nil t)
+  (add-to-list
+   'org-capture-templates
+   `("m" "Mail → task (GTD inbox)" entry
+     (file ,(or (bound-and-true-p org-default-notes-file)
+                (expand-file-name "inbox.org"
+                                  (or (bound-and-true-p org-directory) "~/org"))))
+     "* TODO %a\n%i%?")
+   t))
+
+(when (and (fboundp 'xwidget-webkit-browse-url) (not noninteractive))
+  ;; mu4e-views declares mu4e as a dependency, but ours comes from brew — tell
+  ;; elpaca to treat it as already provided, then just INSTALL the package.
+  (with-eval-after-load 'elpaca
+    (add-to-list 'elpaca-ignored-dependencies 'mu4e))
+  (use-package mu4e-views :ensure t :defer t)
+  ;; Configure deterministically the moment mu4e loads (not via use-package's
+  ;; :after, whose elpaca-deferred :config did not run reliably here).  Require
+  ;; goto-addr first — mu4e-views uses goto-address-url-regexp at load time.
+  (with-eval-after-load 'mu4e
+    (when (and (require 'goto-addr nil t) (require 'mu4e-views nil t))
+      (setq mu4e-views-completion-method 'default
+            mu4e-views-default-view-method "html"  ; render with xwidget-webkit
+            mu4e-views-auto-view-selected-message t
+            mu4e-views-next-previous-message-behaviour 'stick-to-current-window)
+      (mu4e-views-mu4e-use-view-msg-method "html")  ; this version takes the method
+      (define-key mu4e-headers-mode-map (kbd "v")
+                  #'mu4e-views-mu4e-select-view-msg-method)
+      (define-key mu4e-headers-mode-map (kbd "M-n")
+                  #'mu4e-views-cursor-msg-view-window-down)
+      (define-key mu4e-headers-mode-map (kbd "M-p")
+                  #'mu4e-views-cursor-msg-view-window-up))))
+
+(defun my/mail-setup ()
+  "Check deps, write ~/.mbsyncrc, run `mu init', and print the next steps."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
+  (unless (executable-find "mu")     (user-error "mu missing — brew install mu"))
+  (unless my/mail-accounts
+    (user-error "Set my/mail-accounts in ~/.emacs.d/secrets.el first"))
+  (my/mail-generate-mbsyncrc)
+  (let ((args (append (list "init" (concat "--maildir=" (expand-file-name my/mail-root)))
+                      (mapcar (lambda (a) (concat "--my-address=" (plist-get a :address)))
+                              my/mail-accounts))))
+    (with-current-buffer (get-buffer-create "*mu-init*")
+      (erase-buffer)
+      (apply #'call-process "mu" nil t nil args)))
+  (when (fboundp 'my/mail-configure) (ignore-errors (my/mail-configure)))
+  (message
+   (concat "mail: ~/.mbsyncrc + mu init done. Next: "
+           "(1) M-x my/mail-store-password per account, "
+           "(2) `mbsync -a' in a shell, (3) `mu index', (4) M-x mu4e.")))
+
+(defvar my/mail--sync-process nil)
+
+(defun my/mail--sentinel-file () (expand-file-name ".first-sync-done" my/mail-root))
+(defun my/mail--synced-p () (file-exists-p (my/mail--sentinel-file)))
+(defun my/mail--mark-synced ()
+  (ignore-errors (make-directory my/mail-root t)
+                 (write-region "" nil (my/mail--sentinel-file) nil 'quiet)))
+
+(defun my/mail--password-ready-p ()
+  "Non-nil if the first account's IMAP password is in the Keychain."
+  (let* ((acct (car my/mail-accounts))
+         (host (and acct (ignore-errors (my/mail--host acct :imap))))
+         (user (and acct (my/mail--user acct))))
+    (and host user
+         (eq 0 (call-process "security" nil nil nil
+                             "find-internet-password" "-s" host "-a" user)))))
+
+(defun my/mail--sync-filter (proc string)
+  (when (buffer-live-p (process-buffer proc))
+    (with-current-buffer (process-buffer proc)
+      (goto-char (point-max)) (insert string)))
+  ;; Surface the most recent progress-looking line to the echo area.
+  (let ((line (car (last (split-string (string-trim string) "\n")))))
+    (when (and line (string-match-p "[0-9]+/[0-9]+\\|Channel\\|Box\\|near\\|far" line))
+      (message "mail: %s" (string-trim line)))))
+
+;;;###autoload
+(defun my/mail-sync ()
+  "Run `mbsync -a' asynchronously, then `mu index', with progress in messages."
+  (interactive)
+  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
+  (when (process-live-p my/mail--sync-process) (user-error "mail: a sync is already running"))
+  (let ((buf (get-buffer-create "*mail-sync*")))
+    (with-current-buffer buf (erase-buffer))
+    (message "mail: first sync starting (mbsync -a)… approve the Keychain prompt if it appears")
+    (setq my/mail--sync-process
+          (make-process
+           :name "mbsync" :buffer buf
+           :command (list (executable-find "mbsync") "-a")
+           :filter #'my/mail--sync-filter
+           :sentinel
+           (lambda (proc _ev)
+             (when (memq (process-status proc) '(exit signal))
+               (if (eq 0 (process-exit-status proc))
+                   (progn
+                     (message "mail: sync done — indexing…")
+                     (call-process "mu" nil "*mail-sync*" nil "index")
+                     (my/mail--mark-synced)
+                     (message "mail: ready ✓  (M-x mu4e)"))
+                 (message "mail: sync FAILED (see *mail-sync*). Check: IMAP enabled at the provider + M-x my/mail-store-password"))))))))
+
+;;;###autoload
+(defun my/mail-first-sync-maybe ()
+  "If mail is configured but never synced (and the password is ready), kick off
+the first sync asynchronously, deferred so it never blocks startup."
+  (when (and (eq system-type 'darwin)
+             (executable-find "mbsync")
+             my/mail-accounts
+             (file-exists-p (expand-file-name "~/.mbsyncrc"))
+             (not (my/mail--synced-p))
+             (my/mail--password-ready-p))
+    (run-with-idle-timer 3 nil #'my/mail-sync)))
+
+;; Auto-run the first sync on load (deferred, one-shot, password-gated).
+(my/mail-first-sync-maybe)
+
+(defconst my/mail--python "/usr/bin/python3"
+  "System Python (stdlib only) used by the OAuth token helper.")
+
+(defun my/mail-oauth--helper-file ()
+  "Path to the OAuth token helper that ships in the distro config dir."
+  (expand-file-name "o365-token.py" my/config-dir))
+
+(defun my/mail--sasl-plugin-dir ()
+  "Homebrew cyrus-sasl's SASL plugin dir (where the XOAUTH2 plugin installs)."
+  (let ((p (ignore-errors
+             (string-trim
+              (with-temp-buffer
+                (when (eq 0 (call-process "brew" nil t nil "--prefix" "cyrus-sasl"))
+                  (buffer-string)))))))
+    (and p (> (length p) 0) (expand-file-name "lib/sasl2" p))))
+
+(defun my/mail--xoauth2-installed-p ()
+  (let ((d (my/mail--sasl-plugin-dir)))
+    (and d (file-exists-p (expand-file-name "libxoauth2.so" d)))))
+
+;; Point every mbsync that mu4e/Emacs starts at the XOAUTH2 plugin — macOS
+;; system libsasl2 honours SASL_PATH, so XOAUTH2 accounts can authenticate.
+(let ((d (my/mail--sasl-plugin-dir)))
+  (when (and d (file-directory-p d)) (setenv "SASL_PATH" d)))
+
+(defconst my/mail--xoauth2-build-script "set -e
+export PATH=\"/opt/homebrew/bin:$PATH\"
+SASL=$(brew --prefix cyrus-sasl 2>/dev/null) || exit 3
+[ -f \"$SASL/lib/sasl2/libxoauth2.so\" ] && { echo already; exit 0; }
+brew install cyrus-sasl autoconf automake libtool pkg-config
+T=$(mktemp -d)
+git clone --depth 1 https://github.com/moriyoshi/cyrus-sasl-xoauth2.git \"$T/x\"
+cd \"$T/x\"
+touch NEWS README AUTHORS ChangeLog COPYING
+glibtoolize --force --copy
+autoreconf -fiv
+./configure CPPFLAGS=\"-I$SASL/include\" --prefix=\"$SASL\"
+make
+cp .libs/libxoauth2.*.so \"$SASL/lib/sasl2/libxoauth2.so\"
+echo installed
+"
+  "Shell script that builds + installs the cyrus-sasl XOAUTH2 plugin.")
+
+(defun my/mail-xoauth2-ensure ()
+  "Build + install the XOAUTH2 SASL plugin if it is missing (self-installs)."
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (unless (my/mail--xoauth2-installed-p)
+    (message "mail: building the XOAUTH2 SASL plugin (one-time, needs network)…")
+    (with-current-buffer (get-buffer-create "*xoauth2-build*")
+      (erase-buffer)
+      (unless (eq 0 (call-process "sh" nil t nil "-c" my/mail--xoauth2-build-script))
+        (user-error "XOAUTH2 plugin build failed (see *xoauth2-build*)"))))
+  (let ((d (my/mail--sasl-plugin-dir))) (when d (setenv "SASL_PATH" d)))
+  (my/mail--xoauth2-installed-p))
+
+;;;###autoload
+(defun my/mail-oauth-authorize (id)
+  "Device-code sign-in for OAuth account ID; stores its refresh token in the
+Keychain.  Shows a code + URL — sign in on any device (handles 2FA)."
+  (interactive
+   (list (completing-read "OAuth account id: "
+                          (mapcar (lambda (a) (plist-get a :id)) my/mail-accounts)
+                          nil t)))
+  (ignore-errors (set-file-modes (my/mail-oauth--helper-file) #o755))
+  (let ((buf (get-buffer-create "*mail-oauth*")))
+    (with-current-buffer buf (erase-buffer))
+    (make-process
+     :name "o365-authorize" :buffer buf
+     :command (list my/mail--python (my/mail-oauth--helper-file) "authorize" id)
+     :filter (lambda (p s)
+               (with-current-buffer (process-buffer p)
+                 (goto-char (point-max)) (insert s))
+               (when (string-match "enter the code [A-Z0-9]+ to authenticate" s)
+                 (message "mail: %s" (string-trim s)))
+               (when (string-match-p "AUTHORIZED" s)
+                 (message "mail: %s authorised — token stored. Now M-x my/mail-sync" id))))
+    (display-buffer buf)))
+
+;;;###autoload
+(defun my/mail-oauth-setup ()
+  "Self-install direct Microsoft XOAUTH2: build the SASL plugin + ready the
+token helper.  Add an office365 account, then M-x my/mail-oauth-authorize."
+  (interactive)
+  (my/mail-xoauth2-ensure)
+  (ignore-errors (set-file-modes (my/mail-oauth--helper-file) #o755))
+  (message "mail: XOAUTH2 ready. Add an office365 account, then M-x my/mail-oauth-authorize."))
+
+;;; SMTP sending via XOAUTH2 --------------------------------------------------
+;; smtpmail authenticates only when auth-source yields BOTH a user and a secret,
+;; and it lets the source choose the mechanism via :smtp-auth (smtpmail.el).  So
+;; we register a small auth-source backend that, for an OAuth account's SMTP
+;; host, returns the address as :user, a *fresh* access token as the (function)
+;; secret, and :smtp-auth "xoauth2" — then implement that mechanism.  The same
+;; token helper feeds both mbsync (PassCmd) and smtpmail.
+
+(require 'auth-source)
+
+(defun my/mail-oauth--access-token (id)
+  "Fresh OAuth2 access token for account ID, via the token helper."
+  (with-temp-buffer
+    (if (eq 0 (call-process my/mail--python nil t nil
+                            (my/mail-oauth--helper-file) "token" id))
+        (string-trim (buffer-string))
+      (error "mail: OAuth token helper failed for %s: %s"
+             id (string-trim (buffer-string))))))
+
+(cl-defun my/mail-oauth--auth-source-search
+    (&rest spec &key host user &allow-other-keys)
+  "auth-source backend: XOAUTH2 credentials for an OAuth account's SMTP host.
+Returns nil (falls through to other sources) for non-OAuth hosts."
+  (ignore spec)
+  (when-let* ((accts (and (boundp 'my/mail-accounts) my/mail-accounts))
+              (acct (cl-find-if
+                     (lambda (a)
+                       (and (my/mail--oauth-p a)
+                            (equal host (my/mail--host a :smtp))
+                            (or (null user) (equal user (my/mail--user a)))))
+                     accts))
+              (id (plist-get acct :id)))
+    (list (list :host host
+                :user (my/mail--user acct)
+                :port (number-to-string (my/mail--smtp-port acct))
+                ;; a function secret is re-evaluated on each send → never stale
+                :secret (lambda () (my/mail-oauth--access-token id))
+                :smtp-auth "xoauth2"))))
+
+(defvar my/mail-oauth--backend
+  (auth-source-backend
+   :source "my/mail-oauth"
+   :type 'my/mail-oauth
+   :search-function #'my/mail-oauth--auth-source-search)
+  "Auth-source backend serving fresh XOAUTH2 tokens for OAuth SMTP hosts.")
+
+(defun my/mail-oauth--backend-parse (entry)
+  "Return the XOAUTH2 backend when ENTRY is the `my/mail-oauth' marker."
+  (when (eq entry 'my/mail-oauth)
+    (auth-source-backend-parse-parameters entry my/mail-oauth--backend)))
+
+(if (boundp 'auth-source-backend-parser-functions)
+    (add-hook 'auth-source-backend-parser-functions #'my/mail-oauth--backend-parse)
+  (advice-add 'auth-source-backend-parse :before-until #'my/mail-oauth--backend-parse))
+
+(defvar smtpmail-auth-supported)            ; smtpmail.el (loaded at runtime below)
+(declare-function smtpmail-command-or-throw "smtpmail")
+(with-eval-after-load 'smtpmail
+  (add-to-list 'smtpmail-auth-supported 'xoauth2 t) ; lowest priority; office365 forces it via :smtp-auth
+  (cl-defmethod smtpmail-try-auth-method
+    (process (_mech (eql 'xoauth2)) user password)
+    "Authenticate to SMTP with XOAUTH2.  PASSWORD is the OAuth access token."
+    (smtpmail-command-or-throw
+     process
+     (concat "AUTH XOAUTH2 "
+             (base64-encode-string
+              (format "user=%s\1auth=Bearer %s\1\1" user password) t))
+     235)))
+
+(defconst my/mail-davmail--service-label "org.davmail.gateway")
+(defun my/mail-davmail--config-file () (expand-file-name "~/.davmail.properties"))
+
+(defun my/mail-davmail-installed-p ()
+  (and (executable-find "davmail") t))
+
+(defun my/mail-davmail-ensure ()
+  "Install DavMail via Homebrew if it is not already present.  Returns non-nil
+when DavMail is available — so a fresh machine self-installs it."
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (unless (my/mail-davmail-installed-p)
+    (unless (executable-find "brew")
+      (user-error "Homebrew required to install DavMail"))
+    (message "mail: DavMail missing — installing via Homebrew…")
+    (unless (eq 0 (call-process "brew" nil "*davmail-install*" nil "install" "davmail"))
+      (user-error "DavMail install failed (see *davmail-install*)")))
+  (my/mail-davmail-installed-p))
+
+(defun my/mail-davmail-write-config ()
+  "Write ~/.davmail.properties for a headless Outlook/Office365 gateway."
+  (let ((home (expand-file-name "~")))
+    (with-temp-file (my/mail-davmail--config-file)
+      (insert (format "# Generated by 45_mail.el — DavMail headless Microsoft gateway.
+# Device-code flow: v2.0 (works for personal/live.com accounts) and fully
+# headless — DavMail logs a code + URL, you authorise on any device (handles
+# 2FA), then it persists the token and refreshes silently.
+davmail.mode=O365DeviceCode
+davmail.url=https://outlook.office365.com/EWS/Exchange.asmx
+davmail.server=true
+davmail.imapPort=1143
+davmail.smtpPort=1025
+davmail.caldavPort=0
+davmail.ldapPort=0
+davmail.popPort=0
+davmail.oauth.persistToken=true
+davmail.oauth.tokenFilePath=%s/.davmail.tokens
+# NOTE: this default works for Office365 *work/school* accounts. PERSONAL
+# Microsoft accounts (outlook.com/.de, live.com) reject DavMail's built-in
+# v1 OAuth (AADSTS500201) and need a custom Azure app registration set via
+# davmail.oauth.clientId + davmail.oauth.tenantId=consumers.
+davmail.ssl.nosecureimap=true
+davmail.ssl.nosecuresmtp=true
+davmail.enableKeepalive=true
+davmail.disableUpdateCheck=true
+davmail.allowRemote=false
+davmail.logFilePath=%s/.davmail.log
+davmail.logFileSize=1MB
+" home home)))
+    (my/mail-davmail--config-file)))
+
+(defun my/mail-davmail-install-service ()
+  "Generate and (re)load a launchd service that runs DavMail headless."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (let* ((davmail (or (executable-find "davmail")
+                      (user-error "DavMail not installed — M-x my/mail-davmail-setup")))
+         (conf (my/mail-davmail--config-file))
+         (plist (expand-file-name
+                 (format "Library/LaunchAgents/%s.plist" my/mail-davmail--service-label)
+                 "~")))
+    (make-directory (file-name-directory plist) t)
+    (with-temp-file plist
+      (insert (format "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"
+  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key>
+  <array><string>%s</string><string>%s</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/davmail.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/davmail.err.log</string>
+</dict>
+</plist>
+" my/mail-davmail--service-label davmail conf)))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (if (eq 0 (call-process "launchctl" nil nil nil "load" plist))
+        (message "DavMail service loaded: %s" plist)
+      (user-error "launchctl load failed for %s" plist))))
+
+(defun my/mail-davmail-uninstall-service ()
+  "Unload and remove the DavMail launchd service."
+  (interactive)
+  (let ((plist (expand-file-name
+                (format "Library/LaunchAgents/%s.plist" my/mail-davmail--service-label)
+                "~")))
+    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (when (file-exists-p plist) (delete-file plist))
+    (message "DavMail service removed")))
+
+;;;###autoload
+(defun my/mail-davmail-setup ()
+  "Ensure DavMail is installed (self-installs via Homebrew), write its config,
+and load the launchd service.  Idempotent — safe to re-run / run on a new Mac."
+  (interactive)
+  (my/mail-davmail-ensure)
+  (my/mail-davmail-write-config)
+  (my/mail-davmail-install-service)
+  (message (concat "DavMail ready on localhost:1143/1025.  Add the account with "
+                   "M-x my/mail-add-account (provider davmail); the first sync "
+                   "opens the Microsoft sign-in in your browser.")))

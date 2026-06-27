@@ -341,10 +341,119 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p auth))
       (list :status :warn
             :detail "adapter ready but WhatsApp NOT linked (no QR scanned yet)"
-            :fix "cd ~/whatsapp-bridge-adapter && node index.js   # scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
+            :fix "M-x my/whatsapp-adapter-link — scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
      (t
       (list :status :ok
-            :detail "linked (auth present) — run via launchd for persistence (see launchd/ in the repo)")))))
+            :detail "linked (auth present) — M-x my/whatsapp-adapter-install-service for persistence")))))
+
+(my/doctor-define-check "Signal adapter (optional messaging channel)"
+  (let* ((dir (expand-file-name "~/signal-bridge-adapter"))
+         (nm (expand-file-name "node_modules" dir))
+         (cli (executable-find "signal-cli")))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (file-directory-p dir))
+      (list :status :ok
+            :detail "not installed — Signal messaging is optional"
+            :fix "brew install signal-cli && git clone https://github.com/deno1011/signal-bridge-adapter.git ~/signal-bridge-adapter && cd ~/signal-bridge-adapter && npm install && cp .env.example .env"))
+     ((not cli)
+      (list :status :warn
+            :detail "adapter cloned but signal-cli missing"
+            :fix "brew install signal-cli"))
+     ((not (file-directory-p nm))
+      (list :status :warn
+            :detail "adapter cloned but dependencies missing"
+            :fix "cd ~/signal-bridge-adapter && npm install"))
+     (t
+      (list :status :ok
+            :detail "ready — M-x my/signal-adapter-link (scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then M-x my/signal-adapter-install-service")))))
+
+(my/doctor-define-check "Email (mu4e) — optional"
+  (let* ((mu (executable-find "mu"))
+         (mbsync (executable-find "mbsync"))
+         (accts (and (boundp 'my/mail-accounts) my/mail-accounts))
+         (rc (file-exists-p (expand-file-name "~/.mbsyncrc"))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (and mu mbsync))
+      (list :status :ok
+            :detail "not installed — email is optional"
+            :fix "brew install mu isync"))
+     ((not accts)
+      (list :status :warn
+            :detail "mu/isync installed but no accounts configured"
+            :fix "M-x my/mail-add-account (stored in Keychain), then M-x my/mail-setup"))
+     ((not rc)
+      (list :status :warn
+            :detail (format "%d mail account(s) defined but ~/.mbsyncrc missing"
+                            (length accts))
+            :fix "M-x my/mail-setup"))
+     (t
+      (list :status :ok
+            :detail (format "%d account(s), ~/.mbsyncrc present — then M-x my/mail-store-password, `mbsync -a', `mu index', M-x mu4e"
+                            (length accts)))))))
+
+(my/doctor-define-check "DavMail (Outlook/Office365 gateway) — optional"
+  (let* ((acct (and (boundp 'my/mail-accounts)
+                    (seq-find (lambda (a) (eq (plist-get a :provider) 'davmail))
+                              my/mail-accounts)))
+         (installed (executable-find "davmail"))
+         (svc (file-exists-p
+               (expand-file-name
+                "Library/LaunchAgents/org.davmail.gateway.plist" "~"))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not acct)
+      (list :status :ok :detail "no Outlook/Office365 (davmail) account — not needed"))
+     ((not installed)
+      (list :status :warn
+            :detail "davmail account configured but DavMail not installed"
+            :fix "M-x my/mail-davmail-setup (auto-installs DavMail + service)"))
+     ((not svc)
+      (list :status :warn
+            :detail "DavMail installed but its service is not set up"
+            :fix "M-x my/mail-davmail-setup"))
+     (t
+      (list :status :ok
+            :detail "DavMail installed + service present (localhost:1143 for Outlook)")))))
+
+(my/doctor-define-check "Outlook XOAUTH2 (direct, no proxy) — optional"
+  (let* ((acct (and (boundp 'my/mail-accounts) (fboundp 'my/mail--oauth-p)
+                    (seq-find #'my/mail--oauth-p my/mail-accounts)))
+         (plugin (and (fboundp 'my/mail--xoauth2-installed-p)
+                      (my/mail--xoauth2-installed-p)))
+         (helper (and (fboundp 'my/mail-oauth--helper-file)
+                      (file-exists-p (my/mail-oauth--helper-file))))
+         (token (and acct
+                     (zerop (call-process
+                             "security" nil nil nil "find-generic-password"
+                             "-s" "emacs-mail-oauth"
+                             "-a" (plist-get acct :id) "-w")))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not acct)
+      (list :status :ok :detail "no XOAUTH2 (office365) account — not needed"))
+     ((not helper)
+      (list :status :warn
+            :detail "XOAUTH2 account set but token helper missing"
+            :fix "M-x my/mail-oauth-setup (installs helper + builds SASL plugin)"))
+     ((not plugin)
+      (list :status :warn
+            :detail "token helper present but cyrus-sasl XOAUTH2 plugin not built"
+            :fix "M-x my/mail-xoauth2-ensure (builds the SASL plugin)"))
+     ((not token)
+      (list :status :warn
+            :detail (format "XOAUTH2 ready but %s not authorized yet"
+                            (plist-get acct :id))
+            :fix (format "M-x my/mail-oauth-authorize RET %s (device-code sign-in)"
+                         (plist-get acct :id))))
+     (t
+      (list :status :ok
+            :detail "XOAUTH2 plugin built, helper + refresh token present (direct office365 sync)")))))
 
 (my/doctor-define-check "EAR source mode"
   (let ((source (and (boundp 'my/emacs-agent-runtime-source)
