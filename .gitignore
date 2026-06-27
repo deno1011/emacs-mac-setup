@@ -15,3 +15,6 @@
 
 # install.sh's BSD-sed temp files (sweep them up if any leak)
 .\!*\!*
+
+# DavMail runtime log
+davmail.log

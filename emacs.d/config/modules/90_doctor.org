@@ -484,6 +484,41 @@ and :fix. The :label is supplied by this macro."
      (t
       (list :status :ok
             :detail "DavMail installed + service present (localhost:1143 for Outlook)")))))
+
+(my/doctor-define-check "Outlook XOAUTH2 (direct, no proxy) — optional"
+  (let* ((acct (and (boundp 'my/mail-accounts) (fboundp 'my/mail--oauth-p)
+                    (seq-find #'my/mail--oauth-p my/mail-accounts)))
+         (plugin (and (fboundp 'my/mail--xoauth2-installed-p)
+                      (my/mail--xoauth2-installed-p)))
+         (helper (and (fboundp 'my/mail-oauth--helper-file)
+                      (file-exists-p (my/mail-oauth--helper-file))))
+         (token (and acct
+                     (zerop (call-process
+                             "security" nil nil nil "find-generic-password"
+                             "-s" "emacs-mail-oauth"
+                             "-a" (plist-get acct :id) "-w")))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not acct)
+      (list :status :ok :detail "no XOAUTH2 (office365) account — not needed"))
+     ((not helper)
+      (list :status :warn
+            :detail "XOAUTH2 account set but token helper missing"
+            :fix "M-x my/mail-oauth-setup (installs helper + builds SASL plugin)"))
+     ((not plugin)
+      (list :status :warn
+            :detail "token helper present but cyrus-sasl XOAUTH2 plugin not built"
+            :fix "M-x my/mail-xoauth2-ensure (builds the SASL plugin)"))
+     ((not token)
+      (list :status :warn
+            :detail (format "XOAUTH2 ready but %s not authorized yet"
+                            (plist-get acct :id))
+            :fix (format "M-x my/mail-oauth-authorize RET %s (device-code sign-in)"
+                         (plist-get acct :id))))
+     (t
+      (list :status :ok
+            :detail "XOAUTH2 plugin built, helper + refresh token present (direct office365 sync)")))))
 #+end_src
 
 * External services

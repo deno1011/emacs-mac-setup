@@ -27,6 +27,12 @@ is safe to ship enabled for everyone.
 
 (require 'cl-lib)
 
+;; Forward declarations — defined later in this module (the OAuth section) and
+;; in init.el; declared here so the mbsyncrc generator that references them
+;; byte-compiles without free-variable warnings.
+(defvar my/config-dir)
+(defvar my/mail--python)
+
 (defconst my/mail-providers
   '((gmx     :imap-host "imap.gmx.net"          :smtp-host "mail.gmx.net")
     (icloud  :imap-host "imap.mail.me.com"      :smtp-host "smtp.mail.me.com" :auth-mechs "LOGIN")
@@ -35,8 +41,14 @@ is safe to ship enabled for everyone.
     (mailde  :imap-host "imap.mail.de"          :smtp-host "smtp.mail.de")
     (webde   :imap-host "imap.web.de"           :smtp-host "smtp.web.de")
     (ionos   :imap-host "imap.ionos.de"         :smtp-host "smtp.ionos.de")
+    ;; Direct Microsoft OAuth2 (XOAUTH2) — outlook.com/office365, no proxy.
+    ;; Needs the cyrus-sasl XOAUTH2 plugin (M-x my/mail-oauth-setup builds it)
+    ;; and the token helper; :oauth makes the PassCmd return an access token.
+    (office365 :imap-host "outlook.office365.com" :smtp-host "smtp.office365.com"
+               :auth-mechs "XOAUTH2" :oauth t)
     ;; DavMail: a local proxy (see below) that does the Microsoft OAuth and
-    ;; exposes plain IMAP/SMTP on localhost — for Outlook.com / Office365.
+    ;; exposes plain IMAP/SMTP on localhost — for Office365 *work/school*
+    ;; accounts where direct XOAUTH2 may be blocked by tenant policy.
     (davmail :imap-host "localhost" :imap-port 1143
              :smtp-host "localhost" :smtp-port 1025 :no-tls t
              :auth-mechs "LOGIN"))   ; force LOGIN over the plaintext localhost link
@@ -89,6 +101,9 @@ Keys:
 (defun my/mail--smtp-port (acct)
   (or (plist-get acct :smtp-port) (plist-get (my/mail--preset acct) :smtp-port) 587))
 (defun my/mail--maildir (acct) (expand-file-name (plist-get acct :id) my/mail-root))
+(defun my/mail--oauth-p (acct)
+  "Non-nil if ACCT uses XOAUTH2 (explicit :oauth or via its provider preset)."
+  (or (plist-get acct :oauth) (plist-get (my/mail--preset acct) :oauth)))
 
 (defun my/mail--account-by-id (id)
   (cl-find id my/mail-accounts :key (lambda (a) (plist-get a :id)) :test #'equal))
@@ -189,12 +204,20 @@ Keychain at sync time.
          (no-tls (or (plist-get acct :no-tls)
                      (plist-get (my/mail--preset acct) :no-tls)))
          (tls (if no-tls "TLSType None\n"
-                "TLSType IMAPS\nSystemCertificates yes\n")))
+                "TLSType IMAPS\nSystemCertificates yes\n"))
+         (oauth (my/mail--oauth-p acct))
+         ;; OAuth (XOAUTH2): PassCmd returns a fresh access token from the
+         ;; helper; otherwise read the password from the macOS Keychain.
+         (passcmd (if oauth
+                      (format "%s %s token %s"
+                              my/mail--python (my/mail-oauth--helper-file) id)
+                    (format "security find-internet-password -s %s -a %s -w"
+                            host user))))
     (format "IMAPAccount %s
 Host %s
 Port %d
 User %s
-PassCmd \"security find-internet-password -s %s -a %s -w\"
+PassCmd \"%s\"
 %s%s
 IMAPStore %s-remote
 Account %s
@@ -212,7 +235,7 @@ Create Both
 Expunge Both
 SyncState *
 "
-            id host port user host user auth tls
+            id host port user passcmd auth tls
             id id
             id dir dir
             id id id)))
@@ -526,6 +549,112 @@ the first sync asynchronously, deferred so it never blocks startup."
 
 ;; Auto-run the first sync on load (deferred, one-shot, password-gated).
 (my/mail-first-sync-maybe)
+#+end_src
+
+* Direct Microsoft OAuth2 (XOAUTH2, no proxy)
+
+The modern path for Outlook.com / personal Microsoft accounts: speak XOAUTH2
+*directly* to =outlook.office365.com=.  Two self-installing pieces (run
+=M-x my/mail-oauth-setup= once):
+
+1. =mbsync= needs the XOAUTH2 SASL mechanism.  macOS's system libsasl2 (which
+   isync links) has no such plugin and you can't add one to it (SIP) — but it
+   honours =SASL_PATH=.  So we build the [[https://github.com/moriyoshi/cyrus-sasl-xoauth2][cyrus-sasl-xoauth2]] plugin against
+   Homebrew's cyrus-sasl and point =SASL_PATH= at it.  No rebuild of isync.
+2. A token helper (=o365-token.py=, stdlib-only, ships in the config dir) does
+   the v2.0 device-code flow (works for personal accounts incl. 2FA), keeps the
+   refresh token in the Keychain, and prints a fresh access token for the
+   PassCmd of =:oauth= accounts (provider =office365=).
+
+Then: add an =office365= account and run =M-x my/mail-oauth-authorize=.
+
+#+begin_src emacs-lisp :tangle yes
+(defconst my/mail--python "/usr/bin/python3"
+  "System Python (stdlib only) used by the OAuth token helper.")
+
+(defun my/mail-oauth--helper-file ()
+  "Path to the OAuth token helper that ships in the distro config dir."
+  (expand-file-name "o365-token.py" my/config-dir))
+
+(defun my/mail--sasl-plugin-dir ()
+  "Homebrew cyrus-sasl's SASL plugin dir (where the XOAUTH2 plugin installs)."
+  (let ((p (ignore-errors
+             (string-trim
+              (with-temp-buffer
+                (when (eq 0 (call-process "brew" nil t nil "--prefix" "cyrus-sasl"))
+                  (buffer-string)))))))
+    (and p (> (length p) 0) (expand-file-name "lib/sasl2" p))))
+
+(defun my/mail--xoauth2-installed-p ()
+  (let ((d (my/mail--sasl-plugin-dir)))
+    (and d (file-exists-p (expand-file-name "libxoauth2.so" d)))))
+
+;; Point every mbsync that mu4e/Emacs starts at the XOAUTH2 plugin — macOS
+;; system libsasl2 honours SASL_PATH, so XOAUTH2 accounts can authenticate.
+(let ((d (my/mail--sasl-plugin-dir)))
+  (when (and d (file-directory-p d)) (setenv "SASL_PATH" d)))
+
+(defconst my/mail--xoauth2-build-script "set -e
+export PATH=\"/opt/homebrew/bin:$PATH\"
+SASL=$(brew --prefix cyrus-sasl 2>/dev/null) || exit 3
+[ -f \"$SASL/lib/sasl2/libxoauth2.so\" ] && { echo already; exit 0; }
+brew install cyrus-sasl autoconf automake libtool pkg-config
+T=$(mktemp -d)
+git clone --depth 1 https://github.com/moriyoshi/cyrus-sasl-xoauth2.git \"$T/x\"
+cd \"$T/x\"
+touch NEWS README AUTHORS ChangeLog COPYING
+glibtoolize --force --copy
+autoreconf -fiv
+./configure CPPFLAGS=\"-I$SASL/include\" --prefix=\"$SASL\"
+make
+cp .libs/libxoauth2.*.so \"$SASL/lib/sasl2/libxoauth2.so\"
+echo installed
+"
+  "Shell script that builds + installs the cyrus-sasl XOAUTH2 plugin.")
+
+(defun my/mail-xoauth2-ensure ()
+  "Build + install the XOAUTH2 SASL plugin if it is missing (self-installs)."
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (unless (my/mail--xoauth2-installed-p)
+    (message "mail: building the XOAUTH2 SASL plugin (one-time, needs network)…")
+    (with-current-buffer (get-buffer-create "*xoauth2-build*")
+      (erase-buffer)
+      (unless (eq 0 (call-process "sh" nil t nil "-c" my/mail--xoauth2-build-script))
+        (user-error "XOAUTH2 plugin build failed (see *xoauth2-build*)"))))
+  (let ((d (my/mail--sasl-plugin-dir))) (when d (setenv "SASL_PATH" d)))
+  (my/mail--xoauth2-installed-p))
+
+;;;###autoload
+(defun my/mail-oauth-authorize (id)
+  "Device-code sign-in for OAuth account ID; stores its refresh token in the
+Keychain.  Shows a code + URL — sign in on any device (handles 2FA)."
+  (interactive
+   (list (completing-read "OAuth account id: "
+                          (mapcar (lambda (a) (plist-get a :id)) my/mail-accounts)
+                          nil t)))
+  (ignore-errors (set-file-modes (my/mail-oauth--helper-file) #o755))
+  (let ((buf (get-buffer-create "*mail-oauth*")))
+    (with-current-buffer buf (erase-buffer))
+    (make-process
+     :name "o365-authorize" :buffer buf
+     :command (list my/mail--python (my/mail-oauth--helper-file) "authorize" id)
+     :filter (lambda (p s)
+               (with-current-buffer (process-buffer p)
+                 (goto-char (point-max)) (insert s))
+               (when (string-match "enter the code [A-Z0-9]+ to authenticate" s)
+                 (message "mail: %s" (string-trim s)))
+               (when (string-match-p "AUTHORIZED" s)
+                 (message "mail: %s authorised — token stored. Now M-x my/mail-sync" id))))
+    (display-buffer buf)))
+
+;;;###autoload
+(defun my/mail-oauth-setup ()
+  "Self-install direct Microsoft XOAUTH2: build the SASL plugin + ready the
+token helper.  Add an office365 account, then M-x my/mail-oauth-authorize."
+  (interactive)
+  (my/mail-xoauth2-ensure)
+  (ignore-errors (set-file-modes (my/mail-oauth--helper-file) #o755))
+  (message "mail: XOAUTH2 ready. Add an office365 account, then M-x my/mail-oauth-authorize."))
 #+end_src
 
 * DavMail (Outlook / Office365 via a local OAuth proxy)
