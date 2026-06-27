@@ -447,19 +447,60 @@ the rendered message.
                   #'mu4e-views-cursor-msg-view-window-up))))
 #+end_src
 
+* Homebrew dependencies
+
+The setup commands install their own tools rather than telling you to do it by
+hand — same as the XOAUTH2 build and DavMail.  =brew= 6 needs =HOMEBREW_NO_ASK=
+for an unattended install (=NONINTERACTIVE= alone no longer suppresses every
+prompt), so we pass it; otherwise a =brew install= can hang on a confirmation.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/mail--brew-binary (formula)
+  "Executable that brew FORMULA provides (what we test for being installed)."
+  (cond ((equal formula "isync") "mbsync")
+        (t formula)))                   ; mu → mu, davmail → davmail, …
+
+(defun my/mail--brew-ensure (formulae)
+  "Install any of FORMULAE (brew formula names) that are missing, unattended.
+Return the formulae still missing afterwards (nil = all present)."
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (let ((brew (or (executable-find "brew")
+                  (seq-find #'file-executable-p
+                            '("/opt/homebrew/bin/brew" "/usr/local/bin/brew")))))
+    (unless brew (user-error "Homebrew not found — install it from https://brew.sh first"))
+    ;; make sure brew's bindir is on exec-path so a just-installed binary is seen
+    (add-to-list 'exec-path (file-name-directory brew))
+    (cl-flet ((missing () (seq-remove (lambda (f) (executable-find (my/mail--brew-binary f)))
+                                      formulae)))
+      (let ((want (missing)))
+        (when want
+          (with-current-buffer (get-buffer-create "*mail-brew*")
+            (goto-char (point-max))
+            (insert (format "\n$ brew install %s\n" (string-join want " ")))
+            (let ((process-environment
+                   (append '("HOMEBREW_NO_ASK=1" "NONINTERACTIVE=1"
+                             "HOMEBREW_NO_AUTO_UPDATE=1" "HOMEBREW_NO_ENV_HINTS=1")
+                           process-environment)))
+              (message "mail: brew install %s … (one-time)" (string-join want " "))
+              (apply #'call-process brew nil t nil "install" want))))
+        (missing)))))
+#+end_src
+
 * One-shot setup
 
-=M-x my/mail-setup= ties it together: checks the tools, writes =~/.mbsyncrc=,
-runs =mu init= with all your addresses, then tells you the remaining manual
-steps (store passwords, first sync, index).
+=M-x my/mail-setup= ties it together: installs the tools if missing, writes
+=~/.mbsyncrc=, runs =mu init= with all your addresses, then tells you the
+remaining manual steps (store passwords, first sync, index).
 
 #+begin_src emacs-lisp :tangle yes
 (defun my/mail-setup ()
-  "Check deps, write ~/.mbsyncrc, run `mu init', and print the next steps."
+  "Install deps if missing, write ~/.mbsyncrc, run `mu init', print next steps."
   (interactive)
   (unless (eq system-type 'darwin) (user-error "macOS only"))
-  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
-  (unless (executable-find "mu")     (user-error "mu missing — brew install mu"))
+  (let ((missing (my/mail--brew-ensure '("mu" "isync"))))
+    (when missing
+      (user-error "mail: could not install %s — see *mail-brew*"
+                  (string-join missing " "))))
   (unless my/mail-accounts
     (user-error "Set my/mail-accounts in ~/.emacs.d/secrets.el first"))
   (my/mail-generate-mbsyncrc)
@@ -849,17 +890,69 @@ and load the launchd service.  Idempotent — safe to re-run / run on a new Mac.
                    "opens the Microsoft sign-in in your browser.")))
 #+end_src
 
+* Fresh-Mac bootstrap (one command)
+
+=M-x my/mail-bootstrap= chains the whole setup so a new user runs *one* command:
+it installs =mu= + =isync= if missing, adds a first account if none exists,
+builds the XOAUTH2 SASL plugin when an OAuth account is present, writes
+=~/.mbsyncrc= + runs =mu init=, and finally prints the only steps that are
+inherently interactive — the per-account secret (=my/mail-store-password=) or
+OAuth sign-in (=my/mail-oauth-authorize=), then =my/mail-sync=.  It never
+handles your password itself.
+
+#+begin_src emacs-lisp :tangle yes
+;;;###autoload
+(defun my/mail-bootstrap ()
+  "Set up email from scratch on a fresh Mac with a single command.
+Installs tools, ensures the XOAUTH2 plugin for OAuth accounts, writes the
+mbsync config + mu index, then prints the remaining interactive steps."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  ;; 1. base tools (mu ships mu4e; isync ships mbsync)
+  (let ((missing (my/mail--brew-ensure '("mu" "isync"))))
+    (when missing
+      (user-error "mail: could not install %s — see *mail-brew*"
+                  (string-join missing " "))))
+  ;; 2. need at least one account (everything personal lives in the Keychain)
+  (unless my/mail-accounts
+    (if (y-or-n-p "No mail account configured — add one now? ")
+        (call-interactively #'my/mail-add-account)
+      (user-error "mail: add an account first (M-x my/mail-add-account)")))
+  ;; 3. XOAUTH2 SASL plugin, only if an OAuth (office365) account is present
+  (when (cl-some #'my/mail--oauth-p my/mail-accounts)
+    (my/mail-xoauth2-ensure))
+  ;; 4. ~/.mbsyncrc + mu init + mu4e configure
+  (my/mail-setup)
+  ;; 5. surface only what the user must do by hand (secrets / interactive
+  ;;    sign-ins — never automated here)
+  (let ((steps nil))
+    (dolist (a my/mail-accounts)
+      (push (if (my/mail--oauth-p a)
+                (format "M-x my/mail-oauth-authorize RET %s" (plist-get a :id))
+              (format "M-x my/mail-store-password RET %s" (plist-get a :id)))
+            steps))
+    (setq steps (nreverse steps))
+    (setq steps (append steps '("M-x my/mail-sync")))
+    (message "mail: bootstrap done. Remaining (interactive): %s"
+             (string-join steps " · "))))
+#+end_src
+
 * Setup for a new user
 
 No file holds your accounts — everything personal is in the macOS Keychain, so
 the distro seed stays generic and there is no private repo to manage.
 
-1. =brew install mu isync=
-2. =M-x my/mail-add-account= → enter id / provider / address / name, and the
+Fastest path: =M-x my/mail-bootstrap= does 1–3 below for you (installs the
+tools, builds the XOAUTH2 plugin if needed, writes the config) and then prints
+the per-account secret / sign-in step.  The manual sequence:
+
+1. =M-x my/mail-add-account= → enter id / provider / address / name, and the
    password when prompted (an *app-specific* password where the provider needs
-   one: iCloud, Gmail, …). Repeat per account.
-3. =M-x my/mail-setup= → writes =~/.mbsyncrc=, runs =mu init=.
-4. The *first sync runs by itself* on the next reload (deferred + async, with
+   one: iCloud, Gmail, …). Repeat per account.  (=mu= + =isync= install
+   automatically on first =my/mail-setup= / =my/mail-bootstrap=.)
+2. =M-x my/mail-setup= → installs missing tools, writes =~/.mbsyncrc=, runs
+   =mu init=.
+3. The *first sync runs by itself* on the next reload (deferred + async, with
    progress in the echo area) — or =M-x my/mail-sync= now. Then =M-x mu4e=.
 
 Special folders (Sent/Drafts/Trash/Archive) are auto-detected from the synced
@@ -870,8 +963,11 @@ Per-provider notes:
 - *GMX / web.de*: enable IMAP in the provider's web settings first.
 - *iCloud*: needs an app-specific password (appleid.apple.com); remote folders
   are "Sent Messages" / "Deleted Messages" → set :sent-folder/:trash-folder.
-- *Gmail / Outlook/Office365*: plain-password IMAP is increasingly blocked;
-  use an app-password if 2FA allows, otherwise an XOAUTH2 helper is required
-  (a follow-up; corporate tenants often forbid third-party clients entirely).
+- *Gmail*: plain-password IMAP is blocked; use an app-password (2FA required).
+- *Outlook.com / Office365*: use provider =office365= — direct XOAUTH2 (IMAP +
+  SMTP) via the built SASL plugin + token helper, incl. personal accounts with
+  2FA; =my/mail-bootstrap= builds the plugin and =my/mail-oauth-authorize= signs
+  you in.  (Corporate tenants that forbid third-party clients still need the
+  =davmail= gateway instead.)
 
 =M-x my/doctor= reports the mail setup state at each step.

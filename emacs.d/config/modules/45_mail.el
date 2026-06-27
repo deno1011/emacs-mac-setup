@@ -360,12 +360,44 @@ first candidate as a fallback."
       (define-key mu4e-headers-mode-map (kbd "M-p")
                   #'mu4e-views-cursor-msg-view-window-up))))
 
+(defun my/mail--brew-binary (formula)
+  "Executable that brew FORMULA provides (what we test for being installed)."
+  (cond ((equal formula "isync") "mbsync")
+        (t formula)))                   ; mu → mu, davmail → davmail, …
+
+(defun my/mail--brew-ensure (formulae)
+  "Install any of FORMULAE (brew formula names) that are missing, unattended.
+Return the formulae still missing afterwards (nil = all present)."
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  (let ((brew (or (executable-find "brew")
+                  (seq-find #'file-executable-p
+                            '("/opt/homebrew/bin/brew" "/usr/local/bin/brew")))))
+    (unless brew (user-error "Homebrew not found — install it from https://brew.sh first"))
+    ;; make sure brew's bindir is on exec-path so a just-installed binary is seen
+    (add-to-list 'exec-path (file-name-directory brew))
+    (cl-flet ((missing () (seq-remove (lambda (f) (executable-find (my/mail--brew-binary f)))
+                                      formulae)))
+      (let ((want (missing)))
+        (when want
+          (with-current-buffer (get-buffer-create "*mail-brew*")
+            (goto-char (point-max))
+            (insert (format "\n$ brew install %s\n" (string-join want " ")))
+            (let ((process-environment
+                   (append '("HOMEBREW_NO_ASK=1" "NONINTERACTIVE=1"
+                             "HOMEBREW_NO_AUTO_UPDATE=1" "HOMEBREW_NO_ENV_HINTS=1")
+                           process-environment)))
+              (message "mail: brew install %s … (one-time)" (string-join want " "))
+              (apply #'call-process brew nil t nil "install" want))))
+        (missing)))))
+
 (defun my/mail-setup ()
-  "Check deps, write ~/.mbsyncrc, run `mu init', and print the next steps."
+  "Install deps if missing, write ~/.mbsyncrc, run `mu init', print next steps."
   (interactive)
   (unless (eq system-type 'darwin) (user-error "macOS only"))
-  (unless (executable-find "mbsync") (user-error "mbsync missing — brew install isync"))
-  (unless (executable-find "mu")     (user-error "mu missing — brew install mu"))
+  (let ((missing (my/mail--brew-ensure '("mu" "isync"))))
+    (when missing
+      (user-error "mail: could not install %s — see *mail-brew*"
+                  (string-join missing " "))))
   (unless my/mail-accounts
     (user-error "Set my/mail-accounts in ~/.emacs.d/secrets.el first"))
   (my/mail-generate-mbsyncrc)
@@ -706,3 +738,38 @@ and load the launchd service.  Idempotent — safe to re-run / run on a new Mac.
   (message (concat "DavMail ready on localhost:1143/1025.  Add the account with "
                    "M-x my/mail-add-account (provider davmail); the first sync "
                    "opens the Microsoft sign-in in your browser.")))
+
+;;;###autoload
+(defun my/mail-bootstrap ()
+  "Set up email from scratch on a fresh Mac with a single command.
+Installs tools, ensures the XOAUTH2 plugin for OAuth accounts, writes the
+mbsync config + mu index, then prints the remaining interactive steps."
+  (interactive)
+  (unless (eq system-type 'darwin) (user-error "macOS only"))
+  ;; 1. base tools (mu ships mu4e; isync ships mbsync)
+  (let ((missing (my/mail--brew-ensure '("mu" "isync"))))
+    (when missing
+      (user-error "mail: could not install %s — see *mail-brew*"
+                  (string-join missing " "))))
+  ;; 2. need at least one account (everything personal lives in the Keychain)
+  (unless my/mail-accounts
+    (if (y-or-n-p "No mail account configured — add one now? ")
+        (call-interactively #'my/mail-add-account)
+      (user-error "mail: add an account first (M-x my/mail-add-account)")))
+  ;; 3. XOAUTH2 SASL plugin, only if an OAuth (office365) account is present
+  (when (cl-some #'my/mail--oauth-p my/mail-accounts)
+    (my/mail-xoauth2-ensure))
+  ;; 4. ~/.mbsyncrc + mu init + mu4e configure
+  (my/mail-setup)
+  ;; 5. surface only what the user must do by hand (secrets / interactive
+  ;;    sign-ins — never automated here)
+  (let ((steps nil))
+    (dolist (a my/mail-accounts)
+      (push (if (my/mail--oauth-p a)
+                (format "M-x my/mail-oauth-authorize RET %s" (plist-get a :id))
+              (format "M-x my/mail-store-password RET %s" (plist-get a :id)))
+            steps))
+    (setq steps (nreverse steps))
+    (setq steps (append steps '("M-x my/mail-sync")))
+    (message "mail: bootstrap done. Remaining (interactive): %s"
+             (string-join steps " · "))))
