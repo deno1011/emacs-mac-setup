@@ -320,6 +320,32 @@ first candidate as a fallback."
     (with-eval-after-load 'mu4e (my/mail-configure))))
 #+end_src
 
+* Org integration (link mail ↔ org / GTD)
+
+mu4e ships =mu4e-org=, which registers a =mu4e:= org link type, so any message
+can become an org link or a GTD task with a clickable back-link to the mail:
+
+- In a message: =C-c l= (=org-store-link=) stores a link; paste it anywhere with
+  =C-c C-l=.
+- In a message: =M-x org-capture= → "Mail → task" drops a =TODO= into the GTD
+  inbox with a link back to the mail — turning your inbox into next actions.
+- Following a =[[mu4e:...]]= link from any org file reopens the message.
+
+#+begin_src emacs-lisp :tangle yes
+(with-eval-after-load 'mu4e (require 'mu4e-org nil t))
+
+(with-eval-after-load 'org
+  (require 'mu4e-org nil t)
+  (add-to-list
+   'org-capture-templates
+   `("m" "Mail → task (GTD inbox)" entry
+     (file ,(or (bound-and-true-p org-default-notes-file)
+                (expand-file-name "inbox.org"
+                                  (or (bound-and-true-p org-directory) "~/org"))))
+     "* TODO %a\n%i%?")
+   t))
+#+end_src
+
 * One-shot setup
 
 =M-x my/mail-setup= ties it together: checks the tools, writes =~/.mbsyncrc=,
