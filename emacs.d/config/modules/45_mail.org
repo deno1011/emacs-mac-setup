@@ -38,7 +38,8 @@ is safe to ship enabled for everyone.
     ;; DavMail: a local proxy (see below) that does the Microsoft OAuth and
     ;; exposes plain IMAP/SMTP on localhost — for Outlook.com / Office365.
     (davmail :imap-host "localhost" :imap-port 1143
-             :smtp-host "localhost" :smtp-port 1025 :no-tls t))
+             :smtp-host "localhost" :smtp-port 1025 :no-tls t
+             :auth-mechs "LOGIN"))   ; force LOGIN over the plaintext localhost link
   "Known IMAP/SMTP hosts per provider key.
 Ports default to 993 (IMAPS) / 587 (submission, STARTTLS); override per
 account with :imap-port / :smtp-port.  :auth-mechs pins the mbsync SASL
@@ -83,8 +84,10 @@ Keys:
         (user-error "mail: account %S has no %s host" (plist-get acct :id) which))))
 
 (defun my/mail--user (acct) (or (plist-get acct :user) (plist-get acct :address)))
-(defun my/mail--imap-port (acct) (or (plist-get acct :imap-port) 993))
-(defun my/mail--smtp-port (acct) (or (plist-get acct :smtp-port) 587))
+(defun my/mail--imap-port (acct)
+  (or (plist-get acct :imap-port) (plist-get (my/mail--preset acct) :imap-port) 993))
+(defun my/mail--smtp-port (acct)
+  (or (plist-get acct :smtp-port) (plist-get (my/mail--preset acct) :smtp-port) 587))
 (defun my/mail--maildir (acct) (expand-file-name (plist-get acct :id) my/mail-root))
 
 (defun my/mail--account-by-id (id)
