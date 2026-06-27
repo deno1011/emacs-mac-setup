@@ -449,7 +449,7 @@ and :fix. The :label is supplied by this macro."
      ((not accts)
       (list :status :warn
             :detail "mu/isync installed but no accounts configured"
-            :fix "Set my/mail-accounts in ~/.emacs.d/secrets.el (see 45_mail.org), then M-x my/mail-setup"))
+            :fix "M-x my/mail-add-account (stored in Keychain), then M-x my/mail-setup"))
      ((not rc)
       (list :status :warn
             :detail (format "%d mail account(s) defined but ~/.mbsyncrc missing"
@@ -459,6 +459,31 @@ and :fix. The :label is supplied by this macro."
       (list :status :ok
             :detail (format "%d account(s), ~/.mbsyncrc present — then M-x my/mail-store-password, `mbsync -a', `mu index', M-x mu4e"
                             (length accts)))))))
+
+(my/doctor-define-check "DavMail (Outlook/Office365 gateway) — optional"
+  (let* ((acct (and (boundp 'my/mail-accounts)
+                    (seq-find (lambda (a) (eq (plist-get a :provider) 'davmail))
+                              my/mail-accounts)))
+         (installed (executable-find "davmail"))
+         (svc (file-exists-p
+               (expand-file-name
+                "Library/LaunchAgents/org.davmail.gateway.plist" "~"))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not acct)
+      (list :status :ok :detail "no Outlook/Office365 (davmail) account — not needed"))
+     ((not installed)
+      (list :status :warn
+            :detail "davmail account configured but DavMail not installed"
+            :fix "M-x my/mail-davmail-setup (auto-installs DavMail + service)"))
+     ((not svc)
+      (list :status :warn
+            :detail "DavMail installed but its service is not set up"
+            :fix "M-x my/mail-davmail-setup"))
+     (t
+      (list :status :ok
+            :detail "DavMail installed + service present (localhost:1143 for Outlook)")))))
 #+end_src
 
 * External services
