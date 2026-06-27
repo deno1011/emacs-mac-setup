@@ -287,8 +287,8 @@ first candidate as a fallback."
        (mu4e-drafts-folder    . ,(my/mail--folder acct :drafts-folder
                                    '("Drafts" "Entwürfe" "Entwurf")))
        (mu4e-trash-folder     . ,(my/mail--folder acct :trash-folder
-                                   '("Trash" "Gelöscht" "Deleted Messages"
-                                     "Deleted Items" "Papierkorb")))
+                                   '("Deleted Messages" "Deleted Items" "Trash"
+                                     "Gelöscht" "Gelöschte Elemente" "Papierkorb")))
        (mu4e-refile-folder    . ,(my/mail--folder acct :archive-folder
                                    '("Archive" "Archiv" "All Mail" "Alle Nachrichten")))
        (smtpmail-smtp-user    . ,(my/mail--user acct))
