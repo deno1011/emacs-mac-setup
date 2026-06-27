@@ -98,6 +98,14 @@ seed stays 100% generic and there is no private repo to manage.
 (defconst my/mail--accounts-service "emacs-mail-accounts"
   "Keychain generic-password service holding the serialized account list.")
 
+(defun my/mail--hex-decode (s)
+  "Decode hex string S (as `security -w' emits for non-ASCII) to a UTF-8 string."
+  (decode-coding-string
+   (apply #'unibyte-string
+          (mapcar (lambda (i) (string-to-number (substring s i (+ i 2)) 16))
+                  (number-sequence 0 (1- (length s)) 2)))
+   'utf-8))
+
 (defun my/mail-accounts-load ()
   "Return the account list stored in the macOS Keychain, or nil."
   (when (eq system-type 'darwin)
@@ -107,16 +115,23 @@ seed stays 100% generic and there is no private repo to manage.
                                            "-a" (user-login-name)
                                            "-s" my/mail--accounts-service "-w"))
                    (string-trim (buffer-string))))))
-      (and out (> (length out) 0)
-           (ignore-errors (car (read-from-string out)))))))
+      (when (and out (> (length out) 0))
+        ;; `security -w' hex-encodes any value containing non-ASCII bytes
+        ;; (e.g. German folder names like "Entwürfe") — decode that back.
+        (when (string-match-p "\\`[0-9a-f]+\\'" out)
+          (setq out (ignore-errors (my/mail--hex-decode out))))
+        (let ((v (and out (ignore-errors (car (read-from-string out))))))
+          (and (listp v) v))))))   ; guard against partial/garbage reads
 
 (defun my/mail-accounts-save ()
-  "Write `my/mail-accounts' to the macOS Keychain (no passwords in it)."
+  "Write `my/mail-accounts' to the macOS Keychain (no passwords in it).
+Escape non-ASCII so `security' stores/returns plain text, not a hex blob."
   (interactive)
   (call-process "security" nil nil nil
                 "add-generic-password" "-U"
                 "-a" (user-login-name) "-s" my/mail--accounts-service
-                "-w" (prin1-to-string my/mail-accounts))
+                "-w" (let ((print-escape-nonascii t))
+                       (prin1-to-string my/mail-accounts)))
   (message "mail: %d account(s) saved to Keychain" (length my/mail-accounts)))
 
 ;;;###autoload
@@ -373,23 +388,27 @@ the rendered message.
 
 #+begin_src emacs-lisp :tangle yes
 (when (and (fboundp 'xwidget-webkit-browse-url) (not noninteractive))
+  ;; mu4e-views declares mu4e as a dependency, but ours comes from brew — tell
+  ;; elpaca to treat it as already provided, then just INSTALL the package.
   (with-eval-after-load 'elpaca
     (add-to-list 'elpaca-ignored-dependencies 'mu4e))
-  (use-package mu4e-views
-    :ensure t
-    :after mu4e
-    :config
-    (setq mu4e-views-completion-method 'default
-          mu4e-views-default-view-method "html"  ; render with xwidget-webkit
-          mu4e-views-auto-view-selected-message t
-          mu4e-views-next-previous-message-behaviour 'stick-to-current-window)
-    (mu4e-views-mu4e-use-view-msg-method)
-    (define-key mu4e-headers-mode-map (kbd "v")
-                #'mu4e-views-mu4e-select-view-msg-method)
-    (define-key mu4e-headers-mode-map (kbd "M-n")
-                #'mu4e-views-cursor-msg-view-window-down)
-    (define-key mu4e-headers-mode-map (kbd "M-p")
-                #'mu4e-views-cursor-msg-view-window-up)))
+  (use-package mu4e-views :ensure t :defer t)
+  ;; Configure deterministically the moment mu4e loads (not via use-package's
+  ;; :after, whose elpaca-deferred :config did not run reliably here).  Require
+  ;; goto-addr first — mu4e-views uses goto-address-url-regexp at load time.
+  (with-eval-after-load 'mu4e
+    (when (and (require 'goto-addr nil t) (require 'mu4e-views nil t))
+      (setq mu4e-views-completion-method 'default
+            mu4e-views-default-view-method "html"  ; render with xwidget-webkit
+            mu4e-views-auto-view-selected-message t
+            mu4e-views-next-previous-message-behaviour 'stick-to-current-window)
+      (mu4e-views-mu4e-use-view-msg-method "html")  ; this version takes the method
+      (define-key mu4e-headers-mode-map (kbd "v")
+                  #'mu4e-views-mu4e-select-view-msg-method)
+      (define-key mu4e-headers-mode-map (kbd "M-n")
+                  #'mu4e-views-cursor-msg-view-window-down)
+      (define-key mu4e-headers-mode-map (kbd "M-p")
+                  #'mu4e-views-cursor-msg-view-window-up))))
 #+end_src
 
 * One-shot setup
