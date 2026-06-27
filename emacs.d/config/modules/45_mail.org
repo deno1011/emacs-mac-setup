@@ -259,7 +259,19 @@ first candidate as a fallback."
 
 (declare-function make-mu4e-context "mu4e-context")
 (declare-function mu4e-message-field "mu4e-message")
-;; Forward declarations — set in `my/mail-configure' once mu4e is loaded.
+;; Forward declarations — external vars/functions touched later in this file.
+(defvar org-capture-templates)
+(defvar elpaca-ignored-dependencies)
+(defvar mu4e-headers-mode-map)
+(defvar mu4e-views-completion-method)
+(defvar mu4e-views-default-view-method)
+(defvar mu4e-views-auto-view-selected-message)
+(defvar mu4e-views-next-previous-message-behaviour)
+(declare-function mu4e-views-mu4e-use-view-msg-method "mu4e-views")
+(declare-function mu4e-views-mu4e-select-view-msg-method "mu4e-views")
+(declare-function mu4e-views-cursor-msg-view-window-down "mu4e-views")
+(declare-function mu4e-views-cursor-msg-view-window-up "mu4e-views")
+;; Set in `my/mail-configure' once mu4e is loaded.
 (defvar mu4e-maildir)
 (defvar mu4e-get-mail-command)
 (defvar mu4e-change-filenames-when-moving)
@@ -344,6 +356,40 @@ can become an org link or a GTD task with a clickable back-link to the mail:
                                   (or (bound-and-true-p org-directory) "~/org"))))
      "* TODO %a\n%i%?")
    t))
+#+end_src
+
+* Graphical message view (mu4e-views)
+
+[[https://github.com/lordpretzel/mu4e-views][mu4e-views]] renders messages graphically inside Emacs via =xwidget-webkit= —
+full HTML/CSS/images, a headers list plus a rendered preview pane, like a normal
+mail GUI.  Only enabled when the Emacs build has xwidgets; otherwise mu4e's
+built-in =shr= rendering (and =aV= to open in the browser) remain.
+
+mu4e-views lists =mu4e= as a dependency, but ours comes from brew, not elpaca —
+so we tell elpaca to treat =mu4e= as already provided.
+
+In =mu4e-headers=: =v= picks the view method (html/text/…), =M-n=/=M-p= scroll
+the rendered message.
+
+#+begin_src emacs-lisp :tangle yes
+(when (and (fboundp 'xwidget-webkit-browse-url) (not noninteractive))
+  (with-eval-after-load 'elpaca
+    (add-to-list 'elpaca-ignored-dependencies 'mu4e))
+  (use-package mu4e-views
+    :ensure t
+    :after mu4e
+    :config
+    (setq mu4e-views-completion-method 'default
+          mu4e-views-default-view-method "html"  ; render with xwidget-webkit
+          mu4e-views-auto-view-selected-message t
+          mu4e-views-next-previous-message-behaviour 'stick-to-current-window)
+    (mu4e-views-mu4e-use-view-msg-method)
+    (define-key mu4e-headers-mode-map (kbd "v")
+                #'mu4e-views-mu4e-select-view-msg-method)
+    (define-key mu4e-headers-mode-map (kbd "M-n")
+                #'mu4e-views-cursor-msg-view-window-down)
+    (define-key mu4e-headers-mode-map (kbd "M-p")
+                #'mu4e-views-cursor-msg-view-window-up)))
 #+end_src
 
 * One-shot setup
