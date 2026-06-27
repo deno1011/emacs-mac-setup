@@ -361,6 +361,10 @@ first candidate as a fallback."
     (require 'smtpmail)
     (require 'auth-source)
     (add-to-list 'auth-sources 'macos-keychain-internet)
+    ;; XOAUTH2 SMTP: consult our token backend first (it only matches OAuth
+    ;; SMTP hosts; everything else falls through to the Keychain).
+    (when (cl-some #'my/mail--oauth-p my/mail-accounts)
+      (add-to-list 'auth-sources 'my/mail-oauth))
     (setq mu4e-maildir my/mail-root
           mu4e-get-mail-command "mbsync -a"
           mu4e-change-filenames-when-moving t   ; required for mbsync
@@ -655,6 +659,75 @@ token helper.  Add an office365 account, then M-x my/mail-oauth-authorize."
   (my/mail-xoauth2-ensure)
   (ignore-errors (set-file-modes (my/mail-oauth--helper-file) #o755))
   (message "mail: XOAUTH2 ready. Add an office365 account, then M-x my/mail-oauth-authorize."))
+
+;;; SMTP sending via XOAUTH2 --------------------------------------------------
+;; smtpmail authenticates only when auth-source yields BOTH a user and a secret,
+;; and it lets the source choose the mechanism via :smtp-auth (smtpmail.el).  So
+;; we register a small auth-source backend that, for an OAuth account's SMTP
+;; host, returns the address as :user, a *fresh* access token as the (function)
+;; secret, and :smtp-auth "xoauth2" — then implement that mechanism.  The same
+;; token helper feeds both mbsync (PassCmd) and smtpmail.
+
+(require 'auth-source)
+
+(defun my/mail-oauth--access-token (id)
+  "Fresh OAuth2 access token for account ID, via the token helper."
+  (with-temp-buffer
+    (if (eq 0 (call-process my/mail--python nil t nil
+                            (my/mail-oauth--helper-file) "token" id))
+        (string-trim (buffer-string))
+      (error "mail: OAuth token helper failed for %s: %s"
+             id (string-trim (buffer-string))))))
+
+(cl-defun my/mail-oauth--auth-source-search
+    (&rest spec &key host user &allow-other-keys)
+  "auth-source backend: XOAUTH2 credentials for an OAuth account's SMTP host.
+Returns nil (falls through to other sources) for non-OAuth hosts."
+  (ignore spec)
+  (when-let* ((accts (and (boundp 'my/mail-accounts) my/mail-accounts))
+              (acct (cl-find-if
+                     (lambda (a)
+                       (and (my/mail--oauth-p a)
+                            (equal host (my/mail--host a :smtp))
+                            (or (null user) (equal user (my/mail--user a)))))
+                     accts))
+              (id (plist-get acct :id)))
+    (list (list :host host
+                :user (my/mail--user acct)
+                :port (number-to-string (my/mail--smtp-port acct))
+                ;; a function secret is re-evaluated on each send → never stale
+                :secret (lambda () (my/mail-oauth--access-token id))
+                :smtp-auth "xoauth2"))))
+
+(defvar my/mail-oauth--backend
+  (auth-source-backend
+   :source "my/mail-oauth"
+   :type 'my/mail-oauth
+   :search-function #'my/mail-oauth--auth-source-search)
+  "Auth-source backend serving fresh XOAUTH2 tokens for OAuth SMTP hosts.")
+
+(defun my/mail-oauth--backend-parse (entry)
+  "Return the XOAUTH2 backend when ENTRY is the `my/mail-oauth' marker."
+  (when (eq entry 'my/mail-oauth)
+    (auth-source-backend-parse-parameters entry my/mail-oauth--backend)))
+
+(if (boundp 'auth-source-backend-parser-functions)
+    (add-hook 'auth-source-backend-parser-functions #'my/mail-oauth--backend-parse)
+  (advice-add 'auth-source-backend-parse :before-until #'my/mail-oauth--backend-parse))
+
+(defvar smtpmail-auth-supported)            ; smtpmail.el (loaded at runtime below)
+(declare-function smtpmail-command-or-throw "smtpmail")
+(with-eval-after-load 'smtpmail
+  (add-to-list 'smtpmail-auth-supported 'xoauth2 t) ; lowest priority; office365 forces it via :smtp-auth
+  (cl-defmethod smtpmail-try-auth-method
+    (process (_mech (eql 'xoauth2)) user password)
+    "Authenticate to SMTP with XOAUTH2.  PASSWORD is the OAuth access token."
+    (smtpmail-command-or-throw
+     process
+     (concat "AUTH XOAUTH2 "
+             (base64-encode-string
+              (format "user=%s\1auth=Bearer %s\1\1" user password) t))
+     235)))
 #+end_src
 
 * DavMail (Outlook / Office365 via a local OAuth proxy)
