@@ -34,6 +34,13 @@
                   "ear-adapter-cli" (agent prompt &optional continue context))
 (declare-function ear-adapter-cli--current-context-text
                   "ear-adapter-cli" ())
+(declare-function ear-adapter-claude-create-runtime
+                  "ear-adapter-claude" (&rest props))
+(declare-function ear-adapter-codex-create-runtime
+                  "ear-adapter-codex" (&rest props))
+(declare-function ear-get-default-runtime "ear" ())
+(declare-function ear-scheduler-auto-start-jobs
+                  "ear-scheduler" (&optional runtime-fn))
 
 (defcustom my/emacs-agent-runtime-open-tool-policy t
   "When non-nil, allow EAR write tools without interactive approvals.
@@ -79,6 +86,18 @@ The setup bootstrap resolves `my/data-dir' from the selected private repo name.
 This module then binds EAR to that repo-local overlay before requiring the
 runtime package."
   :type 'string
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
+  "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
+  :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-scheduler-default-provider 'claude
+  "Default provider runtime used for EAR scheduler auto-start jobs."
+  :type '(choice (const :tag "Claude CLI" claude)
+                 (const :tag "Codex CLI" codex)
+                 (const :tag "Default EAR runtime" default))
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-source 'local
@@ -298,9 +317,34 @@ projections, index Org files, or download models intentionally."
              (boundp 'emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox))
     (setq emacs-agent-runtime-codex-chat-bypass-approvals-and-sandbox t)))
 
+(defun my/emacs-agent-runtime-scheduler-runtime (job)
+  "Return the runtime for scheduler JOB."
+  (let ((provider (or (plist-get job :runtime)
+                      my/emacs-agent-runtime-scheduler-default-provider)))
+    (pcase provider
+      ('claude
+       (when (fboundp 'ear-adapter-claude-create-runtime)
+         (ear-adapter-claude-create-runtime)))
+      ('codex
+       (when (fboundp 'ear-adapter-codex-create-runtime)
+         (ear-adapter-codex-create-runtime)))
+      ('default
+       (when (fboundp 'ear-get-default-runtime)
+         (ear-get-default-runtime)))
+      (_ nil))))
+
+(defun my/emacs-agent-runtime-start-scheduler-jobs ()
+  "Start EAR scheduler jobs that opt into auto-start."
+  (when (and my/emacs-agent-runtime-auto-start-scheduler-jobs
+             (fboundp 'ear-scheduler-auto-start-jobs))
+    (ear-scheduler-auto-start-jobs
+     #'my/emacs-agent-runtime-scheduler-runtime)))
+
 (defun my/emacs-agent-runtime--apply-loaded-config ()
   "Apply setup-owned defaults after EAR has loaded."
   (my/emacs-agent-runtime-apply-overlay-config)
+  (when (fboundp 'ear-get-default-runtime)
+    (ear-get-default-runtime))
   (when (fboundp 'emacs-agent-runtime-mode)
     (emacs-agent-runtime-mode 1))
   (when (boundp 'emacs-agent-runtime-cli-default-agent)
@@ -309,6 +353,7 @@ projections, index Org files, or download models intentionally."
   (my/emacs-agent-runtime-apply-context-config)
   (my/emacs-agent-runtime-apply-qmd-config)
   (my/emacs-agent-runtime-apply-open-tool-policy)
+  (my/emacs-agent-runtime-start-scheduler-jobs)
   t)
 
 (defun my/emacs-agent-runtime-queue-elpaca ()
