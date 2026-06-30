@@ -100,7 +100,8 @@ Use `local' for active development from `my/emacs-agent-runtime-dir'. Use
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-elpaca-files
-  '("*.el"
+  '("lisp/*.el"
+    "*.el"
     "knowledge/*.org"
     "workflows/*.org"
     "sessions/*.org"
@@ -328,11 +329,19 @@ projections, index Org files, or download models intentionally."
 
 (my/emacs-agent-runtime-queue-elpaca)
 
+(defun my/emacs-agent-runtime-load-path-directory ()
+  "Return the load-path directory for the local EAR checkout."
+  (let* ((root (file-name-as-directory
+                (expand-file-name my/emacs-agent-runtime-dir)))
+         (lisp (expand-file-name "lisp/" root)))
+    (if (file-directory-p lisp) lisp root)))
+
 (defun my/emacs-agent-runtime-load ()
   "Load Emacs Agent Runtime from the configured source."
   (my/emacs-agent-runtime-apply-overlay-config)
-  (let ((dir (file-name-as-directory
-              (expand-file-name my/emacs-agent-runtime-dir))))
+  (let* ((root (file-name-as-directory
+                (expand-file-name my/emacs-agent-runtime-dir)))
+         (load-dir (my/emacs-agent-runtime-load-path-directory)))
     (cond
      ((featurep 'emacs-agent-runtime)
       (my/emacs-agent-runtime--apply-loaded-config))
@@ -345,17 +354,17 @@ projections, index Org files, or download models intentionally."
       (message "Unknown my/emacs-agent-runtime-source: %S"
                my/emacs-agent-runtime-source)
       nil)
-     ((not (file-directory-p dir))
-      (message "emacs-agent-runtime directory missing: %s" dir)
+     ((not (file-directory-p root))
+      (message "emacs-agent-runtime directory missing: %s" root)
       nil)
      (t
-      (add-to-list 'load-path dir)
+      (add-to-list 'load-path load-dir)
       (if (require 'emacs-agent-runtime nil t)
           (progn
             (my/emacs-agent-runtime--apply-loaded-config)
-            (message "emacs-agent-runtime loaded from %s" dir)
+            (message "emacs-agent-runtime loaded from %s" load-dir)
             t)
-        (message "emacs-agent-runtime not loadable from %s" dir)
+        (message "emacs-agent-runtime not loadable from %s" load-dir)
         nil)))))
 
 (defun my/emacs-agent-runtime-install-gptel-tools ()
