@@ -34,11 +34,9 @@
                   "ear-adapter-cli" (agent prompt &optional continue context))
 (declare-function ear-adapter-cli--current-context-text
                   "ear-adapter-cli" ())
-(declare-function ear-adapter-claude-create-runtime
-                  "ear-adapter-claude" (&rest props))
-(declare-function ear-adapter-codex-create-runtime
-                  "ear-adapter-codex" (&rest props))
 (declare-function ear-get-default-runtime "ear" ())
+(declare-function ear-runtime-registry-create-runtime
+                  "ear-runtime-registry" (id &rest props))
 (declare-function ear-scheduler-auto-start-jobs
                   "ear-scheduler" (&optional runtime-fn))
 
@@ -319,19 +317,15 @@ projections, index Org files, or download models intentionally."
 
 (defun my/emacs-agent-runtime-scheduler-runtime (job)
   "Return the runtime for scheduler JOB."
-  (let ((provider (or (plist-get job :runtime)
-                      my/emacs-agent-runtime-scheduler-default-provider)))
-    (pcase provider
-      ('claude
-       (when (fboundp 'ear-adapter-claude-create-runtime)
-         (ear-adapter-claude-create-runtime)))
-      ('codex
-       (when (fboundp 'ear-adapter-codex-create-runtime)
-         (ear-adapter-codex-create-runtime)))
-      ('default
-       (when (fboundp 'ear-get-default-runtime)
-         (ear-get-default-runtime)))
-      (_ nil))))
+  (let ((runtime-id (or (plist-get job :runtime)
+                        my/emacs-agent-runtime-scheduler-default-provider)))
+    (cond
+     ((fboundp 'ear-runtime-registry-create-runtime)
+      (ear-runtime-registry-create-runtime runtime-id))
+     ((and (eq runtime-id 'default)
+           (fboundp 'ear-get-default-runtime))
+      (ear-get-default-runtime))
+     (t nil))))
 
 (defun my/emacs-agent-runtime-start-scheduler-jobs ()
   "Start EAR scheduler jobs that opt into auto-start."
