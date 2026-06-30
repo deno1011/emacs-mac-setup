@@ -10,6 +10,8 @@
 (defvar gptel-directives)
 (defvar gptel-tools)
 (defvar gptel-use-tools)
+(defvar my/data-dir)
+(defvar ear-config-directory)
 (defvar my/emacs-agent-runtime-dir
   (expand-file-name "~/emacs-agent-runtime"))
 (defvar my/gptel-ollama-host "localhost:11434")
@@ -69,6 +71,14 @@ durable store so Life Coach and other generic jobs survive Emacs restarts."
 The reusable EAR package only exposes a generic resolver hook. This setup
 module owns the personal macOS/Bitwarden/Keychain binding."
   :type 'boolean
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-overlay-subdirectory "ear/"
+  "Subdirectory below `my/data-dir' containing personal EAR declarations.
+The setup bootstrap resolves `my/data-dir' from the selected private repo name.
+This module then binds EAR to that repo-local overlay before requiring the
+runtime package."
+  :type 'string
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-source 'local
@@ -181,6 +191,20 @@ not raw personal Org files."
     (when (boundp 'ear-adapter-api-prefer-credential-resolver)
       (setq ear-adapter-api-prefer-credential-resolver t))))
 
+(defun my/emacs-agent-runtime-config-directory ()
+  "Return the personal EAR overlay directory below `my/data-dir'."
+  (when (and (boundp 'my/data-dir)
+             (stringp my/data-dir))
+    (file-name-as-directory
+     (expand-file-name my/emacs-agent-runtime-overlay-subdirectory
+                       my/data-dir))))
+
+(defun my/emacs-agent-runtime-apply-overlay-config ()
+  "Bind EAR to the overlay directory chosen by the setup bootstrap."
+  (let ((directory (my/emacs-agent-runtime-config-directory)))
+    (when directory
+      (setq ear-config-directory directory))))
+
 (defun my/emacs-agent-runtime-apply-qmd-config ()
   "Apply setup-owned QMD defaults to EAR's optional retrieval boundary."
   (when (boundp 'ear-retrieval-enabled-backends)
@@ -275,6 +299,7 @@ projections, index Org files, or download models intentionally."
 
 (defun my/emacs-agent-runtime--apply-loaded-config ()
   "Apply setup-owned defaults after EAR has loaded."
+  (my/emacs-agent-runtime-apply-overlay-config)
   (when (fboundp 'emacs-agent-runtime-mode)
     (emacs-agent-runtime-mode 1))
   (when (boundp 'emacs-agent-runtime-cli-default-agent)
@@ -296,6 +321,7 @@ projections, index Org files, or download models intentionally."
          :repo ,my/emacs-agent-runtime-elpaca-repo
          :branch ,my/emacs-agent-runtime-elpaca-branch
          :files ,my/emacs-agent-runtime-elpaca-files)
+        (my/emacs-agent-runtime-apply-overlay-config)
         (require 'emacs-agent-runtime nil t)))
     (when (fboundp 'elpaca-wait)
       (elpaca-wait))))
@@ -304,6 +330,7 @@ projections, index Org files, or download models intentionally."
 
 (defun my/emacs-agent-runtime-load ()
   "Load Emacs Agent Runtime from the configured source."
+  (my/emacs-agent-runtime-apply-overlay-config)
   (let ((dir (file-name-as-directory
               (expand-file-name my/emacs-agent-runtime-dir))))
     (cond
