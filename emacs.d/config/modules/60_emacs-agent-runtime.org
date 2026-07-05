@@ -46,6 +46,8 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
                   "ear-runtime-registry" (id &rest props))
 (declare-function ear-scheduler-auto-start-jobs
                   "ear-scheduler" (&optional runtime-fn))
+(declare-function my/api-key-fetch "20.03.01_bootstrap" (key-name))
+(declare-function my/api-key-store "20.02.03_bootstrap_secrets" (key-name value))
 
 (defcustom my/emacs-agent-runtime-open-tool-policy t
   "When non-nil, allow EAR write tools without interactive approvals.
@@ -216,6 +218,45 @@ not raw personal Org files."
     (when (boundp 'ear-adapter-api-prefer-credential-resolver)
       (setq ear-adapter-api-prefer-credential-resolver t))))
 
+(defconst my/emacs-agent-runtime-subscription-token-key
+  "ANTHROPIC_SUBSCRIPTION_API_KEY"
+  "Keychain account (service `emacs_credentials') for the Claude subscription token.
+Obtained via `claude setup-token'.  A subscription token is not an API key; it is
+exported as CLAUDE_CODE_OAUTH_TOKEN so EAR's `claude -p' workers authenticate against
+claude.ai instead of falling back to pay-per-use billing.")
+
+(defun my/emacs-agent-runtime-apply-subscription-token ()
+  "Export the stored Claude subscription token so `claude -p' uses claude.ai.
+Reads the token from the Keychain and sets CLAUDE_CODE_OAUTH_TOKEN; ANTHROPIC_API_KEY
+is cleared because a subscription token is not an API key.  Worker `claude -p' processes
+inherit this from the daemon environment.  No-op when no token is configured."
+  (when (fboundp 'my/api-key-fetch)
+    (let ((token (my/api-key-fetch my/emacs-agent-runtime-subscription-token-key)))
+      (when (and (stringp token) (not (string-empty-p token)))
+        (setenv "ANTHROPIC_API_KEY" nil)
+        (setenv "CLAUDE_CODE_OAUTH_TOKEN" token)
+        t))))
+
+(defun my/emacs-agent-runtime-set-subscription-token (token)
+  "Store the Claude subscription TOKEN in the Keychain and apply it now.
+Get the token first with `claude setup-token' (requires a Claude subscription).
+Stored under account ANTHROPIC_SUBSCRIPTION_API_KEY (service `emacs_credentials') and
+exported as CLAUDE_CODE_OAUTH_TOKEN so EAR's `claude -p' authenticates against claude.ai
+instead of hitting \"Credit balance is too low\" via pay-per-use billing."
+  (interactive
+   (list (read-passwd "Claude subscription OAuth token (from `claude setup-token'): ")))
+  (unless (fboundp 'my/api-key-store)
+    (user-error "Secrets module not loaded; cannot store the token"))
+  (when (or (null token) (string-empty-p token))
+    (user-error "No token entered"))
+  (let ((result (my/api-key-store my/emacs-agent-runtime-subscription-token-key token)))
+    (if (eq result :ok)
+        (progn
+          (my/emacs-agent-runtime-apply-subscription-token)
+          (message
+           "Claude subscription token stored and applied (CLAUDE_CODE_OAUTH_TOKEN set)"))
+      (user-error "Failed to store token: %S" result))))
+
 (defun my/emacs-agent-runtime-config-directory ()
   "Return the personal EAR overlay directory below `my/data-dir'."
   (when (and (boundp 'my/data-dir)
@@ -379,6 +420,7 @@ module, not an EAR package dependency.
   (when (boundp 'emacs-agent-runtime-cli-default-agent)
     (setq emacs-agent-runtime-cli-default-agent "codex"))
   (my/emacs-agent-runtime-apply-credential-resolver)
+  (my/emacs-agent-runtime-apply-subscription-token)
   (my/emacs-agent-runtime-apply-context-config)
   (my/emacs-agent-runtime-apply-qmd-config)
   (my/emacs-agent-runtime-apply-open-tool-policy)

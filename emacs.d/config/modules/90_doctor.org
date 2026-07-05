@@ -8,6 +8,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 
 (require 'subr-x)
 (require 'cl-lib)
+(require 'json)
 
 ;; Forward declarations for symbols owned by bootstrap. Doctor uses
 ;; them defensively via `fboundp' / `boundp' so it works even when
@@ -19,6 +20,7 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
 (declare-function my/keychain-get-internet         "20.01.01_bootstrap_keychain")
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
+(declare-function my/api-key-fetch                 "20.03.01_bootstrap" (key-name))
 (declare-function my/git-remote-url                "20.01.02_bootstrap_git")
 (declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
 (defvar my/emacs-agent-runtime-source)
@@ -27,10 +29,70 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
 (defvar my/emacs-agent-runtime-qmd-command)
 (defvar my/emacs-agent-runtime-qmd-package-manager)
 (defvar my/emacs-agent-runtime-qmd-projection-directory)
+(defvar my/org-diagram-renderers)
 (declare-function my/emacs-agent-runtime-qmd-install-command
                   "60_emacs-agent-runtime")
+(declare-function my/org-diagram-renderers-install-command
+                  "40_org")
 (declare-function ear-list-tools "ear-core")
 (declare-function messenger-bridge--subdir "messenger-bridge")
+
+(defun my/doctor--whatsapp-registered-auth-p (auth-dir)
+  "Return non-nil when AUTH-DIR contains fully registered Baileys credentials."
+  (let ((creds (expand-file-name "creds.json" auth-dir)))
+    (when (file-readable-p creds)
+      (with-temp-buffer
+        (insert-file-contents creds)
+        (goto-char (point-min))
+        (re-search-forward "\"registered\"[[:space:]]*:[[:space:]]*true" nil t)))))
+
+(defun my/doctor--whatsapp-usable-auth-p (auth-dir)
+  "Return non-nil when AUTH-DIR contains credentials that can reconnect.
+
+Baileys v7 can leave WhatsApp Business auth with `registered=false' while the
+linked device is already connected and syncing.  A saved self identity plus an
+account-sync timestamp is therefore treated as usable auth."
+  (let ((creds (expand-file-name "creds.json" auth-dir)))
+    (when (file-readable-p creds)
+      (with-temp-buffer
+        (insert-file-contents creds)
+        (or (progn
+              (goto-char (point-min))
+              (re-search-forward "\"registered\"[[:space:]]*:[[:space:]]*true" nil t))
+            (and (progn
+                   (goto-char (point-min))
+                   (re-search-forward "\"me\"[[:space:]]*:" nil t))
+                 (progn
+                   (goto-char (point-min))
+                   (re-search-forward "\"lastAccountSyncTimestamp\"[[:space:]]*:" nil t))))))))
+
+(defun my/doctor--whatsapp-status-file (channel)
+  "Return the adapter runtime status file for CHANNEL."
+  (expand-file-name
+   (format "messenger-bridge/status/%s.json" channel)
+   user-emacs-directory))
+
+(defun my/doctor--whatsapp-status (channel)
+  "Read WhatsApp adapter runtime status for CHANNEL as an alist, or nil."
+  (let ((file (my/doctor--whatsapp-status-file channel)))
+    (when (file-readable-p file)
+      (cond
+       ((fboundp 'json-parse-file)
+        (json-parse-file file :object-type 'alist :array-type 'list
+                         :null-object nil :false-object nil))
+       ((fboundp 'json-read-file)
+        (let ((json-object-type 'alist)
+              (json-array-type 'list)
+              (json-false nil)
+              (json-null nil))
+          (json-read-file file)))))))
+
+(defun my/doctor--whatsapp-status-open-p (channel)
+  "Return non-nil when CHANNEL's runtime status says it is connected."
+  (let ((status (my/doctor--whatsapp-status channel)))
+    (and (equal (alist-get 'state status) "open")
+         (alist-get 'connected status)
+         (alist-get 'selfJid status))))
 #+end_src
 
 * Why a doctor
@@ -305,6 +367,26 @@ and :fix. The :label is supplied by this macro."
 #+end_src
 
 #+begin_src emacs-lisp :tangle yes
+(my/doctor-define-check "Claude subscription token (EAR claude -p)"
+  (let ((stored   (and (fboundp 'my/api-key-fetch)
+                       (my/api-key-fetch "ANTHROPIC_SUBSCRIPTION_API_KEY")))
+        (exported (getenv "CLAUDE_CODE_OAUTH_TOKEN")))
+    (cond
+     ((and (stringp stored) (not (string-empty-p stored))
+           (stringp exported) (not (string-empty-p exported)))
+      (list :status :ok
+            :detail "token in Keychain and CLAUDE_CODE_OAUTH_TOKEN exported to claude -p"))
+     ((and (stringp stored) (not (string-empty-p stored)))
+      (list :status :warn
+            :detail "token stored but CLAUDE_CODE_OAUTH_TOKEN not exported this session"
+            :fix "M-x my/emacs-agent-runtime-set-subscription-token (re-applies), or reload 60_emacs-agent-runtime"))
+     (t
+      (list :status :warn
+            :detail "no subscription token set — EAR claude -p may bill pay-per-use and fail with 'Credit balance is too low'"
+            :fix "Run `! claude setup-token`, then M-x my/emacs-agent-runtime-set-subscription-token")))))
+#+end_src
+
+#+begin_src emacs-lisp :tangle yes
 (my/doctor-define-check "iCloud CalDAV wiring (Keychain)"
   (let* ((kc  (fboundp 'my/keychain-get))
          (url (or (and kc (my/keychain-get "emacs-icloud-caldav" "url"))
@@ -391,7 +473,14 @@ and :fix. The :label is supplied by this macro."
 (my/doctor-define-check "WhatsApp adapter (optional messaging channel)"
   (let* ((dir my/whatsapp-adapter-dir)
          (nm (expand-file-name "node_modules" dir))
-         (auth (expand-file-name "auth" dir)))
+         (auth (expand-file-name "auth" dir))
+         (creds (expand-file-name "creds.json" auth))
+         (web-wa-dns
+          (when (file-executable-p "/usr/bin/dscacheutil")
+            (with-temp-buffer
+              (call-process "/usr/bin/dscacheutil" nil t nil
+                            "-q" "host" "-a" "name" "web.whatsapp.com")
+              (buffer-string)))))
     (cond
      ((not (eq system-type 'darwin))
       (list :status :ok :detail "not macOS — skipped"))
@@ -403,13 +492,81 @@ and :fix. The :label is supplied by this macro."
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
             :fix "cd ~/whatsapp-bridge-adapter && npm install"))
-     ((not (file-directory-p auth))
+     ((not (and web-wa-dns (string-match-p "\\S-" web-wa-dns)))
+      (list :status :warn
+            :detail "macOS cannot resolve web.whatsapp.com; WhatsApp QR cannot load"
+            :fix "Fix DNS/network first (System Settings > Network > Wi-Fi > Details > DNS, or disable VPN/DNS filter), then rerun M-x my/whatsapp-adapter-link"))
+     ((not (file-exists-p creds))
       (list :status :warn
             :detail "adapter ready but WhatsApp NOT linked (no QR scanned yet)"
             :fix "M-x my/whatsapp-adapter-link — scan the QR in WhatsApp > Linked Devices (use a SECONDARY number); then whitelist your JID per the README"))
+     ((my/doctor--whatsapp-status-open-p "whatsapp")
+      (list :status :ok
+            :detail (format "running and connected as %s"
+                            (alist-get 'selfJid
+                                       (my/doctor--whatsapp-status "whatsapp")))))
+     ((not (my/doctor--whatsapp-usable-auth-p auth))
+      (list :status :warn
+            :detail "adapter auth exists but does not contain a usable linked identity"
+            :fix "M-x my/whatsapp-adapter-link — it will archive incomplete auth and show a fresh QR"))
      (t
       (list :status :ok
-            :detail "linked (auth present) — M-x my/whatsapp-adapter-install-service for persistence")))))
+            :detail "linked (usable auth present) — M-x my/whatsapp-adapter-install-service for persistence")))))
+
+(my/doctor-define-check "WhatsApp Business adapter (secondary fitness coach)"
+  (let* ((dir my/whatsapp-adapter-dir)
+         (nm (expand-file-name "node_modules" dir))
+         (auth (expand-file-name "auth-business" dir))
+         (creds (expand-file-name "creds.json" auth))
+         (business-env (expand-file-name ".env.whatsapp-business.example" dir))
+         (business-plist
+          (expand-file-name "launchd/com.deno1011.whatsapp-business-bridge.plist"
+                            dir))
+         (web-wa-dns
+          (when (file-executable-p "/usr/bin/dscacheutil")
+            (with-temp-buffer
+              (call-process "/usr/bin/dscacheutil" nil t nil
+                            "-q" "host" "-a" "name" "web.whatsapp.com")
+              (buffer-string)))))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :status :ok :detail "not macOS — skipped"))
+     ((not (file-directory-p dir))
+      (list :status :ok
+            :detail "not installed — secondary WhatsApp Business messaging is optional"
+            :fix "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git ~/whatsapp-bridge-adapter && cd ~/whatsapp-bridge-adapter && npm install"))
+     ((not (file-directory-p nm))
+      (list :status :warn
+            :detail "adapter cloned but dependencies missing"
+            :fix "cd ~/whatsapp-bridge-adapter && npm install"))
+     ((not (file-readable-p business-env))
+      (list :status :warn
+            :detail "secondary Business env template is missing"
+            :fix "Update ~/whatsapp-bridge-adapter, then rerun M-x my/doctor"))
+     ((not (file-readable-p business-plist))
+      (list :status :warn
+            :detail "secondary Business launchd template is missing"
+            :fix "Update ~/whatsapp-bridge-adapter, then rerun M-x my/doctor"))
+     ((not (and web-wa-dns (string-match-p "\\S-" web-wa-dns)))
+      (list :status :warn
+            :detail "macOS cannot resolve web.whatsapp.com; WhatsApp Business QR cannot load"
+            :fix "Fix DNS/network first, then rerun M-x my/whatsapp-business-adapter-link"))
+     ((not (file-exists-p creds))
+      (list :status :warn
+            :detail "secondary Business adapter ready but NOT linked (no auth-business/creds.json)"
+            :fix "M-x my/whatsapp-business-adapter-link — scan the QR in WhatsApp Business > Linked Devices"))
+     ((my/doctor--whatsapp-status-open-p "whatsapp-business")
+      (list :status :ok
+            :detail (format "running and connected as %s"
+                            (alist-get 'selfJid
+                                       (my/doctor--whatsapp-status "whatsapp-business")))))
+     ((not (my/doctor--whatsapp-usable-auth-p auth))
+      (list :status :warn
+            :detail "secondary Business auth exists but does not contain a usable linked identity"
+            :fix "M-x my/whatsapp-business-adapter-link — it will archive incomplete auth-business and show a fresh QR"))
+     (t
+      (list :status :ok
+            :detail "linked (usable auth-business present) — M-x my/whatsapp-business-adapter-install-service for persistence")))))
 
 (my/doctor-define-check "Signal adapter (optional messaging channel)"
   (let* ((dir (expand-file-name "~/signal-bridge-adapter"))
@@ -675,6 +832,33 @@ and :fix. The :label is supplied by this macro."
       (list :status :warn
             :detail (format "projection parent missing: %s" dir)
             :fix "Check my/data-dir and my/emacs-agent-runtime-qmd-projection-directory")))))
+
+(my/doctor-define-check "Org/EAR optional diagram renderers"
+  (let* ((renderers (if (and (boundp 'my/org-diagram-renderers)
+                             (listp my/org-diagram-renderers))
+                        my/org-diagram-renderers
+                      '(("dot" . "graphviz")
+                        ("plantuml" . "plantuml")
+                        ("mmdc" . "mermaid-cli")
+                        ("d2" . "d2"))))
+         (present nil)
+         (missing nil)
+         (install (when (fboundp 'my/org-diagram-renderers-install-command)
+                    (my/org-diagram-renderers-install-command))))
+    (dolist (entry renderers)
+      (let ((exe (car-safe entry))
+            (formula (cdr-safe entry)))
+        (if (and (stringp exe) (executable-find exe))
+            (push (format "%s=%s" exe (executable-find exe)) present)
+          (push (format "%s (%s)" exe formula) missing))))
+    (if missing
+        (list :status :warn
+              :detail (format "missing optional renderer(s): %s"
+                              (string-join (nreverse missing) ", "))
+              :fix (or install
+                       "M-x my/org-diagram-renderers-install"))
+      (list :status :ok
+            :detail (string-join (nreverse present) ", ")))))
 
 (my/doctor-define-check "gh CLI authenticated"
   (cond
