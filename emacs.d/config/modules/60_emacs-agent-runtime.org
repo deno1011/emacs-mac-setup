@@ -210,13 +210,18 @@ not raw personal Org files."
 (defun my/emacs-agent-runtime-apply-credential-resolver ()
   "Wire personal setup credentials into EAR's generic API resolver when possible."
   (when (and my/emacs-agent-runtime-use-api-key-fetch-resolver
-             (fboundp 'my/api-key-fetch)
-             (boundp 'ear-adapter-api-credential-resolver))
-    (setq ear-adapter-api-credential-resolver #'my/api-key-fetch)
-    (when (boundp 'ear-adapter-api-credential-resolver-name)
-      (setq ear-adapter-api-credential-resolver-name 'setup-keychain))
-    (when (boundp 'ear-adapter-api-prefer-credential-resolver)
-      (setq ear-adapter-api-prefer-credential-resolver t))))
+             (fboundp 'my/api-key-fetch))
+    (when (boundp 'ear-adapter-api-credential-resolver)
+      (setq ear-adapter-api-credential-resolver #'my/api-key-fetch)
+      (when (boundp 'ear-adapter-api-credential-resolver-name)
+        (setq ear-adapter-api-credential-resolver-name 'setup-keychain))
+      (when (boundp 'ear-adapter-api-prefer-credential-resolver)
+        (setq ear-adapter-api-prefer-credential-resolver t)))
+    ;; OpenRouter reads its key through its own hook; point it at the Keychain.
+    ;; Independent of the generic resolver above (which EAR core may not expose).
+    (when (boundp 'ear-adapter-openrouter-api-key-function)
+      (setq ear-adapter-openrouter-api-key-function
+            (lambda () (my/api-key-fetch "OPENROUTER_API_KEY"))))))
 
 (defconst my/emacs-agent-runtime-subscription-token-key
   "ANTHROPIC_SUBSCRIPTION_API_KEY"

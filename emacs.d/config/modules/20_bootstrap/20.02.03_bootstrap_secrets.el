@@ -34,11 +34,15 @@ Treated as `no key' by `my/api-key-fetch--from-secrets' and as
 (defconst my/secrets--api-key-fields
   '("OPENAI_API_KEY"
     "ANTHROPIC_API_KEY"
+    "ANTHROPIC_SUBSCRIPTION_API_KEY"
     "GEMINI_API_KEY"
-    "GROQ_API_KEY")
-  "Keychain accounts each holding one LLM backend's API key.
-Read by `my/secrets-ensure-readable' for the status check.
-Add an entry here when a new gptel backend is wired up.")
+    "GROQ_API_KEY"
+    "OPENROUTER_API_KEY")
+  "Keychain accounts each holding one LLM backend credential.
+Read by `my/secrets-ensure-readable' for the status check and offered by
+`my/api-key-set'.  Add an entry here when a new backend or token is wired up
+(ANTHROPIC_SUBSCRIPTION_API_KEY is the Claude setup-token; OPENROUTER_API_KEY is
+the OpenRouter gateway key).")
 
 (defun my/secrets--missing-keys ()
   "Return the list of `my/secrets--api-key-fields' entries that
