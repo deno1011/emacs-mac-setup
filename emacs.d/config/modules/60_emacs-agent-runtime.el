@@ -88,9 +88,8 @@ runtime package."
   :type 'string
   :group 'emacs-agent-runtime)
 
-(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs nil
-  "When non-nil, start EAR scheduler jobs marked with `:auto-start'.
-OFF: a non-inbox auto-start job loops (diagnosing)."
+(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
+  "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
