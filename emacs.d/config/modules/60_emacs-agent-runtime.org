@@ -95,8 +95,11 @@ runtime package."
   :type 'string
   :group 'emacs-agent-runtime)
 
-(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
-  "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
+(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs nil
+  "When non-nil, start EAR scheduler jobs marked with `:auto-start'.
+TEMPORARILY nil (2026-07-06): a shared tool-selection change made a listener
+tick loop and hang Emacs on boot. Kept off until the loop is fixed, so Emacs
+starts clean with EAR loaded but no jobs running. Set back to t to re-enable."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
