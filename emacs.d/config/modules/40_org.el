@@ -1136,6 +1136,65 @@ it.  `org-get-tags' includes inherited and #+FILETAGS tags, so a single
         (message "%s not found — installing via pip3 in background. Restart Emacs when done." pkg)))
   (message "Python packages skipped until pip3 is available. Restart after brew python finishes."))
 
+(defcustom my/org-diagram-renderers
+  '(("dot" . "graphviz")
+    ("plantuml" . "plantuml")
+    ("mmdc" . "mermaid-cli")
+    ("d2" . "d2"))
+  "Executable-to-Homebrew-formula map for optional Org/EAR diagram rendering."
+  :type '(alist :key-type string :value-type string)
+  :group 'org)
+
+(defun my/org-diagram-renderers-missing ()
+  "Return configured diagram renderer entries whose executables are absent."
+  (cl-remove-if (lambda (entry)
+                  (and (stringp (car-safe entry))
+                       (executable-find (car entry))))
+                my/org-diagram-renderers))
+
+(defun my/org-diagram-renderers-install-command ()
+  "Return an idempotent command that provisions diagram renderer CLIs."
+  (let* ((formulae (delete-dups
+                    (cl-remove-if-not
+                     #'stringp
+                     (mapcar #'cdr my/org-diagram-renderers))))
+         (checks (mapcar
+                  (lambda (formula)
+                    (let ((quoted (shell-quote-argument formula)))
+                      (format "(brew list --formula %s >/dev/null 2>&1 || brew install %s)"
+                              quoted quoted)))
+                  formulae)))
+    (mapconcat
+     #'identity
+     (append
+      '("command -v brew >/dev/null 2>&1 || { echo 'Homebrew missing; run the setup installer first'; exit 1; }")
+      checks)
+     " && ")))
+
+;;;###autoload
+(defun my/org-diagram-renderers-install ()
+  "Install optional Org/EAR diagram renderer CLIs through setup-owned config."
+  (interactive)
+  (compile (my/org-diagram-renderers-install-command)))
+
+;;;###autoload
+(defun my/org-diagram-renderers-status ()
+  "Return and display optional Org/EAR diagram renderer availability."
+  (interactive)
+  (let ((status
+         (mapcar
+          (lambda (entry)
+            (let ((exe (car entry))
+                  (formula (cdr entry)))
+              (list :executable exe
+                    :formula formula
+                    :path (and (stringp exe)
+                               (executable-find exe)))))
+          my/org-diagram-renderers)))
+    (when (called-interactively-p 'interactive)
+      (message "%S" status))
+    status))
+
 (org-babel-do-load-languages
  'org-babel-load-languages
  '((emacs-lisp . t)

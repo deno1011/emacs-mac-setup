@@ -6,10 +6,10 @@
 :header-args: :tangle yes
 :END:
 
-Layer-2 domain operation that seeds missing starter Org files after
+Layer-2 domain operation that seeds missing starter Org and EAR data after
 the data repository exists. It copies templates from the distro-managed
-=emacs.d/config/starter-data/org/= directory into the user-owned data
-repository.
+=emacs.d/config/starter-data/org/= and =emacs.d/config/starter-data/ear/=
+directories into the user-owned data repository.
 
 Per [[file:BOOTSTRAP.md][BOOTSTRAP.md]] §2 this file returns
 =:done= / =:skip= / =(:error MSG)= and is idempotent. Existing user
@@ -25,10 +25,15 @@ files are never overwritten.
 ;;
 ;; Internal (DO NOT call from other files; prefix with `--'):
 ;;   my/starter-data--source-root
+;;   my/starter-data--ear-source-root
 ;;   my/starter-data--files
+;;   my/starter-data--ear-files
 ;;   my/starter-data--source
+;;   my/starter-data--ear-source
 ;;   my/starter-data--target
+;;   my/starter-data--ear-target
 ;;   my/starter-data--copy-missing
+;;   my/starter-data--copy-ear-missing
 ;;
 ;; Depends on:
 ;;   none
@@ -51,6 +56,12 @@ files are never overwritten.
    "../../starter-data/org/"
    (file-name-directory (or load-file-name buffer-file-name default-directory)))
   "Directory containing distro starter Org templates.")
+
+(defconst my/starter-data--ear-source-root
+  (expand-file-name
+   "../../starter-data/ear/"
+   (file-name-directory (or load-file-name buffer-file-name default-directory)))
+  "Directory containing distro starter EAR overlay templates.")
 
 (defconst my/starter-data--files
   '("inbox.org"
@@ -76,6 +87,10 @@ files are never overwritten.
     "gtd/apple-reminders-setup.org"
     "gtd/apple-calendar-setup.org")
   "Starter Org files copied into data/org/ when missing.")
+
+(defconst my/starter-data--ear-files
+  '("jobs/agent-learning-dreaming.eld")
+  "Starter EAR overlay files copied into ear/ when missing.")
 #+end_src
 
 * Internal Helpers
@@ -85,9 +100,17 @@ files are never overwritten.
   "Return the distro template path for FILE."
   (expand-file-name file my/starter-data--source-root))
 
+(defun my/starter-data--ear-source (file)
+  "Return the distro EAR template path for FILE."
+  (expand-file-name file my/starter-data--ear-source-root))
+
 (defun my/starter-data--target (file)
   "Return the user data path for FILE."
   (expand-file-name (concat "data/org/" file) my/data-dir))
+
+(defun my/starter-data--ear-target (file)
+  "Return the user EAR overlay path for FILE."
+  (expand-file-name (concat "ear/" file) my/data-dir))
 
 (defun my/starter-data--copy-missing (file)
   "Copy starter FILE into user data when missing."
@@ -101,6 +124,24 @@ files are never overwritten.
 
 FIX: reinstall or update the configuration to restore the
 config/starter-data/org/ templates, then run M-x my/bootstrap."
+                         source)))
+     (t
+      (make-directory (file-name-directory target) t)
+      (copy-file source target nil)
+      :done))))
+
+(defun my/starter-data--copy-ear-missing (file)
+  "Copy starter EAR FILE into user data when missing."
+  (let ((source (my/starter-data--ear-source file))
+        (target (my/starter-data--ear-target file)))
+    (cond
+     ((file-exists-p target)
+      :skip)
+     ((not (file-exists-p source))
+      `(:error ,(format "Starter EAR template is missing from the distro: %s
+
+FIX: reinstall or update the configuration to restore the
+config/starter-data/ear/ templates, then run M-x my/bootstrap."
                          source)))
      (t
       (make-directory (file-name-directory target) t)
@@ -131,6 +172,13 @@ FIX: run M-x my/bootstrap again after the data-folder clone step succeeds."
           (cond
            ((eq result :done)
             (push file created))
+           ((and (consp result) (eq (car result) :error))
+            (setq error-result result)))))
+      (dolist (file my/starter-data--ear-files)
+        (let ((result (my/starter-data--copy-ear-missing file)))
+          (cond
+           ((eq result :done)
+            (push (concat "ear/" file) created))
            ((and (consp result) (eq (car result) :error))
             (setq error-result result)))))
       (cond

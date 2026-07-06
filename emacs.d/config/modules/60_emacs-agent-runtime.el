@@ -88,10 +88,8 @@ runtime package."
   :type 'string
   :group 'emacs-agent-runtime)
 
-(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs nil
-  "When non-nil, start EAR scheduler jobs marked with `:auto-start'.
-STILL nil (2026-07-06): a SECOND tick loop remains after the O(n^2) JSON fix.
-Off until diagnosed."
+(defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
+  "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
