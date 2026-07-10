@@ -1,0 +1,428 @@
+#+TITLE: launchd service self-healing
+#+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] <- [[file:~/.emacs.d/init.el][init.el]]
+
+This module owns the small, generic part of macOS LaunchAgent self-healing:
+register a service, write a local plist when all prerequisites are present, and
+start the service when it is not running. It deliberately does not do heavy or
+interactive provisioning during Emacs startup. Network clones, npm installs,
+WhatsApp QR scans, Signal linking, and credential entry remain explicit Doctor
+or setup steps.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 62_launchd_services.el --- launchd service self-healing -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+(require 'subr-x)
+
+(defgroup my/launchd-services nil
+  "Self-healing macOS LaunchAgent services used by this Emacs setup."
+  :group 'external)
+
+(defcustom my/launchd-services-auto-heal t
+  "When non-nil, check registered launchd services after Emacs startup."
+  :type 'boolean
+  :group 'my/launchd-services)
+
+(defcustom my/launchd-services-auto-install t
+  "When non-nil, write missing LaunchAgent plists when prerequisites are ready."
+  :type 'boolean
+  :group 'my/launchd-services)
+
+(defcustom my/launchd-services-auto-start t
+  "When non-nil, start registered services that are installed but not running."
+  :type 'boolean
+  :group 'my/launchd-services)
+
+(defcustom my/launchd-services-startup-delay 6
+  "Seconds to wait after Emacs startup before launchd self-heal runs."
+  :type 'number
+  :group 'my/launchd-services)
+
+(defcustom my/launchd-services-launchctl-program
+  (or (and (file-executable-p "/bin/launchctl") "/bin/launchctl")
+      (executable-find "launchctl")
+      "launchctl")
+  "Program used to control launchd.
+Use an absolute default because Emacs daemons launched by launchd often have a
+minimal PATH."
+  :type 'file
+  :group 'my/launchd-services)
+
+(defun my/launchd-services-launchctl ()
+  "Return the launchctl executable path."
+  my/launchd-services-launchctl-program)
+
+(defvar my/launchd-services nil
+  "Registered LaunchAgent service specifications.
+
+Each service is a plist.  Common keys:
+
+  :label              launchd label, required
+  :name               human label for status buffers
+  :plist              plist path, defaults to ~/Library/LaunchAgents/LABEL.plist
+  :program-arguments  list of strings for ProgramArguments
+  :working-directory  optional WorkingDirectory
+  :environment        optional alist of string keys and values
+  :stdout             optional StandardOutPath
+  :stderr             optional StandardErrorPath
+  :run-at-load        boolean, default t
+  :keep-alive         boolean, default t
+  :auto-install       override `my/launchd-services-auto-install'
+  :auto-start         override `my/launchd-services-auto-start'
+  :ready              function called with service; non-nil means ready
+  :install-function   function used instead of generic plist writer.")
+
+(defun my/launchd-service--plist-path (service)
+  "Return plist path for SERVICE."
+  (or (plist-get service :plist)
+      (expand-file-name
+       (format "Library/LaunchAgents/%s.plist"
+               (plist-get service :label))
+       "~")))
+
+(defun my/launchd-service--xml-escape (value)
+  "Return VALUE as plist-safe XML text."
+  (let ((text (format "%s" value)))
+    (setq text (replace-regexp-in-string "&" "&amp;" text t t))
+    (setq text (replace-regexp-in-string "<" "&lt;" text t t))
+    (setq text (replace-regexp-in-string ">" "&gt;" text t t))
+    (setq text (replace-regexp-in-string "\"" "&quot;" text t t))
+    text))
+
+(defun my/launchd-service--insert-bool (key value)
+  "Insert plist boolean KEY with VALUE into current buffer."
+  (insert (format "  <key>%s</key><%s/>\n"
+                  (my/launchd-service--xml-escape key)
+                  (if value "true" "false"))))
+
+(defun my/launchd-service--insert-string (key value)
+  "Insert plist string KEY with VALUE into current buffer."
+  (when value
+    (insert (format "  <key>%s</key><string>%s</string>\n"
+                    (my/launchd-service--xml-escape key)
+                    (my/launchd-service--xml-escape value)))))
+
+(defun my/launchd-service-write-plist (service)
+  "Write SERVICE as a LaunchAgent plist and return the plist path."
+  (unless (eq system-type 'darwin)
+    (user-error "launchd services are macOS only"))
+  (let* ((label (plist-get service :label))
+         (args (plist-get service :program-arguments))
+         (plist (my/launchd-service--plist-path service))
+         (env (plist-get service :environment))
+         (run-at-load (if (plist-member service :run-at-load)
+                          (plist-get service :run-at-load)
+                        t))
+         (keep-alive (if (plist-member service :keep-alive)
+                         (plist-get service :keep-alive)
+                       t)))
+    (unless (and label (stringp label) (> (length label) 0))
+      (user-error "LaunchAgent service missing :label"))
+    (unless (consp args)
+      (user-error "LaunchAgent service %s missing :program-arguments" label))
+    (make-directory (file-name-directory plist) t)
+    (with-temp-file plist
+      (insert "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+      (insert "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n")
+      (insert "  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
+      (insert "<plist version=\"1.0\">\n<dict>\n")
+      (my/launchd-service--insert-string "Label" label)
+      (insert "  <key>ProgramArguments</key>\n  <array>\n")
+      (dolist (arg args)
+        (insert (format "    <string>%s</string>\n"
+                        (my/launchd-service--xml-escape arg))))
+      (insert "  </array>\n")
+      (my/launchd-service--insert-string
+       "WorkingDirectory" (plist-get service :working-directory))
+      (when env
+        (insert "  <key>EnvironmentVariables</key>\n  <dict>\n")
+        (dolist (entry env)
+          (insert (format "    <key>%s</key><string>%s</string>\n"
+                          (my/launchd-service--xml-escape (car entry))
+                          (my/launchd-service--xml-escape (cdr entry)))))
+        (insert "  </dict>\n"))
+      (my/launchd-service--insert-bool "RunAtLoad" run-at-load)
+      (my/launchd-service--insert-bool "KeepAlive" keep-alive)
+      (my/launchd-service--insert-string "StandardOutPath"
+                                         (plist-get service :stdout))
+      (my/launchd-service--insert-string "StandardErrorPath"
+                                         (plist-get service :stderr))
+      (insert "</dict>\n</plist>\n"))
+    plist))
+
+(defun my/launchd-service-register (service)
+  "Register SERVICE and return it.
+If Emacs has already completed startup, ensure the service shortly after
+registration so live reloads heal too."
+  (let ((label (plist-get service :label)))
+    (unless (and label (stringp label) (> (length label) 0))
+      (user-error "LaunchAgent service missing :label"))
+    (setq my/launchd-services
+          (cl-remove label my/launchd-services
+                     :key (lambda (item) (plist-get item :label))
+                     :test #'equal))
+    (push service my/launchd-services)
+    (when (and after-init-time
+               my/launchd-services-auto-heal
+               (not noninteractive))
+      (run-at-time
+       1 nil
+       (lambda (registered)
+         (ignore-errors (my/launchd-service-ensure registered)))
+       service))
+    service))
+
+(defun my/launchd-service--ready (service)
+  "Return nil when SERVICE is ready, otherwise a human reason string."
+  (let ((fn (plist-get service :ready)))
+    (if (not fn)
+        nil
+      (condition-case err
+          (let ((result (funcall fn service)))
+            (cond
+             ((eq result t) nil)
+             ((stringp result) result)
+             ((and (listp result) (eq (plist-get result :ok) nil))
+              (or (plist-get result :reason) "not ready"))
+             (result nil)
+             (t "not ready")))
+        (error (error-message-string err))))))
+
+(defun my/launchd-service-status (service)
+  "Return launchd status plist for SERVICE."
+  (let ((label (plist-get service :label))
+        found)
+    (when (and (eq system-type 'darwin) label)
+      (with-temp-buffer
+        (when (zerop (call-process (my/launchd-services-launchctl)
+                                   nil t nil "list"))
+          (dolist (line (split-string (buffer-string) "\n" t))
+            (let ((parts (split-string line "[ \t]+" t)))
+              (when (and (>= (length parts) 3)
+                         (equal (car (last parts)) label))
+                (let ((pid (nth 0 parts))
+                      (exit (nth 1 parts)))
+                  (setq found
+                        (list :label label
+                              :loaded t
+                              :running (not (equal pid "-"))
+                              :pid (unless (equal pid "-") pid)
+                              :last-exit-status exit)))))))))
+    (or found (list :label label :loaded nil :running nil))))
+
+(defun my/launchd-service--auto-p (service key default)
+  "Return SERVICE KEY override or DEFAULT."
+  (if (plist-member service key)
+      (plist-get service key)
+    default))
+
+(defun my/launchd-service-install (service)
+  "Install SERVICE plist using its installer or generic writer."
+  (let ((installer (plist-get service :install-function)))
+    (cond
+     (installer
+      (funcall installer)
+      (my/launchd-service--plist-path service))
+     ((plist-get service :program-arguments)
+      (my/launchd-service-write-plist service))
+     (t
+      (user-error "No installer or program arguments for %s"
+                  (plist-get service :label))))))
+
+(defun my/launchd-service-start (service)
+  "Load and kickstart SERVICE."
+  (unless (eq system-type 'darwin)
+    (user-error "launchd services are macOS only"))
+  (let* ((label (plist-get service :label))
+         (plist (my/launchd-service--plist-path service))
+         (target (format "gui/%d/%s" (user-uid) label)))
+    (unless (file-exists-p plist)
+      (user-error "Missing plist for %s: %s" label plist))
+    (unless (plist-get (my/launchd-service-status service) :loaded)
+      (call-process (my/launchd-services-launchctl)
+                    nil nil nil "load" "-w" plist))
+    (call-process (my/launchd-services-launchctl)
+                  nil nil nil "kickstart" "-k" target)
+    (my/launchd-service-status service)))
+
+(defun my/launchd-service-stop (label)
+  "Stop and unload service LABEL."
+  (interactive
+   (list (completing-read "LaunchAgent: "
+                          (mapcar (lambda (service)
+                                    (plist-get service :label))
+                                  my/launchd-services)
+                          nil t)))
+  (let* ((service (cl-find label my/launchd-services
+                           :key (lambda (item) (plist-get item :label))
+                           :test #'equal))
+         (plist (and service (my/launchd-service--plist-path service)))
+         (target (format "gui/%d/%s" (user-uid) label)))
+    (ignore-errors (call-process (my/launchd-services-launchctl)
+                                 nil nil nil "bootout" target))
+    (when (and plist (file-exists-p plist))
+      (ignore-errors (call-process (my/launchd-services-launchctl)
+                                   nil nil nil "unload" plist)))
+    (message "LaunchAgent stopped: %s" label)))
+
+(defun my/launchd-service-ensure (service)
+  "Ensure SERVICE plist exists and is running when configured to auto-start."
+  (let* ((label (plist-get service :label))
+         (name (or (plist-get service :name) label))
+         (plist (my/launchd-service--plist-path service))
+         (ready-reason (my/launchd-service--ready service)))
+    (cond
+     ((not (eq system-type 'darwin))
+      (list :label label :status 'skipped :reason "not macOS"))
+     (ready-reason
+      (list :label label :name name :status 'needs-setup :reason ready-reason))
+     ((and (not (file-exists-p plist))
+           (not (my/launchd-service--auto-p
+                 service :auto-install my/launchd-services-auto-install)))
+      (list :label label :name name :status 'missing :plist plist))
+     (t
+      (unless (file-exists-p plist)
+        (my/launchd-service-install service))
+      (let* ((before (my/launchd-service-status service))
+             (after (if (and (not (plist-get before :running))
+                             (my/launchd-service--auto-p
+                              service :auto-start
+                              my/launchd-services-auto-start))
+                        (my/launchd-service-start service)
+                      before)))
+        (list :label label
+              :name name
+              :status (if (plist-get after :running) 'running 'installed)
+              :plist plist
+              :loaded (plist-get after :loaded)
+              :running (plist-get after :running)
+              :pid (plist-get after :pid)))))))
+
+(defun my/launchd-services-ensure ()
+  "Ensure all registered LaunchAgent services."
+  (interactive)
+  (let ((results (mapcar #'my/launchd-service-ensure
+                         (reverse my/launchd-services))))
+    (when (called-interactively-p 'interactive)
+      (my/launchd-services--show-results results))
+    results))
+
+(defun my/launchd-services--show-results (results)
+  "Render RESULTS in a status buffer."
+  (let ((buf (get-buffer-create "*LaunchAgent Services*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "LaunchAgent Services\n\n")
+        (insert "Keys: g refresh  s stop  RET details\n\n")
+        (dolist (result results)
+          (insert
+           (format "%-38s %-12s %s%s\n"
+                   (plist-get result :label)
+                   (plist-get result :status)
+                   (or (plist-get result :pid) "")
+                   (if-let ((reason (plist-get result :reason)))
+                       (format "  %s" reason)
+                     "")))))
+      (special-mode)
+      (let ((map (make-sparse-keymap)))
+        (set-keymap-parent map special-mode-map)
+        (define-key map (kbd "g") #'my/launchd-services-status)
+        (define-key map (kbd "s") #'my/launchd-service-stop)
+        (use-local-map map)))
+    (pop-to-buffer buf)))
+
+(defun my/launchd-services-status ()
+  "Show registered LaunchAgent service status without changing services."
+  (interactive)
+  (my/launchd-services--show-results
+   (mapcar
+    (lambda (service)
+      (let* ((status (my/launchd-service-status service))
+             (ready-reason (my/launchd-service--ready service)))
+        (append
+         (list :name (or (plist-get service :name)
+                         (plist-get service :label))
+               :status (cond
+                        (ready-reason 'needs-setup)
+                        ((plist-get status :running) 'running)
+                        ((plist-get status :loaded) 'loaded)
+                        ((file-exists-p
+                          (my/launchd-service--plist-path service))
+                         'installed)
+                        (t 'missing))
+               :reason ready-reason)
+         status)))
+    (reverse my/launchd-services))))
+
+(defun my/launchd-services--schedule-auto-heal ()
+  "Schedule launchd self-heal after startup."
+  (when (and my/launchd-services-auto-heal
+             (not noninteractive))
+    (run-at-time
+     my/launchd-services-startup-delay nil
+     (lambda ()
+       (condition-case err
+           (let ((results (my/launchd-services-ensure)))
+             (message "LaunchAgent self-heal checked %d services"
+                      (length results)))
+         (error
+          (message "LaunchAgent self-heal failed: %s"
+                   (error-message-string err))))))))
+
+(add-hook 'emacs-startup-hook #'my/launchd-services--schedule-auto-heal)
+
+(defcustom my/launchd-services-mlx-model
+  "mlx-community/Llama-3.2-3B-Instruct-4bit"
+  "Default model for the local EAR MLX launchd server."
+  :type 'string
+  :group 'my/launchd-services)
+
+(defcustom my/launchd-services-mlx-root
+  (expand-file-name "ear-mlx" user-emacs-directory)
+  "Runtime directory for the local EAR MLX server."
+  :type 'directory
+  :group 'my/launchd-services)
+
+(defun my/launchd-services--mlx-server ()
+  "Return the mlx_lm server executable path."
+  (expand-file-name "venv/bin/mlx_lm.server"
+                    my/launchd-services-mlx-root))
+
+(defun my/launchd-services--mlx-ready (_service)
+  "Return non-nil when the local MLX server can be launched."
+  (let ((server (my/launchd-services--mlx-server)))
+    (cond
+     ((not (eq system-type 'darwin)) "MLX launchd service is macOS only")
+     ((not (file-executable-p server))
+      (format "MLX server executable missing at %s" server))
+     (t t))))
+
+(my/launchd-service-register
+ (list
+  :label "com.deno1011.ear-mlx-server"
+  :name "EAR MLX local model server"
+  :program-arguments
+  (list (my/launchd-services--mlx-server)
+        "--model" my/launchd-services-mlx-model
+        "--host" "127.0.0.1"
+        "--port" "8080"
+        "--max-tokens" "1024"
+        "--prompt-cache-size" "10"
+        "--prompt-concurrency" "8"
+        "--decode-concurrency" "32"
+        "--prefill-step-size" "2048"
+        "--log-level" "INFO")
+  :working-directory my/launchd-services-mlx-root
+  :run-at-load nil
+  :keep-alive nil
+  :stdout (expand-file-name "mlx-server.out.log" my/launchd-services-mlx-root)
+  :stderr (expand-file-name "mlx-server.err.log" my/launchd-services-mlx-root)
+  :ready #'my/launchd-services--mlx-ready))
+
+(provide '62_launchd_services)
+;;; 62_launchd_services.el ends here
+#+end_src

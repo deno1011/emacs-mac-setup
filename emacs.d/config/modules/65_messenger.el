@@ -6,6 +6,8 @@
 (declare-function messenger-bridge-start "messenger-bridge")
 (declare-function messenger-bridge-stop "messenger-bridge")
 (declare-function messenger-send "messenger-bridge")
+(declare-function my/launchd-service-register "62_launchd_services" (service))
+(declare-function my/launchd-services-launchctl "62_launchd_services" ())
 (defvar messenger-bridge-directory)
 
 (defvar my/messenger-autostart nil
@@ -13,6 +15,14 @@
 
 Keep this nil when the EAR scheduler job `messenger.bridge.listener' owns
 inbound polling for the same bridge directory.")
+
+(defun my/messenger--launchctl ()
+  "Return launchctl executable for messenger service management."
+  (if (fboundp 'my/launchd-services-launchctl)
+      (my/launchd-services-launchctl)
+    (or (and (file-executable-p "/bin/launchctl") "/bin/launchctl")
+        (executable-find "launchctl")
+        "launchctl")))
 
 (when (not noninteractive)
   (use-package messenger-bridge
@@ -107,8 +117,10 @@ QR-linked (auth/ present)."
 </dict>
 </plist>
 " my/whatsapp-adapter--service-label node dir dir)))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
-    (if (zerop (call-process "launchctl" nil nil nil "load" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
+    (if (zerop (call-process (my/messenger--launchctl)
+                             nil nil nil "load" plist))
         (message "WhatsApp adapter service loaded: %s" plist)
       (user-error "launchctl load failed for %s" plist))))
 
@@ -119,7 +131,8 @@ QR-linked (auth/ present)."
                 (format "Library/LaunchAgents/%s.plist"
                         my/whatsapp-adapter--service-label)
                 "~")))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
     (when (file-exists-p plist) (delete-file plist))
     (message "WhatsApp adapter service removed")))
 
@@ -406,8 +419,10 @@ pairing-code login."
 </dict>
 </plist>
 " my/whatsapp-business-adapter--service-label node dir dir)))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
-    (if (zerop (call-process "launchctl" nil nil nil "load" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
+    (if (zerop (call-process (my/messenger--launchctl)
+                             nil nil nil "load" plist))
         (message "WhatsApp Business adapter service loaded: %s" plist)
       (user-error "launchctl load failed for %s" plist))))
 
@@ -418,7 +433,8 @@ pairing-code login."
                 (format "Library/LaunchAgents/%s.plist"
                         my/whatsapp-business-adapter--service-label)
                 "~")))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
     (when (file-exists-p plist) (delete-file plist))
     (message "WhatsApp Business adapter service removed")))
 
@@ -431,6 +447,24 @@ Devices > Link New Device.  Links as a SECONDARY device (no new number)."
                            "exec npm run link"))
 
 (defconst my/signal-adapter--service-label "com.deno1011.signal-bridge")
+
+(defun my/signal-adapter--signal-cli ()
+  "Best-effort path to a signal-cli binary."
+  (or (executable-find "signal-cli")
+      (seq-find #'file-executable-p
+                '("/opt/homebrew/bin/signal-cli"
+                  "/usr/local/bin/signal-cli"
+                  "/usr/bin/signal-cli"))))
+
+(defun my/signal-adapter--configured-p ()
+  "Return non-nil when the Signal adapter has a usable local config."
+  (let ((env-file (expand-file-name ".env" my/signal-adapter-dir)))
+    (when (file-readable-p env-file)
+      (with-temp-buffer
+        (insert-file-contents env-file)
+        (goto-char (point-min))
+        (re-search-forward
+         "^SIGNAL_ACCOUNT=[[:space:]]*[^#[:space:]].*$" nil t)))))
 
 (defun my/signal-adapter-install-service ()
   "Generate and (re)load a launchd service for the Signal bridge adapter.
@@ -447,6 +481,7 @@ set in .env."
                                "/opt/homebrew/bin/node"
                                "/usr/local/bin/node"))
                    "node"))
+         (signal-cli (my/signal-adapter--signal-cli))
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
                          my/signal-adapter--service-label)
@@ -458,13 +493,13 @@ set in .env."
                 (delete-dups
                  (append
                   (list (directory-file-name (file-name-directory node)))
-                  (let ((s (executable-find "signal-cli")))
+                  (let ((s signal-cli))
                     (and s (list (directory-file-name (file-name-directory s)))))
                   '("/opt/homebrew/bin" "/usr/local/bin" "/usr/bin" "/bin")))
                 ":")))
     (unless (file-directory-p dir)
       (user-error "Adapter not found at %s — clone it first" dir))
-    (unless (executable-find "signal-cli")
+    (unless signal-cli
       (user-error "signal-cli not found — `brew install signal-cli', then link"))
     (make-directory (file-name-directory plist) t)
     (with-temp-file plist
@@ -486,8 +521,10 @@ set in .env."
 </dict>
 </plist>
 " my/signal-adapter--service-label node dir dir path)))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
-    (if (zerop (call-process "launchctl" nil nil nil "load" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
+    (if (zerop (call-process (my/messenger--launchctl)
+                             nil nil nil "load" plist))
         (message "Signal adapter service loaded: %s" plist)
       (user-error "launchctl load failed for %s" plist))))
 
@@ -498,6 +535,71 @@ set in .env."
                 (format "Library/LaunchAgents/%s.plist"
                         my/signal-adapter--service-label)
                 "~")))
-    (ignore-errors (call-process "launchctl" nil nil nil "unload" plist))
+    (ignore-errors (call-process (my/messenger--launchctl)
+                                 nil nil nil "unload" plist))
     (when (file-exists-p plist) (delete-file plist))
     (message "Signal adapter service removed")))
+
+(defun my/messenger-register-launchd-services ()
+  "Register messenger adapter launchd services for startup self-healing."
+  (when (fboundp 'my/launchd-service-register)
+    (my/launchd-service-register
+     (list
+      :label my/whatsapp-adapter--service-label
+      :name "WhatsApp bridge adapter"
+      :plist (expand-file-name
+              (format "Library/LaunchAgents/%s.plist"
+                      my/whatsapp-adapter--service-label)
+              "~")
+      :install-function #'my/whatsapp-adapter-install-service
+      :ready
+      (lambda (_service)
+        (let* ((dir (expand-file-name my/whatsapp-adapter-dir))
+               (auth (expand-file-name "auth" dir)))
+          (cond
+           ((not (file-directory-p dir))
+            (format "adapter not cloned at %s" dir))
+           ((not (my/whatsapp-adapter--usable-auth-p auth))
+            "WhatsApp not linked yet; run M-x my/whatsapp-adapter-link")
+           (t t))))))
+    (my/launchd-service-register
+     (list
+      :label my/whatsapp-business-adapter--service-label
+      :name "WhatsApp Business bridge adapter"
+      :plist (expand-file-name
+              (format "Library/LaunchAgents/%s.plist"
+                      my/whatsapp-business-adapter--service-label)
+              "~")
+      :install-function #'my/whatsapp-business-adapter-install-service
+      :ready
+      (lambda (_service)
+        (let* ((dir (expand-file-name my/whatsapp-adapter-dir))
+               (auth (expand-file-name "auth-business" dir)))
+          (cond
+           ((not (file-directory-p dir))
+            (format "adapter not cloned at %s" dir))
+           ((not (my/whatsapp-adapter--usable-auth-p auth))
+            "WhatsApp Business not linked yet; run M-x my/whatsapp-business-adapter-link")
+           (t t))))))
+    (my/launchd-service-register
+     (list
+      :label my/signal-adapter--service-label
+      :name "Signal bridge adapter"
+      :plist (expand-file-name
+              (format "Library/LaunchAgents/%s.plist"
+                      my/signal-adapter--service-label)
+              "~")
+      :install-function #'my/signal-adapter-install-service
+      :ready
+      (lambda (_service)
+        (let ((dir (expand-file-name my/signal-adapter-dir)))
+          (cond
+           ((not (file-directory-p dir))
+            (format "adapter not cloned at %s" dir))
+           ((not (my/signal-adapter--signal-cli))
+            "signal-cli missing; run brew install signal-cli")
+           ((not (my/signal-adapter--configured-p))
+            "Signal .env missing SIGNAL_ACCOUNT; run M-x my/signal-adapter-link and configure .env")
+           (t t))))))))
+
+(my/messenger-register-launchd-services)
