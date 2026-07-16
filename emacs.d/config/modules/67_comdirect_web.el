@@ -54,11 +54,42 @@ Set this to the real transfer page URL once you know it."
     (when (boundp (car pair))
       (set (car pair) (cdr pair)))))
 
+(defcustom my/comdirect-web-auto-install t
+  "When non-nil, install Playwright + Chromium automatically if missing."
+  :type 'boolean :group 'my/comdirect-web)
+
 (defun my/comdirect-web-install-playwright-command ()
   "Return the shell command that installs Playwright and its Chromium browser."
   (let ((py (shell-quote-argument my/comdirect-web-python)))
     (format "%s -m pip install --user playwright && %s -m playwright install chromium"
             py py)))
+
+(defun my/comdirect-web--playwright-ready-p ()
+  "Return non-nil when Playwright AND a Chromium browser are installed."
+  (and (executable-find my/comdirect-web-python)
+       (eq 0 (call-process my/comdirect-web-python nil nil nil "-c" "import playwright"))
+       (let ((dir (expand-file-name "~/Library/Caches/ms-playwright")))
+         (and (file-directory-p dir)
+              (seq-find (lambda (f) (string-prefix-p "chromium" f))
+                        (directory-files dir))
+              t))))
+
+(defun my/comdirect-web-ensure-playwright ()
+  "Idempotently install Playwright + Chromium (async) when missing."
+  (when (and my/comdirect-web-auto-install
+             (executable-find my/comdirect-web-python)
+             (not (my/comdirect-web--playwright-ready-p)))
+    (message "comdirect-web: installing Playwright + Chromium (async, one-time)…")
+    (make-process
+     :name "comdirect-web-playwright-install"
+     :buffer (get-buffer-create "*comdirect-web playwright install*")
+     :command (list "sh" "-c" (my/comdirect-web-install-playwright-command))
+     :sentinel
+     (lambda (p _e)
+       (when (eq (process-status p) 'exit)
+         (message "comdirect-web: Playwright install %s"
+                  (if (eq 0 (process-exit-status p)) "done"
+                    "FAILED — see *comdirect-web playwright install*")))))))
 
 ;;;###autoload
 (defun my/comdirect-web-install-playwright ()
@@ -92,3 +123,4 @@ Set this to the real transfer page URL once you know it."
        (when (fboundp 'elpaca-wait) (elpaca-wait))))))
 
 (my/comdirect-web-queue-elpaca)
+(my/comdirect-web-ensure-playwright)
