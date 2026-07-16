@@ -1,0 +1,145 @@
+#+TITLE: comdirect-fints Loader
+#+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+Installs and wires [[https://github.com/deno1011/comdirect-fints][comdirect-fints]] — read comdirect balances and initiate
+small SEPA transfers from Emacs over FinTS (comdirect's REST API has no
+transfer endpoint). Elisp frontend + a bundled =python-fints= helper; the
+prerequisite (=fints=) is installed via a setup-owned command, never silently.
+
+#+begin_src emacs-lisp :tangle yes
+;;; 66_comdirect_fints.el --- comdirect-fints loader -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+
+;; Forward declarations for the byte-compiler (package is loaded at runtime).
+(defvar comdirect-fints-product-id)
+(defvar comdirect-fints-server)
+(defvar comdirect-fints-python)
+(declare-function comdirect-fints-balances "comdirect-fints")
+(declare-function comdirect-fints-transfer "comdirect-fints")
+#+end_src
+
+* Source selection (local checkout vs. Elpaca)
+
+#+begin_src emacs-lisp :tangle yes
+(defcustom my/comdirect-fints-source 'elpaca
+  "Where comdirect-fints is loaded from.
+`elpaca' installs and updates it as a package (default, for new users);
+`local' loads a working checkout at `my/comdirect-fints-local-dir'."
+  :type '(choice (const :tag "Elpaca package" elpaca)
+                 (const :tag "Local checkout" local))
+  :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-local-dir "~/comdirect-fints"
+  "Directory of a local comdirect-fints checkout (when source is `local')."
+  :type 'directory :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-elpaca-repo "deno1011/comdirect-fints"
+  "GitHub repo used when the source is `elpaca'."
+  :type 'string :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-elpaca-branch "main"
+  "Git branch used when installing through Elpaca."
+  :type 'string :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-elpaca-files
+  '("comdirect-fints.el" "comdirect_fints_helper.py")
+  "Files pulled into the Elpaca build (the Elisp AND the Python helper)."
+  :type '(repeat string) :group 'my/comdirect-fints)
+#+end_src
+
+* User configuration
+
+The FinTS =product-id= is *mandatory* (python-fints v4+ refuses without one)
+and per-user — register it once for free at
+https://www.hbci-zka.de/register/prod_register.htm and set it here. The login
+and PIN are read at call time from the macOS Keychain, never configured here.
+
+#+begin_src emacs-lisp :tangle yes
+(defcustom my/comdirect-fints-product-id nil
+  "Registered FinTS product id (mandatory).  Register free at hbci-zka.de."
+  :type '(choice (const :tag "Unset — register first" nil) string)
+  :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-server "https://fints.comdirect.de/fints"
+  "comdirect FinTS endpoint URL (verify the current value)."
+  :type 'string :group 'my/comdirect-fints)
+
+(defcustom my/comdirect-fints-python (or (executable-find "python3") "python3")
+  "Python 3 interpreter used to run the FinTS helper."
+  :type 'string :group 'my/comdirect-fints)
+
+(defun my/comdirect-fints-apply-config ()
+  "Push this module's settings into the loaded comdirect-fints package."
+  (when (boundp 'comdirect-fints-product-id)
+    (setq comdirect-fints-product-id my/comdirect-fints-product-id))
+  (when (boundp 'comdirect-fints-server)
+    (setq comdirect-fints-server my/comdirect-fints-server))
+  (when (boundp 'comdirect-fints-python)
+    (setq comdirect-fints-python my/comdirect-fints-python)))
+#+end_src
+
+* Prerequisite: python-fints
+
+Installs the =fints= Python package for the configured interpreter.  Like the
+QMD install in =60_emacs-agent-runtime.org=, this is setup-owned and explicit —
+it only installs the library, nothing else.
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/comdirect-fints-install-fints-command ()
+  "Return the shell command that installs python-fints."
+  (format "%s -m pip install --user fints"
+          (shell-quote-argument my/comdirect-fints-python)))
+
+;;;###autoload
+(defun my/comdirect-fints-install-fints ()
+  "Install the `fints' Python package for `my/comdirect-fints-python'."
+  (interactive)
+  (unless (executable-find my/comdirect-fints-python)
+    (user-error "Python interpreter not found: %s" my/comdirect-fints-python))
+  (compile (my/comdirect-fints-install-fints-command)))
+#+end_src
+
+* Load / install
+
+#+begin_src emacs-lisp :tangle yes
+(defun my/comdirect-fints-queue-elpaca ()
+  "Load comdirect-fints from a local checkout or queue it through Elpaca."
+  (pcase my/comdirect-fints-source
+    ('local
+     (let ((dir (expand-file-name my/comdirect-fints-local-dir)))
+       (when (file-directory-p dir)
+         (add-to-list 'load-path dir)
+         (when (require 'comdirect-fints nil t)
+           (my/comdirect-fints-apply-config)))))
+    ('elpaca
+     (when (fboundp 'elpaca)
+       (eval
+        `(elpaca
+           (comdirect-fints
+            :host github
+            :repo ,my/comdirect-fints-elpaca-repo
+            :branch ,my/comdirect-fints-elpaca-branch
+            :files ,my/comdirect-fints-elpaca-files)
+           (require 'comdirect-fints nil t)
+           (my/comdirect-fints-apply-config))
+        t)
+       (when (fboundp 'elpaca-wait) (elpaca-wait))))))
+
+(my/comdirect-fints-queue-elpaca)
+#+end_src
+
+* Usage
+
+- =M-x my/comdirect-fints-install-fints= — install the =fints= Python dependency.
+- =M-x comdirect-fints-balances= — read balances (first connectivity test).
+- =M-x comdirect-fints-transfer= — a small SEPA transfer (reports whether a TAN
+  was required; the <=20 EUR web exemption may or may not be honoured over FinTS).
+
+Keychain setup (run once in a terminal; the PIN is prompted hidden):
+
+: security add-generic-password -U -s emacs_credentials -a COMDIRECT_FINTS_USER -w
+: security add-generic-password -U -s emacs_credentials -a COMDIRECT_FINTS_PIN  -w
