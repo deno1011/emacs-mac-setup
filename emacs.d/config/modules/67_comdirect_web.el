@@ -32,11 +32,22 @@
   "Files pulled into the Elpaca build (Elisp AND the Playwright helper)."
   :type '(repeat string) :group 'my/comdirect-web)
 
-(defcustom my/comdirect-web-banking-url nil
-  "URL of the comdirect banking / SEPA transfer page.
-Set this to the real transfer page URL once you know it."
-  :type '(choice (const :tag "Unset — set your transfer URL" nil) string)
-  :group 'my/comdirect-web)
+(defcustom my/comdirect-web-banking-url
+  "https://kunde.comdirect.de/lp/wt/login?execution=e1s1&afterTimeout=true"
+  "URL of the comdirect banking / login page."
+  :type 'string :group 'my/comdirect-web)
+
+(defcustom my/comdirect-web-contacts-url nil
+  "Optional URL of the saved-contacts (Vorlagen) page."
+  :type '(choice (const :tag "Unset" nil) string) :group 'my/comdirect-web)
+
+(defcustom my/comdirect-web-user-account "COMDIRECT_FINTS_USER"
+  "Keychain account for the web login (auto-login)."
+  :type 'string :group 'my/comdirect-web)
+
+(defcustom my/comdirect-web-pin-account "COMDIRECT_FINTS_PIN"
+  "Keychain account for the web PIN (auto-login)."
+  :type 'string :group 'my/comdirect-web)
 
 (defcustom my/comdirect-web-auto-submit nil
   "When non-nil, the helper clicks submit after filling (moves real money)."
@@ -49,8 +60,11 @@ Set this to the real transfer page URL once you know it."
 (defun my/comdirect-web-apply-config ()
   "Push this module's settings into the loaded comdirect-web package."
   (dolist (pair `((comdirect-web-banking-url . ,my/comdirect-web-banking-url)
-                  (comdirect-web-auto-submit . ,my/comdirect-web-auto-submit)
-                  (comdirect-web-python      . ,my/comdirect-web-python)))
+                  (comdirect-web-contacts-url . ,my/comdirect-web-contacts-url)
+                  (comdirect-web-user-account . ,my/comdirect-web-user-account)
+                  (comdirect-web-pin-account  . ,my/comdirect-web-pin-account)
+                  (comdirect-web-auto-submit  . ,my/comdirect-web-auto-submit)
+                  (comdirect-web-python       . ,my/comdirect-web-python)))
     (when (boundp (car pair))
       (set (car pair) (cdr pair)))))
 
