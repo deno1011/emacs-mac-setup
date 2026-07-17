@@ -9,8 +9,10 @@
 (declare-function comdirect-web-open "comdirect-web")
 (declare-function comdirect-web-transfer "comdirect-web")
 
-(defcustom my/comdirect-web-source 'elpaca
-  "Where comdirect-web is loaded from (`elpaca' private repo, or `local')."
+(defcustom my/comdirect-web-source 'local
+  "Where comdirect-web is loaded from (`elpaca' private repo, or `local').
+Default `local' (~/comdirect-web) so the daemon always uses the current checkout
+— the elpaca build lags behind pushes and would run stale transfer logic."
   :type '(choice (const :tag "Elpaca package" elpaca)
                  (const :tag "Local checkout" local))
   :group 'my/comdirect-web)
