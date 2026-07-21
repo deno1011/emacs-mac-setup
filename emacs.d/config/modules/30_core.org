@@ -651,7 +651,7 @@ Fix the bootstrap (see *Warnings*) and retry"
 #+end_src
 
 * Completion Old Stack (deactivated as the Modern Completion Stack is now active)
-#+begin_src emacs-lisp :eval never
+#+begin_src emacs-lisp :eval never :tangle no
 (use-package smex :ensure t)
 
 (use-package ivy

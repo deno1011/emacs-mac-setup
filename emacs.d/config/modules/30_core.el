@@ -419,24 +419,6 @@ Fix the bootstrap (see *Warnings*) and retry"
 
 (global-set-key (kbd "C-x C-b") 'buffer-menu)
 
-(use-package smex :ensure t)
-
-(use-package ivy
-  :ensure t
-  :diminish ivy-mode
-  :config
-  (ivy-mode t)
-  (setq ivy-initial-inputs-alist nil))
-
-(use-package counsel
-  :ensure t
-  :bind (("M-x" . counsel-M-x)
-         ("C-x x" . smex)))
-
-(use-package swiper
-  :ensure t
-  :bind (("M-s" . swiper)))
-
 (defun my/install-ripgrep ()
   "Install ripgrep automatically if possible."
   (unless (executable-find "rg")
