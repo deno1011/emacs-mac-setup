@@ -799,13 +799,17 @@ build state.
 EAR exposes slash commands, agents, sessions, and runtimes through Emacs'
 standard completion-at-point contract. Vertico remains the global minibuffer
 frontend; Corfu is enabled only in EAR prompt buffers so completion appears
-inline at point.
+inline at point.  In those EAR buffers it opens automatically after the first
+completion character, so slash commands can be discovered by typing `/` and
+then narrowed by continuing to type.
 
 #+begin_src emacs-lisp
 (defun my/ear-enable-inline-completion ()
   "Enable inline completion in EAR prompt buffers."
   (when (fboundp 'corfu-mode)
-    (setq-local corfu-auto nil)
+    (setq-local corfu-auto t)
+    (setq-local corfu-auto-prefix 1)
+    (setq-local corfu-auto-delay 0.05)
     (setq-local corfu-cycle t)
     (corfu-mode 1)))
 

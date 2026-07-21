@@ -498,7 +498,9 @@ Fix the bootstrap (see *Warnings*) and retry"
 (defun my/ear-enable-inline-completion ()
   "Enable inline completion in EAR prompt buffers."
   (when (fboundp 'corfu-mode)
-    (setq-local corfu-auto nil)
+    (setq-local corfu-auto t)
+    (setq-local corfu-auto-prefix 1)
+    (setq-local corfu-auto-delay 0.05)
     (setq-local corfu-cycle t)
     (corfu-mode 1)))
 
