@@ -495,6 +495,22 @@ Fix the bootstrap (see *Warnings*) and retry"
   (completion-category-overrides
    '((file (styles basic partial-completion)))))
 
+(defun my/ear-enable-inline-completion ()
+  "Enable inline completion in EAR prompt buffers."
+  (when (fboundp 'corfu-mode)
+    (setq-local corfu-auto nil)
+    (setq-local corfu-cycle t)
+    (corfu-mode 1)))
+
+(use-package corfu
+  :ensure t
+  :custom
+  (corfu-cycle t)
+  (corfu-auto nil)
+  :hook ((ear-workspace-input-mode . my/ear-enable-inline-completion)
+         (ear-workspace-mode . my/ear-enable-inline-completion)
+         (ear-session-ui-mode . my/ear-enable-inline-completion)))
+
 (use-package consult
 
   :bind

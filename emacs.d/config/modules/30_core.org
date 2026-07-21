@@ -794,6 +794,31 @@ build state.
    '((file (styles basic partial-completion)))))
 #+end_src
 
+** Inline completion for EAR prompts
+
+EAR exposes slash commands, agents, sessions, and runtimes through Emacs'
+standard completion-at-point contract. Vertico remains the global minibuffer
+frontend; Corfu is enabled only in EAR prompt buffers so completion appears
+inline at point.
+
+#+begin_src emacs-lisp
+(defun my/ear-enable-inline-completion ()
+  "Enable inline completion in EAR prompt buffers."
+  (when (fboundp 'corfu-mode)
+    (setq-local corfu-auto nil)
+    (setq-local corfu-cycle t)
+    (corfu-mode 1)))
+
+(use-package corfu
+  :ensure t
+  :custom
+  (corfu-cycle t)
+  (corfu-auto nil)
+  :hook ((ear-workspace-input-mode . my/ear-enable-inline-completion)
+         (ear-workspace-mode . my/ear-enable-inline-completion)
+         (ear-session-ui-mode . my/ear-enable-inline-completion)))
+#+end_src
+
 ** Consult
 
 #+begin_src emacs-lisp
