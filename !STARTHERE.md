@@ -54,6 +54,8 @@ The form only re-opens if something is missing.
 | `async-tasks` framework | `~/.emacs.d/config/modules/10_tasks.el` | [`deno1011/async-tasks`](https://github.com/deno1011/async-tasks) (vendored by install.sh) |
 | Emacs Agent Runtime | `~/emacs-agent-runtime/` | [`deno1011/emacs-agent-runtime`](https://github.com/deno1011/emacs-agent-runtime) (cloned/updated by `install.sh`) |
 | QMD retrieval CLI | optional global CLI | [`@tobilu/qmd`](https://github.com/tobi/qmd), only via `M-x my/emacs-agent-runtime-qmd-install` |
+| Org/EAR diagram renderers | optional Homebrew CLIs | Graphviz, PlantUML, Mermaid CLI, D2; only via `M-x my/org-diagram-renderers-install` |
+| MLX local model | `~/.emacs.d/ear-mlx/` | [`mlx-lm`](https://github.com/ml-explore/mlx-lm), only via `M-x my/emacs-agent-runtime-mlx-install` |
 | Personal data (agenda, GTD, wiki) | `~/emacs-data/` (or whatever Repo name you picked) | your private GitHub repo |
 | Bitwarden master + email | macOS Keychain (`emacs_credentials` service) | Bitwarden |
 | GitHub PAT + API keys | Bitwarden item `emacs_credentials`, mirrored to Keychain | Bitwarden |
@@ -94,10 +96,18 @@ through the bootstrap. Optional QMD retrieval support is configured in EAR, but
 the `qmd` CLI is installed only from inside Emacs via
 `M-x my/emacs-agent-runtime-qmd-install`; it does not index your Org files
 automatically.
+Optional MLX local-model support is also configured, but Python packages and
+model weights are downloaded only when you explicitly run
+`M-x my/emacs-agent-runtime-mlx-install`. Start it later with
+`M-x my/emacs-agent-runtime-mlx-start-server`.
+Optional EAR dashboard diagram rendering is configured the same way: renderer
+CLIs are provisioned only when you explicitly run
+`M-x my/org-diagram-renderers-install`.
 
 After a fresh install, run `M-x my/doctor`. It checks that EAR is loadable, that
 the reusable starter pack is present, and that the optional QMD retrieval pack
-files are available without installing QMD or reading private Org data.
+files and optional diagram renderers are available without installing QMD or
+reading private Org data.
 
 ## Uninstall
 

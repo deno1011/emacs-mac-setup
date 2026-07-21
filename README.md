@@ -236,6 +236,34 @@ download models, export projections, or index private Org files. EAR keeps Org
 as source of truth and expects generated Markdown projections under the
 configured QMD projection directory.
 
+Optional EAR dashboard diagrams use notation-specific renderer CLIs: Graphviz
+for DOT graphs, PlantUML for state/sequence diagrams, Mermaid CLI for workflows,
+and D2 for high-level system maps. These tools are configured with Org's inline
+graphics and Babel diagram support in `40_org.org`, but are not installed by
+`install.sh`. To provision them idempotently from inside Emacs, run:
+
+```text
+M-x my/org-diagram-renderers-install
+```
+
+`M-x my/doctor` reports which optional renderer executable is missing and shows
+the setup-owned install command as the fix.
+
+Optional local generation uses MLX through EAR's normal runtime registry. The
+setup configures `mlx-community/Llama-3.2-3B-Instruct-4bit` as the default
+Apple-Silicon-friendly first model, but does not download Python packages or
+model weights during install or Emacs startup. To provision a fresh machine:
+
+```text
+M-x my/emacs-agent-runtime-mlx-install
+M-x my/emacs-agent-runtime-mlx-start-server
+```
+
+The install command creates `~/.emacs.d/ear-mlx/venv/`, installs `mlx-lm`, and
+warms the configured model so Hugging Face downloads happen explicitly. EAR then
+registers `mlx-local` as a runtime spec pointing at the local
+`mlx_lm.server` OpenAI-compatible endpoint.
+
 The current EAR test-user setup intentionally enables God Mode, write tools,
 Codex approval bypass, and persistent jobs so coaching behavior can be tested
 end to end. Product-ready installs should later switch to source-aware,
@@ -434,6 +462,8 @@ when bootstrap halted (which is the case where you most need it).
 | `EMACS_AGENT_RUNTIME_DIR=/path` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones EAR to a custom path and the Emacs loader uses that path |
 | `my/emacs-agent-runtime-source` | Emacs custom variable | `local` for development checkout, `elpaca` for package-managed installs |
 | `M-x my/emacs-agent-runtime-qmd-install` | Emacs command | optionally installs the reviewed QMD retrieval CLI from config; never runs from `install.sh` |
+| `M-x my/org-diagram-renderers-install` | Emacs command | optionally installs Graphviz, PlantUML, Mermaid CLI, and D2 for Org/EAR diagrams; never runs from `install.sh` |
+| `M-x my/emacs-agent-runtime-mlx-install` | Emacs command | optionally creates the MLX venv, installs `mlx-lm`, and downloads the configured model; never runs from `install.sh` |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
 | `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
 | iCloud CalDAV / account secrets | `M-x my/caldav-setup` → macOS Keychain | per-Mac account & secret values (CalDAV URL with DSID, calendar UUID, Apple ID, app-password) live in the Keychain, never in a config file |

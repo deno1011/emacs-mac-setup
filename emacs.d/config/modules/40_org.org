@@ -96,6 +96,38 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
       "%80ITEM(Task) %10Effort(Effort){:} %10CLOCKSUM")
 #+end_src
 
+** Visual Tables And Modern Org Styling
+#+begin_src emacs-lisp
+(use-package org-modern
+  :ensure t
+  :after org
+  :custom
+  (org-modern-table nil)
+  :hook ((org-mode . org-modern-mode)
+         (ear-workspace-mode . org-modern-mode)
+         (ear-session-ui-mode . org-modern-mode)
+         (ear-report-mode . org-modern-mode)
+         (org-agenda-finalize . org-modern-agenda)))
+
+(use-package valign
+  :ensure t
+  :after org
+  :hook ((org-mode . valign-mode)
+         (ear-workspace-mode . valign-mode)
+         (ear-session-ui-mode . valign-mode)
+         (ear-report-mode . valign-mode)))
+
+(use-package org-pretty-table
+  :ensure (org-pretty-table
+           :host github
+           :repo "Fuco1/org-pretty-table")
+  :after org
+  :hook ((org-mode . org-pretty-table-mode)
+         (ear-workspace-mode . org-pretty-table-mode)
+         (ear-session-ui-mode . org-pretty-table-mode)
+         (ear-report-mode . org-pretty-table-mode)))
+#+end_src
+
 * Key Bindings & Helper Functions
 #+begin_src emacs-lisp
 ;; Standard org keys (C-c l already set in Org Capture)
@@ -734,7 +766,7 @@ idempotent first-install behavior during bootstrap.
       (make-directory org-root t)
       (message "gtd: created %s" org-root))))
 
-;; Data-dir.el gate (RESTORED): on a first-launch the form (which
+;; Data-dir.el gate (RESTORED): on a first-launch this form
 ;; Only run when bootstrap has converged — otherwise `my/data-dir'
 ;; is the `:not-resolved' sentinel and `expand-file-name' would
 ;; type-error. `(my/bootstrap-ready-p)' is the new design's gate;
