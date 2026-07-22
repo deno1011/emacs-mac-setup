@@ -115,7 +115,12 @@
   :hook ((org-mode . org-pretty-table-mode)
          (ear-workspace-mode . org-pretty-table-mode)
          (ear-session-ui-mode . org-pretty-table-mode)
-         (ear-report-mode . org-pretty-table-mode)))
+         (ear-report-mode . org-pretty-table-mode))
+  :config
+  ;; Enable everywhere.  The :hook alone did not reliably activate it (org
+  ;; tables rendered with plain |/-/+); the global mode does, and also styles
+  ;; tables in buffers already open when it loads.  Renders in TTY too.
+  (global-org-pretty-table-mode 1))
 
 ;; Standard org keys (C-c l already set in Org Capture)
 (global-set-key (kbd "<f12>")    'org-agenda)
