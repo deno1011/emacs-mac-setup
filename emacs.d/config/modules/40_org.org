@@ -107,7 +107,12 @@ Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][ini
          (ear-workspace-mode . org-modern-mode)
          (ear-session-ui-mode . org-modern-mode)
          (ear-report-mode . org-modern-mode)
-         (org-agenda-finalize . org-modern-agenda)))
+         (org-agenda-finalize . org-modern-agenda))
+  :config
+  ;; Enable org-modern everywhere.  The :hook alone did not reliably activate
+  ;; it (org buffers rendered plain); the global mode does, and also styles
+  ;; buffers already open when it loads.
+  (global-org-modern-mode 1))
 
 (use-package valign
   :ensure t
