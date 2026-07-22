@@ -99,13 +99,14 @@
   ;; buffers already open when it loads.
   (global-org-modern-mode 1))
 
+;; valign is disabled for org: it conflicts with org-pretty-table (both render
+;; the same table, which left box borders misaligned).  org-pretty-table plus
+;; native monospace alignment gives flush box tables.  valign stays installed
+;; and can be turned on manually via M-x valign-mode if ever needed (e.g. a
+;; proportional font or wide CJK/emoji cells).
 (use-package valign
   :ensure t
-  :after org
-  :hook ((org-mode . valign-mode)
-         (ear-workspace-mode . valign-mode)
-         (ear-session-ui-mode . valign-mode)
-         (ear-report-mode . valign-mode)))
+  :after org)
 
 (use-package org-pretty-table
   :ensure (org-pretty-table
@@ -120,7 +121,12 @@
   ;; Enable everywhere.  The :hook alone did not reliably activate it (org
   ;; tables rendered with plain |/-/+); the global mode does, and also styles
   ;; tables in buffers already open when it loads.  Renders in TTY too.
-  (global-org-pretty-table-mode 1))
+  (global-org-pretty-table-mode 1)
+  ;; Box lines only connect vertically when there is no inter-line gap, so drop
+  ;; line-spacing to 0 in the table-showing modes (the global default is 3).
+  (dolist (h (list (quote org-mode-hook) (quote ear-workspace-mode-hook)
+                   (quote ear-session-ui-mode-hook) (quote ear-report-mode-hook)))
+    (add-hook h (lambda () (setq-local line-spacing 0)))))
 
 ;; Standard org keys (C-c l already set in Org Capture)
 (global-set-key (kbd "<f12>")    'org-agenda)
