@@ -293,6 +293,26 @@ uninstall later") stay the same.
   (exec-path-from-shell-initialize))
 #+end_src
 
+* macOS keyboard input
+
+On a German macOS keyboard, =Option-L= produces =@= and many other useful
+characters similarly depend on the left Option key.  Treating that key as
+Emacs Meta turns =Option-L= into =M-l= instead, so the character cannot reach
+an inline prompt such as EAR's =/new @agent= selector.  Keep the left Option
+key for normal macOS text input and reserve the right Option key for Meta
+shortcuts.  Configure both the NS and Mac-port variable names so the setting
+survives a switch between Emacs builds.
+
+#+begin_src emacs-lisp
+(when (eq system-type 'darwin)
+  (dolist (variable '(ns-option-modifier mac-option-modifier))
+    (when (boundp variable)
+      (set variable 'none)))
+  (dolist (variable '(ns-right-option-modifier mac-right-option-modifier))
+    (when (boundp variable)
+      (set variable 'meta))))
+#+end_src
+
 * UI & Appearance
 #+begin_src emacs-lisp
 (add-to-list 'default-frame-alist

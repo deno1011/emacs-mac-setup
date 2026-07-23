@@ -156,6 +156,14 @@
   :config
   (exec-path-from-shell-initialize))
 
+(when (eq system-type 'darwin)
+  (dolist (variable '(ns-option-modifier mac-option-modifier))
+    (when (boundp variable)
+      (set variable 'none)))
+  (dolist (variable '(ns-right-option-modifier mac-right-option-modifier))
+    (when (boundp variable)
+      (set variable 'meta))))
+
 (add-to-list 'default-frame-alist
              `(inhibit-double-buffering . ,(eq system-type 'gnu/linux)))
 (tool-bar-mode -1)
