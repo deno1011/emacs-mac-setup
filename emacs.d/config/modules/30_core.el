@@ -159,10 +159,10 @@
 (when (eq system-type 'darwin)
   (dolist (variable '(ns-option-modifier mac-option-modifier))
     (when (boundp variable)
-      (set variable 'none)))
+      (set variable 'meta)))
   (dolist (variable '(ns-right-option-modifier mac-right-option-modifier))
     (when (boundp variable)
-      (set variable 'meta))))
+      (set variable 'none))))
 
 (add-to-list 'default-frame-alist
              `(inhibit-double-buffering . ,(eq system-type 'gnu/linux)))
