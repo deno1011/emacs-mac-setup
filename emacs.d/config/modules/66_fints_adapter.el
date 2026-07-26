@@ -7,10 +7,18 @@
 (defvar fints-blz)
 (defvar fints-server)
 (defvar fints-product-id)
+(defvar fints-product-id-account)
 (defvar fints-user-account)
 (defvar fints-pin-account)
 (defvar fints-python)
+(defvar fints-state-directory)
+(defvar fints-tan-wait-seconds)
+(defvar fints-last-result)
+(declare-function my/api-key-fetch "20.03.01_bootstrap" (key-name))
+(declare-function my/api-key-store "20.02.03_bootstrap_secrets" (key-name value))
 (declare-function fints-balances "fints")
+(declare-function fints-accounts "fints")
+(declare-function fints-accounts-sync "fints")
 (declare-function fints-transfer "fints")
 
 (defcustom my/fints-source 'elpaca
@@ -49,10 +57,9 @@
   "FinTS endpoint URL for the bank (verify the current value)."
   :type 'string :group 'my/fints)
 
-(defcustom my/fints-product-id nil
-  "Registered FinTS product id (mandatory, <= 25 chars).
-Register free at https://www.hbci-zka.de/register/prod_register.htm and set it."
-  :type '(choice (const :tag "Unset — register first" nil) string)
+(defcustom my/fints-product-id-account "COMDIRECT_FINTS_PRODUCT_ID"
+  "Keychain account containing the 25-character FinTS product id."
+  :type 'string
   :group 'my/fints)
 
 (defcustom my/fints-user-account "COMDIRECT_FINTS_USER"
@@ -69,17 +76,89 @@ The system python is used by default because the Homebrew python is
 externally-managed (PEP 668) and rejects a plain --user install."
   :type 'string :group 'my/fints)
 
+(defcustom my/fints-state-directory "~/.emacs.d/fints-state/"
+  "Private persistent FinTS client state used by daemon and workers."
+  :type 'directory :group 'my/fints)
+
+(defcustom my/fints-tan-wait-seconds 120
+  "Seconds to poll a decoupled TAN approval in the bank app."
+  :type 'integer :group 'my/fints)
+
 (defun my/fints-apply-config ()
   "Push this module's bank settings into the loaded FinTS package."
   (dolist (pair `((fints-bank-name    . ,my/fints-bank-name)
                   (fints-blz          . ,my/fints-blz)
                   (fints-server       . ,my/fints-server)
-                  (fints-product-id   . ,my/fints-product-id)
+                  (fints-product-id   . nil)
+                  (fints-product-id-account . ,my/fints-product-id-account)
                   (fints-user-account . ,my/fints-user-account)
                   (fints-pin-account  . ,my/fints-pin-account)
-                  (fints-python       . ,my/fints-python)))
+                  (fints-python       . ,my/fints-python)
+                  (fints-state-directory . ,my/fints-state-directory)
+                  (fints-tan-wait-seconds . ,my/fints-tan-wait-seconds)))
     (when (boundp (car pair))
       (set (car pair) (cdr pair)))))
+
+(defun my/fints--secret (account)
+  "Return Keychain value for ACCOUNT through the bootstrap public API."
+  (and (fboundp 'my/api-key-fetch)
+       (my/api-key-fetch account)))
+
+(defun my/fints-doctor-status ()
+  "Return a secret-free FinTS readiness plist for `my/doctor'."
+  (let* ((product-id (my/fints--secret my/fints-product-id-account))
+         (user (my/fints--secret my/fints-user-account))
+         (pin (my/fints--secret my/fints-pin-account))
+         (python-ok
+          (and (file-executable-p my/fints-python)
+               (eq 0 (call-process my/fints-python nil nil nil
+                                   "-c" "import fints")))))
+    (list :package-loaded (featurep 'fints)
+          :python-ready python-ok
+          :user-ready (and (stringp user) (not (string-empty-p user)))
+          :pin-ready (and (stringp pin) (not (string-empty-p pin)))
+          :product-id-ready (and (stringp product-id)
+                                 (= (length product-id) 25))
+          :product-id-length (if (stringp product-id) (length product-id) 0)
+          :last-status (and (boundp 'fints-last-result)
+                            (plist-get fints-last-result :status))
+          :last-provider-code (and (boundp 'fints-last-result)
+                                   (plist-get fints-last-result :provider_code))
+          :server my/fints-server)))
+
+;;;###autoload
+(defun my/fints-doctor-connect ()
+  "Run a read-only FinTS account probe asynchronously.
+No transfer is prepared or executed.  A required app approval is reported as a
+TAN challenge; no web interface is opened."
+  (interactive)
+  (unless (require 'fints nil t)
+    (user-error "FinTS package is not loaded"))
+  (my/fints-apply-config)
+  (let ((status (my/fints-doctor-status)))
+    (dolist (key '(:python-ready :user-ready :pin-ready :product-id-ready))
+      (unless (plist-get status key)
+        (user-error "FinTS Doctor prerequisite missing: %s" key))))
+  (fints-accounts)
+  (message "FinTS Doctor: read-only account probe started"))
+
+;;;###autoload
+(defun my/fints-doctor-setup (product-id)
+  "Store PRODUCT-ID in Keychain and start a read-only FinTS probe.
+The local minibuffer masks the value; it never passes through EAR or a model."
+  (interactive
+   (list (string-trim
+          (read-passwd "FinTS Product-ID (exactly 25 characters): "))))
+  (unless (= (length product-id) 25)
+    (user-error "The registered FinTS Product-ID must contain exactly 25 characters"))
+  (unless (fboundp 'my/api-key-store)
+    (user-error "Bootstrap secrets module is not loaded"))
+  (unless (eq (my/api-key-store my/fints-product-id-account product-id) :ok)
+    (user-error "Could not store the FinTS Product-ID in the macOS Keychain"))
+  (setq product-id nil)
+  (my/fints-apply-config)
+  (message "FinTS Doctor: Product-ID stored; starting read-only connection test")
+  (my/fints-doctor-connect))
 
 (defun my/fints-install-python-fints-command ()
   "Return the shell command that installs python-fints for `my/fints-python'."

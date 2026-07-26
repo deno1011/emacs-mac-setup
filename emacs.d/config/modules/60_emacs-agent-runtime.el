@@ -1,6 +1,8 @@
 ;;; 60_emacs-agent-runtime.el --- gptel and Emacs agent runtime loader -*- lexical-binding: t; -*-
 
 (require 'cl-lib)
+(require 'seq)
+(require 'subr-x)
 
 (defvar my/gptel-backends nil)
 (defvar my/gptel-ollama-backend nil)
@@ -12,6 +14,7 @@
 (defvar gptel-use-tools)
 (defvar my/data-dir)
 (defvar ear-config-directory)
+(defvar ear-config--loaded-directory)
 (defvar my/emacs-agent-runtime-dir
   (expand-file-name "~/emacs-agent-runtime"))
 (defvar my/gptel-ollama-host "localhost:11434")
@@ -39,6 +42,9 @@
                   "ear-runtime-registry" (id &rest props))
 (declare-function ear-scheduler-auto-start-jobs
                   "ear-scheduler" (&optional runtime-fn))
+(declare-function ear-scheduler-list "ear-scheduler" ())
+(declare-function ear-scheduler-running-p "ear-scheduler" (id))
+(declare-function ear-config-reload "ear-config" (&optional directory context))
 (declare-function my/api-key-fetch "20.03.01_bootstrap" (key-name))
 (declare-function my/api-key-store "20.02.03_bootstrap_secrets" (key-name value))
 
@@ -80,12 +86,14 @@ module owns the personal macOS/Bitwarden/Keychain binding."
   :type 'boolean
   :group 'emacs-agent-runtime)
 
-(defcustom my/emacs-agent-runtime-overlay-subdirectory "ear/"
-  "Subdirectory below `my/data-dir' containing personal EAR declarations.
-The setup bootstrap resolves `my/data-dir' from the selected private repo name.
-This module then binds EAR to that repo-local overlay before requiring the
-runtime package."
-  :type 'string
+(defcustom my/emacs-agent-runtime-workspace-directory
+  (expand-file-name "declarations/workspace/" my/emacs-agent-runtime-dir)
+  "Directory containing the active EAR workspace declarations.
+The workspace may add core, capability, and personal declaration roots through
+its declarative layer settings.  Keeping this one entry point in setup means a
+renamed or separately installed EAR checkout needs no path edits in agent
+files."
+  :type 'directory
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
@@ -99,6 +107,9 @@ runtime package."
                  (const :tag "Codex CLI" codex)
                  (const :tag "Default EAR runtime" default))
   :group 'emacs-agent-runtime)
+
+(defvar my/emacs-agent-runtime--startup-reconciled nil
+  "Non-nil after this Emacs process loaded the configured EAR declarations.")
 
 (defcustom my/emacs-agent-runtime-source 'local
   "Where this setup loads Emacs Agent Runtime from.
@@ -256,18 +267,41 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
       (user-error "Failed to store token: %S" result))))
 
 (defun my/emacs-agent-runtime-config-directory ()
-  "Return the personal EAR overlay directory below `my/data-dir'."
-  (when (and (boundp 'my/data-dir)
-             (stringp my/data-dir))
+  "Return the configured EAR workspace declaration directory."
+  (when (and (boundp 'my/emacs-agent-runtime-workspace-directory)
+             (stringp my/emacs-agent-runtime-workspace-directory))
     (file-name-as-directory
-     (expand-file-name my/emacs-agent-runtime-overlay-subdirectory
-                       my/data-dir))))
+     (expand-file-name my/emacs-agent-runtime-workspace-directory))))
 
 (defun my/emacs-agent-runtime-apply-overlay-config ()
-  "Bind EAR to the overlay directory chosen by the setup bootstrap."
+  "Bind EAR to the declaration entry point chosen by this setup."
   (let ((directory (my/emacs-agent-runtime-config-directory)))
     (when directory
       (setq ear-config-directory directory))))
+
+(defun my/emacs-agent-runtime-reconcile-declarations (&optional force)
+  "Load the configured EAR declaration graph once, or again when FORCE is non-nil.
+
+This deliberately runs after `ear-config-directory' has been bound and before
+the default runtime is created.  It repairs partial early loads caused by a
+package requiring EAR before the main EAR setup block has run."
+  (when (and (fboundp 'ear-config-reload)
+             (or force (not my/emacs-agent-runtime--startup-reconciled)))
+    (let* ((directory (my/emacs-agent-runtime-config-directory))
+           (result
+            (condition-case error
+                (ear-config-reload directory)
+              (error
+               (list :status 'error
+                     :reason (error-message-string error))))))
+      (if (eq (plist-get result :status) 'ok)
+          (setq my/emacs-agent-runtime--startup-reconciled t)
+        (display-warning
+         'emacs-agent-runtime
+         (format "EAR declaration reconciliation failed: %s"
+                 (or (plist-get result :reason) result))
+         :error))
+      result)))
 
 (defun my/emacs-agent-runtime-apply-qmd-config ()
   "Apply setup-owned QMD defaults to EAR's optional retrieval boundary."
@@ -374,15 +408,66 @@ projections, index Org files, or download models intentionally."
      (t nil))))
 
 (defun my/emacs-agent-runtime-start-scheduler-jobs ()
-  "Start EAR scheduler jobs that opt into auto-start."
+  "Start EAR scheduler jobs that opt into auto-start and report failures."
   (when (and my/emacs-agent-runtime-auto-start-scheduler-jobs
              (fboundp 'ear-scheduler-auto-start-jobs))
-    (ear-scheduler-auto-start-jobs
-     #'my/emacs-agent-runtime-scheduler-runtime)))
+    (let* ((result
+            (ear-scheduler-auto-start-jobs
+             #'my/emacs-agent-runtime-scheduler-runtime))
+           (missing
+            (when (and (fboundp 'ear-scheduler-list)
+                       (fboundp 'ear-scheduler-running-p))
+              (delq
+               nil
+               (mapcar
+                (lambda (job)
+                  (let ((id (plist-get job :id)))
+                    (when (and (plist-get job :auto-start)
+                               (not (ear-scheduler-running-p id)))
+                      id)))
+                (ear-scheduler-list))))))
+      (when missing
+        (display-warning
+         'emacs-agent-runtime
+         (format "EAR auto-start jobs are not running: %s"
+                 (string-join missing ", "))
+         :warning))
+      (append result (list :missing missing)))))
+
+(defun my/emacs-agent-runtime-scheduler-health ()
+  "Show whether every registered EAR auto-start job is running."
+  (interactive)
+  (unless (and (fboundp 'ear-scheduler-list)
+               (fboundp 'ear-scheduler-running-p))
+    (user-error "EAR scheduler is not loaded"))
+  (let* ((jobs
+          (seq-filter
+           (lambda (job) (plist-get job :auto-start))
+           (ear-scheduler-list)))
+         (states
+          (mapcar
+           (lambda (job)
+             (cons (plist-get job :id)
+                   (and (ear-scheduler-running-p (plist-get job :id)) t)))
+           jobs))
+         (missing (mapcar #'car (seq-remove #'cdr states))))
+    (when (called-interactively-p 'interactive)
+      (message "EAR auto-start: %d/%d running%s"
+               (- (length states) (length missing))
+               (length states)
+               (if missing
+                   (format "; missing %s" (string-join missing ", "))
+                 "")))
+    (list :status (if missing 'error 'ok)
+          :registered (length states)
+          :running (- (length states) (length missing))
+          :missing missing
+          :jobs states)))
 
 (defun my/emacs-agent-runtime--apply-loaded-config ()
   "Apply setup-owned defaults after EAR has loaded."
   (my/emacs-agent-runtime-apply-overlay-config)
+  (my/emacs-agent-runtime-reconcile-declarations)
   (when (fboundp 'ear-get-default-runtime)
     (ear-get-default-runtime))
   (when (fboundp 'emacs-agent-runtime-mode)
@@ -487,6 +572,11 @@ projections, index Org files, or download models intentionally."
    "codex" prompt nil
    (when (fboundp 'ear-adapter-cli--current-context-text)
      (ear-adapter-cli--current-context-text))))
+
+;; Bind EAR's declaration root before demanding gptel.  gptel integrations may
+;; load EAR transitively, so doing this only in gptel's :config block is too
+;; late and can leave EAR partially initialized against the wrong directory.
+(my/emacs-agent-runtime-apply-overlay-config)
 
 ;; gptel remains the chat UI/backend client. The old gptel-agent-runtime package
 ;; is intentionally not installed or loaded from this module anymore.

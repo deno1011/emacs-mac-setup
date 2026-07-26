@@ -15,6 +15,7 @@
 (declare-function my/keychain-get-internet         "20.01.01_bootstrap_keychain")
 (declare-function my/keychain-get                  "20.01.01_bootstrap_keychain")
 (declare-function my/api-key-fetch                 "20.03.01_bootstrap" (key-name))
+(declare-function my/fints-doctor-status           "66_fints_adapter")
 (declare-function my/git-remote-url                "20.01.02_bootstrap_git")
 (declare-function my/gh-auth-status                "20.01.03_bootstrap_gh")
 (defvar my/emacs-agent-runtime-source)
@@ -309,6 +310,48 @@ and :fix. The :label is supplied by this macro."
                                                   rows))
                                          ", "))))
        (t (list :status :ok :detail detail)))))))
+
+(my/doctor-define-check "FinTS bank backend"
+  (let ((status (and (fboundp 'my/fints-doctor-status)
+                     (my/fints-doctor-status))))
+    (cond
+     ((not status)
+      (list :status :warn
+            :detail "FinTS configuration module is not loaded"
+            :fix "reload modules/66_fints_adapter"))
+     ((not (plist-get status :package-loaded))
+      (list :status :warn
+            :detail "FinTS package is not loaded"
+            :fix "check the emacs-fints-adapter checkout/package"))
+     ((not (plist-get status :python-ready))
+      (list :status :fail
+            :detail "python-fints is unavailable in the configured Python"
+            :fix "M-x my/fints-install-python-fints"))
+     ((not (plist-get status :user-ready))
+      (list :status :fail
+            :detail "FinTS login is missing from the macOS Keychain"
+            :fix "store COMDIRECT_FINTS_USER with M-x my/credential-set"))
+     ((not (plist-get status :pin-ready))
+      (list :status :fail
+            :detail "FinTS PIN is missing from the macOS Keychain"
+            :fix "store COMDIRECT_FINTS_PIN with M-x my/credential-set"))
+     ((not (plist-get status :product-id-ready))
+      (list :status :warn
+            :detail
+            (format "FinTS Product-ID missing/invalid (stored length: %d)"
+                    (or (plist-get status :product-id-length) 0))
+            :fix "M-x my/fints-doctor-setup"))
+     ((equal (plist-get status :last-status) "error")
+      (list :status :warn
+            :detail
+            (format "FinTS prerequisites ready; last read probe failed%s"
+                    (if-let ((code (plist-get status :last-provider-code)))
+                        (format " (bank code %s)" code)
+                      ""))
+            :fix "M-x my/fints-doctor-connect"))
+     (t
+      (list :status :ok
+            :detail "FinTS package, Python and Keychain credentials are ready; read-only probe: M-x my/fints-doctor-connect")))))
 
 (my/doctor-define-check "Claude subscription token (EAR claude -p)"
   (let ((stored   (and (fboundp 'my/api-key-fetch)
