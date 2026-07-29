@@ -14,6 +14,12 @@
 (defvar gptel-use-tools)
 (defvar my/data-dir)
 (defvar ear-config-directory)
+(defvar ear-config-extra-directories)
+(defvar ear-config-authoring-directory)
+(defvar ear-config-private-directory)
+(defvar ear-config-extension-directories)
+(defvar ear-source-overlay-core-directory)
+(defvar ear-source-overlay-private-directory)
 (defvar ear-config--loaded-directory)
 (defvar my/emacs-agent-runtime-dir
   (expand-file-name "~/emacs-agent-runtime"))
@@ -89,11 +95,48 @@ module owns the personal macOS/Bitwarden/Keychain binding."
 (defcustom my/emacs-agent-runtime-workspace-directory
   (expand-file-name "declarations/workspace/" my/emacs-agent-runtime-dir)
   "Directory containing the active EAR workspace declarations.
-The workspace may add core, capability, and personal declaration roots through
-its declarative layer settings.  Keeping this one entry point in setup means a
-renamed or separately installed EAR checkout needs no path edits in agent
-files."
+Reusable shipped core/capability layers are selected by the EAR manifest.
+This setup owns external overlay paths so private repositories never need to
+be named inside reusable declarations.  Keeping this one entry point in setup
+means a renamed or separately installed EAR checkout needs no path edits in
+agent files."
   :type 'directory
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-personal-directory nil
+  "User-owned EAR declaration overlay.
+When nil, derive `ear-config/' below the private data repository selected by
+the bootstrap subsystem.  The directory is loaded after the reusable workspace
+layer and is the only default target for autonomous declaration authoring."
+  :type '(choice (const :tag "Use <private-data-repo>/ear-config/" nil)
+                 directory)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-private-directory nil
+  "User-owned repository root for writable EAR content.
+When nil, use the private data repository selected by the bootstrap subsystem.
+Normal agents may read reusable EAR Core, but their writable file boundary is
+this directory.  Its `ear-config/' child contains declaration overlays and its
+`ear-extensions/lisp/' child contains private executable extensions."
+  :type '(choice (const :tag "Use the private data repository" nil)
+                 directory)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-source-overlay-directory nil
+  "User-owned relative-path mirror of the complete EAR Core tree.
+When nil, use `ear-overrides/' below
+`my/emacs-agent-runtime-private-directory'.  A file in this directory shadows
+the Core file with the same relative path; missing private files fall back to
+Core.  This includes Lisp, declarations, tools, adapters, docs, and scripts."
+  :type '(choice (const :tag "Use <private-data-repo>/ear-overrides/" nil)
+                 directory)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-extension-directories nil
+  "Private Lisp directories added to EAR and process-worker load paths.
+When nil, use `ear-extensions/lisp/' below
+`my/emacs-agent-runtime-private-directory'."
+  :type '(repeat directory)
   :group 'emacs-agent-runtime)
 
 (defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
@@ -273,11 +316,139 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
     (file-name-as-directory
      (expand-file-name my/emacs-agent-runtime-workspace-directory))))
 
+(defun my/emacs-agent-runtime-personal-config-directory ()
+  "Return the configured user-owned EAR declaration overlay."
+  (let ((directory
+         (or my/emacs-agent-runtime-personal-directory
+             (when-let ((root
+                         (my/emacs-agent-runtime-private-root-directory)))
+               (expand-file-name "ear-config/" root)))))
+    (when (stringp directory)
+      (file-name-as-directory (expand-file-name directory)))))
+
+(defun my/emacs-agent-runtime-private-root-directory ()
+  "Return the configured user-owned EAR repository root."
+  (let ((directory
+         (or my/emacs-agent-runtime-private-directory
+             (and (stringp my/data-dir) my/data-dir))))
+    (when (stringp directory)
+      (file-name-as-directory (expand-file-name directory)))))
+
+(defun my/emacs-agent-runtime-private-extension-directories ()
+  "Return configured private EAR Lisp extension directories."
+  (let ((directories
+         (or my/emacs-agent-runtime-extension-directories
+             (when-let ((root
+                         (my/emacs-agent-runtime-private-root-directory)))
+               (list (expand-file-name "ear-extensions/lisp/" root))))))
+    (mapcar (lambda (directory)
+              (file-name-as-directory (expand-file-name directory)))
+            directories)))
+
+(defun my/emacs-agent-runtime-source-overlay-root-directory ()
+  "Return the configured user-owned EAR source overlay root."
+  (let ((directory
+         (or my/emacs-agent-runtime-source-overlay-directory
+             (when-let ((root
+                         (my/emacs-agent-runtime-private-root-directory)))
+               (expand-file-name "ear-overrides/" root)))))
+    (when (stringp directory)
+      (file-name-as-directory (expand-file-name directory)))))
+
+(defun my/emacs-agent-runtime-core-root-directory (&optional load-directory)
+  "Return EAR Core root inferred from LOAD-DIRECTORY or setup configuration."
+  (let* ((candidate
+          (or load-directory
+              (and (eq my/emacs-agent-runtime-source 'local)
+                   my/emacs-agent-runtime-dir)
+              (when-let ((library
+                          (locate-library "emacs-agent-runtime")))
+                (file-name-directory library))))
+         (directory
+          (and (stringp candidate)
+               (file-name-as-directory (expand-file-name candidate)))))
+    (when directory
+      (if (string= (file-name-nondirectory
+                    (directory-file-name directory))
+                   "lisp")
+          (file-name-directory (directory-file-name directory))
+        directory))))
+
+(defun my/emacs-agent-runtime--lisp-directories (root)
+  "Return ROOT and its Lisp subdirectories in stable order."
+  (let (result)
+    (cl-labels
+        ((walk
+          (directory)
+          (when (file-directory-p directory)
+            (push (file-name-as-directory directory) result)
+            (dolist (entry
+                     (directory-files
+                      directory t directory-files-no-dot-files-regexp))
+              (when (and (file-directory-p entry)
+                         (not (member
+                               (file-name-nondirectory
+                                (directory-file-name entry))
+                               '(".git" ".ear-overlay-meta"))))
+                (walk entry))))))
+      (when root
+        (walk (expand-file-name "lisp/" root))))
+    (sort (delete-dups result) #'string<)))
+
+(defun my/emacs-agent-runtime-install-source-overlay-load-paths
+    (&optional core-root)
+  "Install private EAR Lisp paths ahead of CORE-ROOT before EAR is required."
+  (let* ((core (my/emacs-agent-runtime-core-root-directory core-root))
+         (private
+          (my/emacs-agent-runtime-source-overlay-root-directory))
+         (core-lisp (my/emacs-agent-runtime--lisp-directories core))
+         (private-lisp
+          (my/emacs-agent-runtime--lisp-directories private)))
+    (setq ear-source-overlay-core-directory core
+          ear-source-overlay-private-directory private)
+    ;; Cons Core first and private last so every private directory ends up
+    ;; before every Core directory in `load-path'.
+    (dolist (directory (append core-lisp private-lisp))
+      (setq load-path (cons directory (delete directory load-path))))
+    (append private-lisp core-lisp)))
+
+(defun my/emacs-agent-runtime-ensure-personal-overlay ()
+  "Create the standard user-owned EAR layer and extension roots idempotently."
+  (when-let ((directory
+              (my/emacs-agent-runtime-personal-config-directory)))
+    (dolist (relative '("agents" "shared" "state"))
+      (make-directory (expand-file-name relative directory) t))
+    (dolist (extension
+             (my/emacs-agent-runtime-private-extension-directories))
+      (make-directory extension t))
+    (when-let ((source-overlay
+                (my/emacs-agent-runtime-source-overlay-root-directory)))
+      (dolist (relative
+               '("lisp" "lisp/adapters" "lisp/tools" "declarations"))
+        (make-directory (expand-file-name relative source-overlay) t)))
+    directory))
+
 (defun my/emacs-agent-runtime-apply-overlay-config ()
   "Bind EAR to the declaration entry point chosen by this setup."
-  (let ((directory (my/emacs-agent-runtime-config-directory)))
+  (let ((directory (my/emacs-agent-runtime-config-directory))
+        (private-directory
+         (my/emacs-agent-runtime-private-root-directory))
+        (personal-directory
+         (my/emacs-agent-runtime-ensure-personal-overlay)))
     (when directory
-      (setq ear-config-directory directory))))
+      (setq ear-config-directory directory))
+    (setq ear-config-extra-directories
+          (if personal-directory
+              (list personal-directory)
+            nil)
+          ear-config-authoring-directory personal-directory
+          ear-config-private-directory private-directory
+          ear-config-extension-directories
+          (my/emacs-agent-runtime-private-extension-directories)
+          ear-source-overlay-core-directory
+          (my/emacs-agent-runtime-core-root-directory)
+          ear-source-overlay-private-directory
+          (my/emacs-agent-runtime-source-overlay-root-directory))))
 
 (defun my/emacs-agent-runtime-reconcile-declarations (&optional force)
   "Load the configured EAR declaration graph once, or again when FORCE is non-nil.
@@ -494,6 +665,7 @@ projections, index Org files, or download models intentionally."
          :branch ,my/emacs-agent-runtime-elpaca-branch
          :files ,my/emacs-agent-runtime-elpaca-files)
         (my/emacs-agent-runtime-apply-overlay-config)
+        (my/emacs-agent-runtime-install-source-overlay-load-paths)
         (require 'emacs-agent-runtime nil t)))
     (when (fboundp 'elpaca-wait)
       (elpaca-wait))))
@@ -517,6 +689,7 @@ projections, index Org files, or download models intentionally."
      ((featurep 'emacs-agent-runtime)
       (my/emacs-agent-runtime--apply-loaded-config))
      ((eq my/emacs-agent-runtime-source 'elpaca)
+      (my/emacs-agent-runtime-install-source-overlay-load-paths)
       (if (require 'emacs-agent-runtime nil t)
           (my/emacs-agent-runtime--apply-loaded-config)
         (message "emacs-agent-runtime not available from Elpaca package")
@@ -530,6 +703,7 @@ projections, index Org files, or download models intentionally."
       nil)
      (t
       (add-to-list 'load-path load-dir)
+      (my/emacs-agent-runtime-install-source-overlay-load-paths root)
       (if (require 'emacs-agent-runtime nil t)
           (progn
             (my/emacs-agent-runtime--apply-loaded-config)

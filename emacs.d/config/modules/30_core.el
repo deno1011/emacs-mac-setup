@@ -548,8 +548,9 @@ Fix the bootstrap (see *Warnings*) and retry"
    ;; Imenu/symbols
    ("C-c m"   . consult-imenu)
 
-   ;; Git grep
-   ("C-c g"   . consult-git-grep)
+   ;; Git grep.  Keep lowercase `C-c g' free for the GTD prefix installed by
+   ;; 80_gtd.org later in the module order.
+   ("C-c G"   . consult-git-grep)
 
    ;; Errors
    ("C-c e"   . consult-flymake)))
