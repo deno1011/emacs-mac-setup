@@ -713,8 +713,9 @@ package. In both modes QMD remains an optional external CLI configured by this
 module, not an EAR package dependency.
 
 The private repository also owns =ear-overrides/=. It mirrors the complete EAR
-package by relative path: =ear-overrides/lisp/ear-runtime.el= shadows
-=<EAR>/lisp/ear-runtime.el=, while a missing private path falls back to Core.
+package by relative path: =ear-overrides/lisp/modules/runtime/ear-runtime.el=
+shadows =<EAR>/lisp/modules/runtime/ear-runtime.el=, while a missing private
+path falls back to Core.
 This setup installs private Lisp directories before the first EAR =require=,
 then EAR applies the same rule to declarations and path-aware tools. Use
 =ear-config/= for additive declarations, =ear-extensions/lisp/= for additive
