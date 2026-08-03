@@ -3,7 +3,8 @@
 This file covers the general code rules for **non-bootstrap configuration**
 under `emacs.d/config/`. It describes how the actual feature modules
 (`30_core.org`, `40_org.org`, `50_apple_reminders.org`, `60_emacs-agent-runtime.org`,
-`70_wiki.org`, `80_gtd.org`, plus any future ones) are organised, and
+`61_ear_agent_shell.org`, `70_wiki.org`, `80_gtd.org`, plus any future ones)
+are organised, and
 which guardrails apply when editing them.
 
 The bootstrap subsystem has its own stricter rules in
@@ -122,6 +123,7 @@ modules/
   40_org.org             ← Org, agenda, GTD, capture, roam
   50_apple_reminders.org
   60_emacs-agent-runtime.org
+  61_ear_agent_shell.org  ← optional GPL Agent Shell UI over ACP
   70_wiki.org
   80_gtd.org
 ```

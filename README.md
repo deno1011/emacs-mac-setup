@@ -58,7 +58,8 @@ emacs-mac-setup/
             ├── 30_core.org           # base Emacs, completion, magit, modeline
             ├── 40_org.org            # org-mode, agenda, GTD, capture, org-roam, LaTeX
             ├── 50_apple_reminders.org
-            ├── 60_gptel.org          # LLM backends (Claude, OpenAI, Gemini, Groq, …)
+            ├── 60_emacs-agent-runtime.org # EAR loader and LLM backends
+            ├── 61_ear_agent_shell.org # optional GPL Agent Shell ACP client
             ├── 70_wiki.org           # LLM-Wiki helpers
             ├── 80_gtd.org            # compact GTD defaults + assistant skill manuals
             └── 90_doctor.org         # M-x my/doctor — health check
@@ -174,7 +175,8 @@ headings.
 | `30_core.org` | base Emacs, completion, modeline, magit, font, GC, font |
 | `40_org.org` | org-mode + agenda + GTD + capture + LaTeX + org-roam |
 | `50_apple_reminders.org` | Apple Reminders bidirectional sync |
-| `60_gptel.org` | LLM backends — Claude, ChatGPT, Gemini, Groq, GitHub Models, Ollama, LM Studio, MLX |
+| `60_emacs-agent-runtime.org` | EAR loader, setup-owned runtime paths, and LLM backends |
+| `61_ear_agent_shell.org` | Optional GPL-3.0-or-later Agent Shell UI integration over ACP |
 | `70_wiki.org` | LLM-Wiki helpers (Karpathy pattern, org-roam-backed) |
 | `80_gtd.org` | Compact GTD defaults, capture/templates, project views, higher-horizon views, assistant manuals |
 | `90_doctor.org` | `M-x my/doctor` — health check command |
@@ -537,3 +539,9 @@ the brew formula. Your data folder, Keychain entries, and
 Bitwarden vault are left untouched. Add `--purge-data` to also
 delete your data folder, or `--keep-emacs-app` to leave Emacs
 Plus.app + the brew formula installed.
+# Licensing of optional integrations
+
+Optional packages retain their upstream licenses. The EAR Agent Shell
+integration is isolated in `emacs.d/config/modules/61_ear_agent_shell.org` and
+is marked `GPL-3.0-or-later`; Agent Shell itself is installed externally and is
+not vendored. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

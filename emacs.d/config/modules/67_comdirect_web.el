@@ -8,16 +8,21 @@
 (defvar comdirect-web-python)
 (declare-function comdirect-web-open "comdirect-web")
 (declare-function comdirect-web-transfer "comdirect-web")
+(declare-function my/emacs-agent-runtime-core-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
 
 (defcustom my/comdirect-web-source 'local
   "Where comdirect-web is loaded from (`elpaca' private repo, or `local').
-Default `local' (~/comdirect-web) so the daemon always uses the current checkout
-— the elpaca build lags behind pushes and would run stale transfer logic."
+Default `local' so the daemon always uses the current private checkout; the
+elpaca build can lag behind pushes and would run stale transfer logic."
   :type '(choice (const :tag "Elpaca package" elpaca)
                  (const :tag "Local checkout" local))
   :group 'my/comdirect-web)
 
-(defcustom my/comdirect-web-local-dir "~/comdirect-web"
+(defcustom my/comdirect-web-local-dir
+  (expand-file-name
+   "comdirect-web/"
+   (my/emacs-agent-runtime-core-adapters-root-directory))
   "Directory of a local comdirect-web checkout (when source is `local')."
   :type 'directory :group 'my/comdirect-web)
 

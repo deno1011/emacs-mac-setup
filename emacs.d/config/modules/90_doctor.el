@@ -439,8 +439,8 @@ and :fix. The :label is supplied by this macro."
           :detail "loaded but not started"
           :fix "M-x messenger-bridge-start"))))
 
-(defvar my/whatsapp-adapter-dir (expand-file-name "~/whatsapp-bridge-adapter")
-  "Local clone of the WhatsApp bridge adapter (for this onboarding check).")
+(defvar my/whatsapp-adapter-dir)
+(defvar my/signal-adapter-dir)
 
 ;; Onboarding guide for the WhatsApp channel. The QR scan is inherently
 ;; interactive (you scan with your phone) + a secondary-number/ToS decision, so
@@ -463,11 +463,14 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p dir))
       (list :status :ok
             :detail "not installed — WhatsApp messaging is optional"
-            :fix "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git ~/whatsapp-bridge-adapter && cd ~/whatsapp-bridge-adapter && npm install && cp .env.example .env"))
+            :fix (format "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git %s && cd %s && npm install && cp .env.example .env"
+                         (shell-quote-argument dir)
+                         (shell-quote-argument dir))))
      ((not (file-directory-p nm))
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
-            :fix "cd ~/whatsapp-bridge-adapter && npm install"))
+            :fix (format "cd %s && npm install"
+                         (shell-quote-argument dir))))
      ((not (and web-wa-dns (string-match-p "\\S-" web-wa-dns)))
       (list :status :warn
             :detail "macOS cannot resolve web.whatsapp.com; WhatsApp QR cannot load"
@@ -510,19 +513,22 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p dir))
       (list :status :ok
             :detail "not installed — secondary WhatsApp Business messaging is optional"
-            :fix "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git ~/whatsapp-bridge-adapter && cd ~/whatsapp-bridge-adapter && npm install"))
+            :fix (format "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git %s && cd %s && npm install"
+                         (shell-quote-argument dir)
+                         (shell-quote-argument dir))))
      ((not (file-directory-p nm))
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
-            :fix "cd ~/whatsapp-bridge-adapter && npm install"))
+            :fix (format "cd %s && npm install"
+                         (shell-quote-argument dir))))
      ((not (file-readable-p business-env))
       (list :status :warn
             :detail "secondary Business env template is missing"
-            :fix "Update ~/whatsapp-bridge-adapter, then rerun M-x my/doctor"))
+            :fix (format "Update %s, then rerun M-x my/doctor" dir)))
      ((not (file-readable-p business-plist))
       (list :status :warn
             :detail "secondary Business launchd template is missing"
-            :fix "Update ~/whatsapp-bridge-adapter, then rerun M-x my/doctor"))
+            :fix (format "Update %s, then rerun M-x my/doctor" dir)))
      ((not (and web-wa-dns (string-match-p "\\S-" web-wa-dns)))
       (list :status :warn
             :detail "macOS cannot resolve web.whatsapp.com; WhatsApp Business QR cannot load"
@@ -545,7 +551,7 @@ and :fix. The :label is supplied by this macro."
             :detail "linked (usable auth-business present) — M-x my/whatsapp-business-adapter-install-service for persistence")))))
 
 (my/doctor-define-check "Signal adapter (optional messaging channel)"
-  (let* ((dir (expand-file-name "~/signal-bridge-adapter"))
+  (let* ((dir (expand-file-name my/signal-adapter-dir))
          (nm (expand-file-name "node_modules" dir))
          (cli (executable-find "signal-cli")))
     (cond
@@ -554,7 +560,9 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p dir))
       (list :status :ok
             :detail "not installed — Signal messaging is optional"
-            :fix "brew install signal-cli && git clone https://github.com/deno1011/signal-bridge-adapter.git ~/signal-bridge-adapter && cd ~/signal-bridge-adapter && npm install && cp .env.example .env"))
+            :fix (format "brew install signal-cli && git clone https://github.com/deno1011/signal-bridge-adapter.git %s && cd %s && npm install && cp .env.example .env"
+                         (shell-quote-argument dir)
+                         (shell-quote-argument dir))))
      ((not cli)
       (list :status :warn
             :detail "adapter cloned but signal-cli missing"
@@ -562,7 +570,8 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p nm))
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
-            :fix "cd ~/signal-bridge-adapter && npm install"))
+            :fix (format "cd %s && npm install"
+                         (shell-quote-argument dir))))
      (t
       (list :status :ok
             :detail "ready — M-x my/signal-adapter-link (scan QR in Signal > Linked Devices), set SIGNAL_ACCOUNT, then M-x my/signal-adapter-install-service")))))

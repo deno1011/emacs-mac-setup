@@ -8,6 +8,8 @@
 (declare-function messenger-send "messenger-bridge")
 (declare-function my/launchd-service-register "62_launchd_services" (service))
 (declare-function my/launchd-services-launchctl "62_launchd_services" ())
+(declare-function my/emacs-agent-runtime-private-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
 (defvar messenger-bridge-directory)
 
 (defvar my/messenger-autostart nil
@@ -39,8 +41,13 @@ inbound polling for the same bridge directory.")
     (when my/messenger-autostart
       (messenger-bridge-start))))
 
-(defvar my/whatsapp-adapter-dir (expand-file-name "~/whatsapp-bridge-adapter")
-  "Local clone of the WhatsApp bridge adapter.")
+(defcustom my/whatsapp-adapter-dir
+  (expand-file-name
+   "whatsapp-bridge-adapter/"
+   (my/emacs-agent-runtime-private-adapters-root-directory))
+  "Private deployed checkout of the WhatsApp bridge adapter."
+  :type 'directory
+  :group 'emacs-agent-runtime)
 
 (defvar my/whatsapp-adapter-node nil
   "Path to the node binary for the service; nil = auto-detect.")
@@ -90,6 +97,7 @@ QR-linked (auth/ present)."
   (interactive)
   (unless (eq system-type 'darwin) (user-error "macOS only"))
   (let* ((dir (expand-file-name my/whatsapp-adapter-dir))
+         (entrypoint (expand-file-name "index.js" dir))
          (node (my/whatsapp-adapter--node))
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
@@ -108,7 +116,7 @@ QR-linked (auth/ present)."
 <dict>
   <key>Label</key><string>%s</string>
   <key>ProgramArguments</key>
-  <array><string>%s</string><string>%s/index.js</string></array>
+  <array><string>%s</string><string>%s</string></array>
   <key>WorkingDirectory</key><string>%s</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -116,7 +124,7 @@ QR-linked (auth/ present)."
   <key>StandardErrorPath</key><string>/tmp/whatsapp-bridge.err.log</string>
 </dict>
 </plist>
-" my/whatsapp-adapter--service-label node dir dir)))
+" my/whatsapp-adapter--service-label node entrypoint dir)))
     (ignore-errors (call-process (my/messenger--launchctl)
                                  nil nil nil "unload" plist))
     (if (zerop (call-process (my/messenger--launchctl)
@@ -136,8 +144,13 @@ QR-linked (auth/ present)."
     (when (file-exists-p plist) (delete-file plist))
     (message "WhatsApp adapter service removed")))
 
-(defvar my/signal-adapter-dir (expand-file-name "~/signal-bridge-adapter")
-  "Local clone of the Signal bridge adapter.")
+(defcustom my/signal-adapter-dir
+  (expand-file-name
+   "signal-bridge-adapter/"
+   (my/emacs-agent-runtime-private-adapters-root-directory))
+  "Private deployed checkout of the Signal bridge adapter."
+  :type 'directory
+  :group 'emacs-agent-runtime)
 
 (defun my/messenger--link-term (name dir command)
   "Run COMMAND in DIR inside an ansi-term buffer NAME so a login QR renders
@@ -380,6 +393,7 @@ pairing-code login."
   (unless (eq system-type 'darwin) (user-error "macOS only"))
   (let* ((dir (expand-file-name my/whatsapp-adapter-dir))
          (auth (expand-file-name "auth-business" dir))
+         (entrypoint (expand-file-name "index.js" dir))
          (node (my/whatsapp-adapter--node))
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
@@ -398,7 +412,7 @@ pairing-code login."
 <dict>
   <key>Label</key><string>%s</string>
   <key>ProgramArguments</key>
-  <array><string>%s</string><string>%s/index.js</string></array>
+  <array><string>%s</string><string>%s</string></array>
   <key>WorkingDirectory</key><string>%s</string>
   <key>EnvironmentVariables</key>
   <dict>
@@ -418,7 +432,7 @@ pairing-code login."
   <key>StandardErrorPath</key><string>/tmp/whatsapp-business-bridge.err.log</string>
 </dict>
 </plist>
-" my/whatsapp-business-adapter--service-label node dir dir)))
+" my/whatsapp-business-adapter--service-label node entrypoint dir)))
     (ignore-errors (call-process (my/messenger--launchctl)
                                  nil nil nil "unload" plist))
     (if (zerop (call-process (my/messenger--launchctl)
@@ -475,6 +489,7 @@ set in .env."
   (interactive)
   (unless (eq system-type 'darwin) (user-error "macOS only"))
   (let* ((dir (expand-file-name my/signal-adapter-dir))
+         (entrypoint (expand-file-name "index.js" dir))
          (node (or (executable-find "node")
                    (seq-find #'file-executable-p
                              '("/opt/homebrew/opt/node/bin/node"
@@ -510,7 +525,7 @@ set in .env."
 <dict>
   <key>Label</key><string>%s</string>
   <key>ProgramArguments</key>
-  <array><string>%s</string><string>%s/index.js</string></array>
+  <array><string>%s</string><string>%s</string></array>
   <key>WorkingDirectory</key><string>%s</string>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>%s</string></dict>
@@ -520,7 +535,7 @@ set in .env."
   <key>StandardErrorPath</key><string>/tmp/signal-bridge.err.log</string>
 </dict>
 </plist>
-" my/signal-adapter--service-label node dir dir path)))
+" my/signal-adapter--service-label node entrypoint dir path)))
     (ignore-errors (call-process (my/messenger--launchctl)
                                  nil nil nil "unload" plist))
     (if (zerop (call-process (my/messenger--launchctl)

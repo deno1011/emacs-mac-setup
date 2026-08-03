@@ -20,8 +20,10 @@
 (declare-function fints-accounts "fints")
 (declare-function fints-accounts-sync "fints")
 (declare-function fints-transfer "fints")
+(declare-function my/emacs-agent-runtime-core-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
 
-(defcustom my/fints-source 'elpaca
+(defcustom my/fints-source 'local
   "Where the FinTS adapter is loaded from.
 `elpaca' installs it as a package from the private repo (needs git auth);
 `local' loads a working checkout at `my/fints-local-dir'."
@@ -29,7 +31,10 @@
                  (const :tag "Local checkout" local))
   :group 'my/fints)
 
-(defcustom my/fints-local-dir "~/emacs-fints-adapter"
+(defcustom my/fints-local-dir
+  (expand-file-name
+   "emacs-fints-adapter/"
+   (my/emacs-agent-runtime-core-adapters-root-directory))
   "Directory of a local emacs-fints-adapter checkout (when source is `local')."
   :type 'directory :group 'my/fints)
 

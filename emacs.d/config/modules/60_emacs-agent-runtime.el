@@ -139,6 +139,26 @@ When nil, use `ear-extensions/lisp/' below
   :type '(repeat directory)
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-core-adapters-directory nil
+  "Root for reusable external adapter checkouts used with EAR Core.
+When nil, derive `external/adapters/' below
+`my/emacs-agent-runtime-dir'.  The adapter repositories remain independent
+Git checkouts; this setting provides one stable location for loaders, Doctor
+checks, and operator documentation."
+  :type '(choice (const :tag "Use <EAR checkout>/external/adapters/" nil)
+                 directory)
+  :group 'emacs-agent-runtime)
+
+(defcustom my/emacs-agent-runtime-private-adapters-directory nil
+  "Root for user-owned adapter checkouts and their local runtime state.
+When nil, derive `ear-extensions/adapters/' below
+`my/emacs-agent-runtime-private-directory'.  Put adapters with account
+configuration, auth state, or private deployment data here."
+  :type '(choice
+          (const :tag "Use <private-data-repo>/ear-extensions/adapters/" nil)
+          directory)
+  :group 'emacs-agent-runtime)
+
 (defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
   "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
   :type 'boolean
@@ -345,6 +365,24 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
               (file-name-as-directory (expand-file-name directory)))
             directories)))
 
+(defun my/emacs-agent-runtime-core-adapters-root-directory ()
+  "Return the configured root for reusable external adapter checkouts."
+  (file-name-as-directory
+   (expand-file-name
+    (or my/emacs-agent-runtime-core-adapters-directory
+        (expand-file-name "external/adapters/"
+                          my/emacs-agent-runtime-dir)))))
+
+(defun my/emacs-agent-runtime-private-adapters-root-directory ()
+  "Return the configured root for user-owned adapter checkouts."
+  (let ((directory
+         (or my/emacs-agent-runtime-private-adapters-directory
+             (when-let ((root
+                         (my/emacs-agent-runtime-private-root-directory)))
+               (expand-file-name "ear-extensions/adapters/" root)))))
+    (when (stringp directory)
+      (file-name-as-directory (expand-file-name directory)))))
+
 (defun my/emacs-agent-runtime-source-overlay-root-directory ()
   "Return the configured user-owned EAR source overlay root."
   (let ((directory
@@ -421,6 +459,11 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
     (dolist (extension
              (my/emacs-agent-runtime-private-extension-directories))
       (make-directory extension t))
+    (make-directory
+     (my/emacs-agent-runtime-core-adapters-root-directory) t)
+    (when-let ((private-adapters
+                (my/emacs-agent-runtime-private-adapters-root-directory)))
+      (make-directory private-adapters t))
     (when-let ((source-overlay
                 (my/emacs-agent-runtime-source-overlay-root-directory)))
       (dolist (relative

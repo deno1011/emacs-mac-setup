@@ -89,8 +89,6 @@
   :custom
   (org-modern-table nil)
   :hook ((org-mode . org-modern-mode)
-         (ear-workspace-mode . org-modern-mode)
-         (ear-session-ui-mode . org-modern-mode)
          (ear-report-mode . org-modern-mode)
          (org-agenda-finalize . org-modern-agenda))
   :config
@@ -114,8 +112,6 @@
            :repo "Fuco1/org-pretty-table")
   :after org
   :hook ((org-mode . org-pretty-table-mode)
-         (ear-workspace-mode . org-pretty-table-mode)
-         (ear-session-ui-mode . org-pretty-table-mode)
          (ear-report-mode . org-pretty-table-mode))
   :config
   ;; Enable everywhere.  The :hook alone did not reliably activate it (org
@@ -124,8 +120,7 @@
   (global-org-pretty-table-mode 1)
   ;; Box lines only connect vertically when there is no inter-line gap, so drop
   ;; line-spacing to 0 in the table-showing modes (the global default is 3).
-  (dolist (h (list (quote org-mode-hook) (quote ear-workspace-mode-hook)
-                   (quote ear-session-ui-mode-hook) (quote ear-report-mode-hook)))
+  (dolist (h (list (quote org-mode-hook) (quote ear-report-mode-hook)))
     (add-hook h (lambda () (setq-local line-spacing 0)))))
 
 ;; Standard org keys (C-c l already set in Org Capture)

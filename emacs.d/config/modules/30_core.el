@@ -474,6 +474,12 @@ Fix the bootstrap (see *Warnings*) and retry"
 
 (my/install-ripgrep)
 
+(use-package compat
+  :demand t
+  :config
+  (when (< emacs-major-version 31)
+    (require 'compat-31)))
+
 (use-package vertico
   :init
   (vertico-mode 1)
@@ -502,24 +508,6 @@ Fix the bootstrap (see *Warnings*) and retry"
 
   (completion-category-overrides
    '((file (styles basic partial-completion)))))
-
-(defun my/ear-enable-inline-completion ()
-  "Enable inline completion in EAR prompt buffers."
-  (when (fboundp 'corfu-mode)
-    (setq-local corfu-auto t)
-    (setq-local corfu-auto-prefix 1)
-    (setq-local corfu-auto-delay 0.05)
-    (setq-local corfu-cycle t)
-    (corfu-mode 1)))
-
-(use-package corfu
-  :ensure t
-  :custom
-  (corfu-cycle t)
-  (corfu-auto nil)
-  :hook ((ear-workspace-input-mode . my/ear-enable-inline-completion)
-         (ear-workspace-mode . my/ear-enable-inline-completion)
-         (ear-session-ui-mode . my/ear-enable-inline-completion)))
 
 (use-package consult
 
