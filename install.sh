@@ -398,10 +398,10 @@ if [ -e "$SEED_SENTINEL" ]; then
   echo "==> Seeded $CONFIG_DIR/ from $CONFIG_SRC/ (FROZEN — only new files added; existing preserved)"
   echo "    (delete $SEED_SENTINEL or run M-x my/bootstrap-unfreeze-config-updates to re-enable updates)"
 else
-  # --update so we only touch destination files that are OLDER than the
-  # source (or missing). Avoids racing the bootstrap's distro-config-update
-  # task if it ran on a more recent seed than this install.sh fetched.
-  rsync -a --update "$CONFIG_SRC/" "$CONFIG_DIR/"
+  # These files are distro-managed: always replace them with the checkout's
+  # version. `--update' compares mtimes and can silently retain stale config
+  # after a git checkout, because the installed copy may have a newer mtime.
+  rsync -a "$CONFIG_SRC/" "$CONFIG_DIR/"
   echo "==> Seeded $CONFIG_DIR/ from $CONFIG_SRC/ (refreshed distro-tracked files)"
 fi
 
