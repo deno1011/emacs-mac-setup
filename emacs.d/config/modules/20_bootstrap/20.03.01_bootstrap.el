@@ -56,6 +56,9 @@ to t the moment a required step fails. Read by
 `my/bootstrap-ready-p' which is the public predicate feature
 modules consult.")
 
+(defvar my/bootstrap--setup-hint-shown-p nil
+  "Non-nil after the first-run setup page was shown in this daemon.")
+
 (defvar my/bootstrap--ensure-steps
   '(("data-folder resolution"  my/data-dir-resolve            t)
     ("data-folder clone"       my/repo-ensure-cloned          t)

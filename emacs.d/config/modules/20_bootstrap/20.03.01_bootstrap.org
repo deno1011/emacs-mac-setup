@@ -164,8 +164,10 @@ to t the moment a required step fails. Read by
 modules consult.")
 #+end_src
 
+#+begin_src emacs-lisp :tangle yes
 (defvar my/bootstrap--setup-hint-shown-p nil
   "Non-nil after the first-run setup page was shown in this daemon.")
+#+end_src
 
 ** =my/bootstrap--ensure-steps= — the ordered step list
 
