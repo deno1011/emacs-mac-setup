@@ -539,7 +539,7 @@ int main(int argc, char **argv) {
     return 127;
 }
 EOF
-/usr/bin/clang -O2 -o "$APP_DIR/Contents/MacOS/Emacs Client" \
+/usr/bin/clang -O2 -o "$APP_DIR/Contents/MacOS/EmacsClient" \
   "$APP_DIR/Contents/MacOS/emacs-client-launcher.c"
 rm "$APP_DIR/Contents/MacOS/emacs-client-launcher.c"
 # Borrow the Emacs icon from emacs-plus's own .app bundle so the
@@ -561,7 +561,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>Emacs Client</string>
+    <string>EmacsClient</string>
     <key>CFBundleIdentifier</key>
     <string>org.gnu.EmacsClient</string>
     <key>CFBundleName</key>
@@ -581,6 +581,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
+printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
 # Strip Gatekeeper quarantine so the first launch doesn't pop the
 # "downloaded from internet" warning on a script-written bundle.
 xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
