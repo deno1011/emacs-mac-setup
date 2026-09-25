@@ -82,6 +82,7 @@ SRC_DIR="${EMACS_MAC_SRC_DIR:-${_persisted_src:-$HOME/emacs-mac-setup-src}}"
 EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-${_persisted_ear_repo:-https://github.com/deno1011/emacs-agent-runtime.git}}"
 EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-${_persisted_ear_branch:-main}}"
 EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-${_persisted_ear_dir:-$HOME/emacs-agent-runtime}}"
+OFFICIAL_EAR_REPO_URL="https://github.com/deno1011/emacs-agent-runtime.git"
 echo "==> Target distro: branch=$BRANCH repo=$REPO_URL src=$SRC_DIR"
 [ -n "$_persisted_branch$_persisted_repo$_persisted_src$_persisted_ear_repo$_persisted_ear_branch$_persisted_ear_dir" ] && \
   echo "    (precedence: env > distro-source.el > project defaults)"
@@ -262,6 +263,36 @@ fi
 # Cellar entry disappears immediately.
 killall Dock 2>/dev/null || true
 
+# 2b. Authenticate the private EAR source through GitHub CLI ---------------
+#
+# The setup distribution is public, but the official EAR checkout is private.
+# GitHub removed account-password authentication for HTTPS Git operations, so
+# never let Git fall back to an OS credential helper which may prompt for one.
+# `gh auth login --web' provides the supported browser/device flow; the helper
+# below explicitly uses its token for this installer even if stale Keychain
+# credentials exist on a freshly migrated Mac.
+if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ]; then
+  if ! command -v gh &>/dev/null; then
+    echo "==> Installing GitHub CLI for the private EAR source..."
+    brew install gh
+  fi
+  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+    echo "==> Sign in to GitHub for the private Emacs Agent Runtime source..."
+    echo "    A browser/device-code flow will open. Do not enter a GitHub account password into Git."
+    gh auth login --hostname github.com --git-protocol https --web
+  fi
+  gh auth setup-git
+fi
+
+ear_git() {
+  if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ]; then
+    git -c credential.helper= \
+        -c 'credential.helper=!gh auth git-credential' "$@"
+  else
+    git "$@"
+  fi
+}
+
 # 3. Clone or update the distro -------------------------------------------
 if [ -d "$SRC_DIR/.git" ]; then
   echo "==> Updating $SRC_DIR (branch: $BRANCH)..."
@@ -290,15 +321,15 @@ fi
 # not only the loader module.
 if [ -d "$EAR_DIR/.git" ]; then
   echo "==> Updating Emacs Agent Runtime at $EAR_DIR (branch: $EAR_BRANCH)..."
-  git -C "$EAR_DIR" fetch origin "$EAR_BRANCH"
-  git -C "$EAR_DIR" checkout "$EAR_BRANCH"
-  git -C "$EAR_DIR" merge --ff-only "origin/$EAR_BRANCH"
+  ear_git -C "$EAR_DIR" fetch origin "$EAR_BRANCH"
+  ear_git -C "$EAR_DIR" checkout "$EAR_BRANCH"
+  ear_git -C "$EAR_DIR" merge --ff-only "origin/$EAR_BRANCH"
 elif [ -e "$EAR_DIR" ]; then
   echo "==> $EAR_DIR exists but is not a git checkout — leaving it untouched"
   echo "    EAR will load only if this directory already contains emacs-agent-runtime."
 else
   echo "==> Cloning Emacs Agent Runtime to $EAR_DIR..."
-  git clone --branch "$EAR_BRANCH" "$EAR_REPO_URL" "$EAR_DIR"
+  ear_git clone --branch "$EAR_BRANCH" "$EAR_REPO_URL" "$EAR_DIR"
 fi
 
 # 4. Real ~/.emacs.d/ — copy distro files in, leave runtime state alone --

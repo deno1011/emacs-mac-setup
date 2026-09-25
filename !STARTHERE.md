@@ -30,6 +30,12 @@ launches and the setup form opens. You fill in:
   Gemini / Groq) — leave any field blank to opt out of that provider
   permanently
 
+Before that form, the installer authenticates access to the private EAR source
+through GitHub CLI's browser/device flow.  Do not enter a GitHub account
+password into a Git password prompt: GitHub does not support password-based
+HTTPS Git authentication.  The CLI flow or a fine-grained PAT with repository
+read access is required.
+
 Hit Save. The bootstrap orchestrator then:
 
 1. Caches your Bitwarden credentials in the macOS Keychain so future

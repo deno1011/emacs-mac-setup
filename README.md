@@ -68,6 +68,12 @@ emacs-mac-setup/
 Both `.org` and `.el` are tracked. `.elc` is git-ignored. See
 "Cache priority" below for what happens on each launch.
 
+The official `emacs-agent-runtime` checkout is access-controlled.  During a
+fresh install, `install.sh` installs GitHub CLI when necessary and opens its
+browser/device-login flow before cloning EAR.  GitHub account passwords are
+not valid HTTPS Git credentials; use the GitHub CLI flow or a fine-grained
+personal access token with repository read access instead.
+
 ---
 
 ## What runs when you start Emacs
