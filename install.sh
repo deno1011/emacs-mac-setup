@@ -293,6 +293,15 @@ ear_git() {
   fi
 }
 
+if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ] &&
+   ! ear_git ls-remote --exit-code --heads "$EAR_REPO_URL" "$EAR_BRANCH" \
+       >/dev/null 2>&1; then
+  echo "ERROR: The authenticated GitHub account cannot read the private EAR source."
+  echo "       Sign in with an account that has access to deno1011/emacs-agent-runtime"
+  echo "       and rerun the installer."
+  exit 1
+fi
+
 # 3. Clone or update the distro -------------------------------------------
 if [ -d "$SRC_DIR/.git" ]; then
   echo "==> Updating $SRC_DIR (branch: $BRANCH)..."
