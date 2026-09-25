@@ -33,6 +33,12 @@ rule is "Layer N may only call Layer N−1".
 Each step in =my/bootstrap--ensure-steps= carries a =:required=
 flag. The orchestrator's reaction depends on it:
 
+  - The initial data-folder resolution returns =:skip= when no
+    =GitHubRepo= credential exists. Personal data setup is deferred;
+    data-dependent steps skip until the user runs =M-x my/credential-set=
+    and =M-x my/bootstrap=. This keeps a fresh installation usable
+    before the user chooses a data repository.
+
   - =:required t= step returns ~(:error MSG)~ →
     * subsequent steps are NOT run
     * =my/data-dir= is left at the =:not-resolved= sentinel
@@ -58,38 +64,17 @@ silent failure of resolution would silently re-route every
 agenda path under =~/.emacs.d/= — exactly the silent-corruption
 class that BOOTSTRAP.md §5 forbids.
 
-The =:not-resolved= sentinel turns the silent miss into a loud
-type-error at every call site: ~(expand-file-name "x" :not-resolved)~
-signals immediately. Together with the =display-warning= popup
-emitted by =my/bootstrap=, the user gets two independent failure
-signals at startup — impossible to overlook.
+The =:not-resolved= sentinel prevents paths from silently falling back
+under =~/.emacs.d/=. Every feature module checks
+=my/bootstrap-ready-p= before using personal data paths, so Emacs can
+start before a data repository is configured. The bootstrap leaves a
+setup hint in =*Messages*= and the user can finish the setup later.
 
 Feature modules that want to fail gracefully instead of crashing
 can wrap their data-dir-dependent setup in
 ~(when (my/bootstrap-ready-p) …)~. That guard is the explicit
 opt-in to "this config depends on the path; don't run if the
 bootstrap failed."
-
-** Skeleton state
-
-At the moment this file is the FIRST piece of the bootstrap rewrite.
-Layer 2 (the ~my/*-ensure-*~ functions called below) does not yet
-exist. The skeleton handles that as a required failure:
-
-  - On every Emacs launch, =my/bootstrap= reports the required
-    step =data-folder resolution= as ~(:error "pending: …")~,
-    halts the run, leaves =my/data-dir= at =:not-resolved=, and
-    pops the *Warnings* buffer with a clear message explaining
-    that Layer 2 is being built.
-
-  - The discovery loop continues loading the feature modules
-    after the warning (~my/-load-module~ catches the error from
-    auto-fire), but each of them that touches =my/data-dir= will
-    type-error loudly until either Layer 2 lands OR the modules
-    add a ~my/bootstrap-ready-p~ guard.
-
-This intermediate broken state is acceptable for the duration of
-the rewrite.
 
 * File header (mandatory per `../../CONVENTIONS.md` §5)
 
@@ -150,18 +135,15 @@ dependency graph.
 The variable =my/data-dir= is the canonical data folder path that
 every feature module reads. Initial value is the *symbol*
 =:not-resolved= rather than a string default. The Layer-2 resolver
-=my/data-dir-resolve= replaces it with the real path on success;
-on failure (or in skeleton mode) it stays the sentinel and every
-~expand-file-name~ that touches it type-errors loudly.
+=my/data-dir-resolve= replaces it with the real path after personal
+setup. Until then, data-dependent steps skip and feature modules stay
+disabled until the user resolves the path.
 
 #+begin_src emacs-lisp :tangle yes
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.
-Until the Layer-2 resolver runs successfully this is the symbol
-`:not-resolved'. Any feature module that uses it without first
-checking `my/bootstrap-ready-p' will type-error on its first
-`expand-file-name' call — by design, see this module's docstring
-under \"Why the :not-resolved sentinel\".
+The Layer-2 resolver assigns it after personal data setup. Feature
+modules must check `my/bootstrap-ready-p' before using this path.
 
 Read by every feature module that stores data under a
 user-configurable directory (30-core, 40-org, 50-apple-reminders,
@@ -229,12 +211,21 @@ reason the step did not run."
          (required (nth 2 step))
          (result
           (cond
+           ((and (memq fn '(my/repo-ensure-cloned
+                            my/git-crypt-ensure-unlocked
+                            my/starter-data-ensure))
+                 (not (stringp my/data-dir)))
+            :skip)
            ((not (fboundp fn))
             `(:error ,(format "pending: %s not yet defined" fn)))
            (t (condition-case err
                   (funcall fn)
                 (error `(:error ,(format "uncaught signal: %s"
                                          (error-message-string err)))))))))
+    (when (and (eq fn 'my/data-dir-resolve)
+               (eq result :skip)
+               (not (stringp my/data-dir)))
+      (message "Personal data is not configured yet; use M-x my/credential-set, then M-x my/bootstrap"))
     (list label required result)))
 #+end_src
 

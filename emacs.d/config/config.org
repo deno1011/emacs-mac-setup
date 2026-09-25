@@ -47,9 +47,8 @@ discovered by config.org. .org files are tangled + byte-compiled +
 loaded; vendored .el files (no .org sibling) are byte-compiled +
 loaded directly UNLESS their basename starts with `!' — those are
 SOURCE-LOADED with no byte-compile (see `my/-load-module' for the
-why). install.sh's `6c. Vendor async-tasks' step writes one such
-byte-compiled .el; `modules/!00_startfirst.el' is the source-loaded
-one (elpaca bootstrap).")
+why). Optional task tooling may add vendored .el files;
+`modules/!00_startfirst.el' is the source-loaded one (elpaca bootstrap).")
 
 (defun my/-load-module (path)
   "Load PATH (either .org source or vendored .el). Prefer the

@@ -18,11 +18,11 @@ bootstrap manages external state and silent failures are catastrophic.
 
 ## 1. Why bootstrap is treated specially
 
-The bootstrap subsystem provisions external state: macOS Keychain
+The bootstrap subsystem provisions personal external state: macOS Keychain
 entries, the cloned data folder on disk, the `gh` CLI's authenticated
-session, the brew-installed Emacs binary, the LaunchAgent plist. None
-of this is internal Elisp state — every value involved lives outside
-Emacs and survives across launches.
+session, and optional user data. The installer owns the Emacs binary and
+its daemon LaunchAgent. None of this state is internal Elisp — values live
+outside Emacs and survive across launches.
 
 This creates four concerns that feature modules do not face:
 
@@ -355,6 +355,12 @@ returning bare `nil` is not acceptable.
 | **Expected: nothing to do** | Pre-condition already satisfied. | Return `:skip`. |
 | **Expected: cannot proceed** | A required input is missing (no credential, no network, etc.). The user can fix it. | Return `(:error "human message including the next action to take")`. |
 | **Unexpected: system fault** | A system call failed in a way the function did not anticipate. | Let it signal an Elisp error (`(error …)`). Do not swallow with `condition-case` at Layer 1 or Layer 2. |
+
+Personal data is optional during the initial Emacs launch. If the
+`GitHubRepo` Keychain entry is absent, data-folder resolution returns
+`:skip`, leaves `my/data-dir` as `:not-resolved`, and the orchestrator
+skips data-dependent steps. The user can configure it later with
+`M-x my/credential-set` and rerun `M-x my/bootstrap`.
 
 The Layer-3 orchestrator wraps the orchestrator body in
 `condition-case` and turns uncaught errors into a structured result

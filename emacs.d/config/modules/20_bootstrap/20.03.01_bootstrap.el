@@ -41,11 +41,8 @@
 
 (defvar my/data-dir :not-resolved
   "Absolute path of the user's data folder, or `:not-resolved'.
-Until the Layer-2 resolver runs successfully this is the symbol
-`:not-resolved'. Any feature module that uses it without first
-checking `my/bootstrap-ready-p' will type-error on its first
-`expand-file-name' call — by design, see this module's docstring
-under \"Why the :not-resolved sentinel\".
+The Layer-2 resolver assigns it after personal data setup. Feature
+modules must check `my/bootstrap-ready-p' before using this path.
 
 Read by every feature module that stores data under a
 user-configurable directory (30-core, 40-org, 50-apple-reminders,
@@ -88,12 +85,21 @@ reason the step did not run."
          (required (nth 2 step))
          (result
           (cond
+           ((and (memq fn '(my/repo-ensure-cloned
+                            my/git-crypt-ensure-unlocked
+                            my/starter-data-ensure))
+                 (not (stringp my/data-dir)))
+            :skip)
            ((not (fboundp fn))
             `(:error ,(format "pending: %s not yet defined" fn)))
            (t (condition-case err
                   (funcall fn)
                 (error `(:error ,(format "uncaught signal: %s"
                                          (error-message-string err)))))))))
+    (when (and (eq fn 'my/data-dir-resolve)
+               (eq result :skip)
+               (not (stringp my/data-dir)))
+      (message "Personal data is not configured yet; use M-x my/credential-set, then M-x my/bootstrap"))
     (list label required result)))
 
 (defun my/bootstrap--format-result (results)

@@ -42,9 +42,7 @@ Env vars:
   EMACS_MAC_BRANCH      Distro branch to install onto (default: main)
   EMACS_MAC_REPO_URL    Distro repo URL
   EMACS_MAC_SRC_DIR     Where to clone the distro (default: ~/emacs-mac-setup-src)
-  EMACS_AGENT_RUNTIME_REPO_URL  EAR runtime repo URL
-  EMACS_AGENT_RUNTIME_BRANCH    EAR runtime branch (default: main)
-  EMACS_AGENT_RUNTIME_DIR       EAR runtime clone path (default: ~/emacs-agent-runtime)
+  EMACS_MAC_SKIP_SOURCE_UPDATE=1  Use the existing checkout without fetching
   EMACS_DATA_DIR        Per-Mac data dir override (default: bootstrap derives from BW.Repo)
 HELP
       exit 0
@@ -82,7 +80,6 @@ SRC_DIR="${EMACS_MAC_SRC_DIR:-${_persisted_src:-$HOME/emacs-mac-setup-src}}"
 EAR_REPO_URL="${EMACS_AGENT_RUNTIME_REPO_URL:-${_persisted_ear_repo:-https://github.com/deno1011/emacs-agent-runtime.git}}"
 EAR_BRANCH="${EMACS_AGENT_RUNTIME_BRANCH:-${_persisted_ear_branch:-main}}"
 EAR_DIR="${EMACS_AGENT_RUNTIME_DIR:-${_persisted_ear_dir:-$HOME/emacs-agent-runtime}}"
-OFFICIAL_EAR_REPO_URL="https://github.com/deno1011/emacs-agent-runtime.git"
 echo "==> Target distro: branch=$BRANCH repo=$REPO_URL src=$SRC_DIR"
 [ -n "$_persisted_branch$_persisted_repo$_persisted_src$_persisted_ear_repo$_persisted_ear_branch$_persisted_ear_dir" ] && \
   echo "    (precedence: env > distro-source.el > project defaults)"
@@ -263,82 +260,20 @@ fi
 # Cellar entry disappears immediately.
 killall Dock 2>/dev/null || true
 
-# 2b. Authenticate the private EAR source through GitHub CLI ---------------
-#
-# The setup distribution is public, but the official EAR checkout is private.
-# GitHub removed account-password authentication for HTTPS Git operations, so
-# never let Git fall back to an OS credential helper which may prompt for one.
-# `gh auth login --web' provides the supported browser/device flow; the helper
-# below explicitly uses its token for this installer even if stale Keychain
-# credentials exist on a freshly migrated Mac.
-if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ]; then
-  if ! command -v gh &>/dev/null; then
-    echo "==> Installing GitHub CLI for the private EAR source..."
-    brew install gh
-  fi
-  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-    echo "==> Sign in to GitHub for the private Emacs Agent Runtime source..."
-    echo "    A browser/device-code flow will open. Do not enter a GitHub account password into Git."
-    gh auth login --hostname github.com --git-protocol https --web
-  fi
-  gh auth setup-git
-fi
-
-ear_git() {
-  if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ]; then
-    git -c credential.helper= \
-        -c 'credential.helper=!gh auth git-credential' "$@"
-  else
-    git "$@"
-  fi
-}
-
-if [ "$EAR_REPO_URL" = "$OFFICIAL_EAR_REPO_URL" ] &&
-   ! ear_git ls-remote --exit-code --heads "$EAR_REPO_URL" "$EAR_BRANCH" \
-       >/dev/null 2>&1; then
-  echo "ERROR: The authenticated GitHub account cannot read the private EAR source."
-  echo "       Sign in with an account that has access to deno1011/emacs-agent-runtime"
-  echo "       and rerun the installer."
-  exit 1
-fi
-
 # 3. Clone or update the distro -------------------------------------------
 if [ -d "$SRC_DIR/.git" ]; then
-  echo "==> Updating $SRC_DIR (branch: $BRANCH)..."
-  # Use `merge --ff-only origin/$BRANCH' rather than
-  # `pull --ff-only origin $BRANCH'. The pull form does an *implicit*
-  # second fetch on top of the explicit one above, and when the
-  # background bootstrap-distro-update task (see 20_bootstrap.org)
-  # races against this install run, the second fetch can leave
-  # FETCH_HEAD with multiple "for-merge" entries — at which point
-  # git aborts with `fatal: Cannot fast-forward to multiple branches.'
-  # Merging directly against the local tracking ref bypasses
-  # FETCH_HEAD and is robust against the race.
-  git -C "$SRC_DIR" fetch origin "$BRANCH"
-  git -C "$SRC_DIR" checkout "$BRANCH"
-  git -C "$SRC_DIR" merge --ff-only "origin/$BRANCH"
+  if [ "${EMACS_MAC_SKIP_SOURCE_UPDATE:-0}" = "1" ]; then
+    echo "==> Using existing checkout at $SRC_DIR (source update skipped)"
+  else
+    echo "==> Updating $SRC_DIR (branch: $BRANCH)..."
+    # Use `merge --ff-only origin/$BRANCH' rather than `pull --ff-only'.
+    git -C "$SRC_DIR" fetch origin "$BRANCH"
+    git -C "$SRC_DIR" checkout "$BRANCH"
+    git -C "$SRC_DIR" merge --ff-only "origin/$BRANCH"
+  fi
 else
   echo "==> Cloning distro to $SRC_DIR..."
   git clone --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
-fi
-
-# 3b. Clone or update Emacs Agent Runtime -------------------------------
-#
-# The main distro loads EAR from ~/emacs-agent-runtime so the runtime can
-# remain a neutral package shared by gptel, Codex, Claude Code, MCP, and
-# direct M-x commands. A fresh user must therefore receive the runtime repo,
-# not only the loader module.
-if [ -d "$EAR_DIR/.git" ]; then
-  echo "==> Updating Emacs Agent Runtime at $EAR_DIR (branch: $EAR_BRANCH)..."
-  ear_git -C "$EAR_DIR" fetch origin "$EAR_BRANCH"
-  ear_git -C "$EAR_DIR" checkout "$EAR_BRANCH"
-  ear_git -C "$EAR_DIR" merge --ff-only "origin/$EAR_BRANCH"
-elif [ -e "$EAR_DIR" ]; then
-  echo "==> $EAR_DIR exists but is not a git checkout — leaving it untouched"
-  echo "    EAR will load only if this directory already contains emacs-agent-runtime."
-else
-  echo "==> Cloning Emacs Agent Runtime to $EAR_DIR..."
-  ear_git clone --branch "$EAR_BRANCH" "$EAR_REPO_URL" "$EAR_DIR"
 fi
 
 # 4. Real ~/.emacs.d/ — copy distro files in, leave runtime state alone --
@@ -489,107 +424,14 @@ if [ -d "$EMACS_D/elpa" ] && [ -d "$EMACS_D/elpaca" ]; then
   rm -rf "$EMACS_D/elpa"
 fi
 
-# 6c. Vendor async-tasks from upstream into the modules directory ----------
-#
-# `async-tasks` is the standalone task framework formerly shipped inline as
-# 10_tasks.org. Source of truth is the public repo at
-# https://github.com/deno1011/async-tasks; we fetch the latest tagged copy
-# (or main HEAD when no tag is pinned) and drop it as
-# `~/.emacs.d/config/modules/10_tasks.el` so it loads inline at module-load
-# time. No elpaca queue, no `(elpaca-wait)` cost on launch — and other
-# Emacs users can still install the same package independently from MELPA.
-#
-# Override the repo (forks for testing) with EMACS_MAC_ASYNC_TASKS_REPO.
-# Pin to a release with EMACS_MAC_ASYNC_TASKS_TAG=v0.1.0; defaults to main.
-ASYNC_TASKS_REPO="${EMACS_MAC_ASYNC_TASKS_REPO:-deno1011/async-tasks}"
-ASYNC_TASKS_TAG="${EMACS_MAC_ASYNC_TASKS_TAG:-main}"
-ASYNC_TASKS_URL="https://raw.githubusercontent.com/$ASYNC_TASKS_REPO/$ASYNC_TASKS_TAG/async-tasks.el"
-ASYNC_TASKS_DST="$CONFIG_DIR/modules/10_tasks.el"
-# Pre-2026 distro versions shipped this module inline as 10_tasks.org.
-# If the user is upgrading from one of those, the .org would shadow our
-# freshly-vendored .el (the discovery loop prefers .org siblings). Wipe
-# both stale outputs before fetching.
-rm -f "$CONFIG_DIR/modules/10_tasks.org" "$CONFIG_DIR/modules/10_tasks.elc"
-echo "==> Fetching async-tasks from $ASYNC_TASKS_REPO@$ASYNC_TASKS_TAG …"
-# Fetch into a tmp file; only promote to the real location after we have
-# validated that the bytes actually look like async-tasks.el. curl with
-# `--retry 3` already covers transient network jitter; we add a content
-# check on top so HTML 404 pages, empty responses, or any other "200 OK
-# but the body isn't what we wanted" can never silently install bad code.
-ASYNC_TASKS_FETCH_RC=0
-curl -fsSL --retry 3 --max-time 60 -o "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_URL" || ASYNC_TASKS_FETCH_RC=$?
-
-ASYNC_TASKS_OK=0
-if [ "$ASYNC_TASKS_FETCH_RC" -eq 0 ] && [ -s "$ASYNC_TASKS_DST.tmp" ]; then
-  # Validate: first line MUST start with the expected commentary line,
-  # AND `(provide 'async-tasks)' must be present (sanity that we got the
-  # whole file, not a truncation). The two checks together catch every
-  # known failure mode short of a maliciously crafted GitHub response.
-  if head -1 "$ASYNC_TASKS_DST.tmp" | grep -q "^;;; async-tasks\.el ---" \
-     && grep -q "^(provide 'async-tasks)" "$ASYNC_TASKS_DST.tmp"; then
-    mv "$ASYNC_TASKS_DST.tmp" "$ASYNC_TASKS_DST"
-    rm -f "${ASYNC_TASKS_DST}c"
-    echo "    -> $ASYNC_TASKS_DST ($(wc -c < "$ASYNC_TASKS_DST") bytes)"
-    ASYNC_TASKS_OK=1
-  else
-    echo "ERROR: downloaded async-tasks.el failed content validation." >&2
-    echo "       (Expected first line to start with \";;; async-tasks.el ---\"" >&2
-    echo "        AND the file to contain \`(provide 'async-tasks)'.)" >&2
-    echo "       Got first line: $(head -1 "$ASYNC_TASKS_DST.tmp" 2>/dev/null)" >&2
-    echo "       URL:            $ASYNC_TASKS_URL" >&2
-    rm -f "$ASYNC_TASKS_DST.tmp"
-  fi
-else
-  rm -f "$ASYNC_TASKS_DST.tmp"
-  echo "ERROR: curl failed to fetch async-tasks (exit code $ASYNC_TASKS_FETCH_RC)." >&2
-  echo "       URL: $ASYNC_TASKS_URL" >&2
-fi
-
-if [ "$ASYNC_TASKS_OK" -eq 0 ]; then
-  if [ -f "$ASYNC_TASKS_DST" ]; then
-    # We have a previous good copy. Warn but continue — better to install
-    # with a slightly stale framework than to refuse to install at all.
-    echo "WARNING: keeping existing copy at $ASYNC_TASKS_DST" >&2
-    echo "         (size $(wc -c < "$ASYNC_TASKS_DST") bytes). Re-run install.sh" >&2
-    echo "         after restoring network connectivity to refresh." >&2
-  else
-    # No fallback. Refusing to continue is the only honest choice — without
-    # this file the bootstrap dep gate at the end of 20_bootstrap.el will
-    # skip the orchestrator, my/data-dir stays unset, and the next launch
-    # crashes a third-party package that reads my/data-dir at load time
-    # (gptel-agent-runtime hit exactly this; the symptom is a backtrace
-    # ending in `directory-file-name(nil)' that's mystifying to debug).
-    echo "" >&2
-    echo "FATAL: async-tasks could not be downloaded AND no on-disk copy exists." >&2
-    echo "       Install cannot continue safely — the bootstrap orchestrator" >&2
-    echo "       depends on this package being present at module-load time." >&2
-    echo "" >&2
-    echo "Recovery:" >&2
-    echo "  1. Check connectivity:  curl -fsSL $ASYNC_TASKS_URL > /dev/null" >&2
-    echo "  2. If your network is fine, the upstream repo may be wrong." >&2
-    echo "     Override:  EMACS_MAC_ASYNC_TASKS_REPO=other/fork bash install.sh" >&2
-    echo "  3. If you have a working copy from another Mac, drop it at:" >&2
-    echo "       $ASYNC_TASKS_DST" >&2
-    echo "     and re-run install.sh." >&2
-    echo "  4. As a last resort, fetch manually:" >&2
-    echo "       curl -fsSL --retry 3 -o $ASYNC_TASKS_DST \\\\" >&2
-    echo "         $ASYNC_TASKS_URL" >&2
-    echo "" >&2
-    exit 1
-  fi
-fi
-unset ASYNC_TASKS_FETCH_RC ASYNC_TASKS_OK
+# Optional task tooling is not part of the Emacs startup path. Missing it must
+# not prevent the base configuration from loading.
 
 # 7. Daemon-aware launchers ------------------------------------------------
 #
-# Subsequent Emacs starts go through the daemon (~/Library/LaunchAgents/
-# homebrew.mxcl.emacs-plus@30.plist, installed by `brew services start' —
-# the bootstrap auto-configures this on first launch). New emacsclient
-# frames open in 10-50 ms instead of paying the full ~2-3 s bootstrap
-# cost each time. The wrapper below starts the daemon on demand for the
-# rare case where the LaunchAgent hasn't booted it yet (e.g. first
-# install before the LaunchAgent loads, or right after `brew services
-# stop emacs-plus@30').
+# The installer registers the Emacs daemon with Homebrew services. The
+# wrapper waits for that service to become reachable, and only starts a
+# daemon itself when no service is registered.
 mkdir -p "$HOME/bin"
 cat > "$HOME/bin/emacs-gui" <<'EOF'
 #!/bin/bash
@@ -604,11 +446,46 @@ cat > "$HOME/bin/emacs-gui" <<'EOF'
 # Prepending both brew prefixes is harmless on either architecture.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+LOGFILE="$HOME/.emacs.d/emacs-gui.log"
+mkdir -p "$HOME/.emacs.d"
+printf '\n=== Emacs Client start: %s ===\n' "$(date)" >> "$LOGFILE"
+
+show_start_error() {
+    osascript <<'APPLESCRIPT' >/dev/null 2>&1 || true
+display dialog "Emacs could not start. See ~/.emacs.d/emacs-gui.log for details." buttons {"OK"} default button "OK" with icon stop
+APPLESCRIPT
+    exit 1
+}
+
+SERVICE_LABEL="homebrew.mxcl.emacs-plus@30"
+SERVICE_TARGET="gui/$(id -u)/$SERVICE_LABEL"
 if ! emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
-    emacs --daemon
-    sleep 1
+    if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
+        printf 'Waiting for registered Emacs service: %s\\n' "$SERVICE_LABEL" >> "$LOGFILE"
+    else
+        # Background the first startup so a slow package bootstrap cannot
+        # leave LaunchServices waiting forever without a useful error.
+        emacs --daemon >>"$LOGFILE" 2>&1 &
+    fi
 fi
-exec emacsclient -c -n "$@"
+
+# Initial startup can tangle the literate config and fetch packages. Wait for
+# the server socket instead of racing it with a fixed delay.
+READY=0
+for _attempt in $(seq 1 360); do
+    if emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
+        READY=1
+        break
+    fi
+    sleep 0.5
+done
+
+if [ "$READY" -ne 1 ]; then
+    printf 'Timed out waiting for the Emacs server.\n' >> "$LOGFILE"
+    show_start_error
+fi
+
+emacsclient -c -n "$@" >>"$LOGFILE" 2>&1 || show_start_error
 EOF
 chmod +x "$HOME/bin/emacs-gui"
 echo "==> Wrote $HOME/bin/emacs-gui (daemon-aware launcher)"
@@ -754,113 +631,21 @@ fi
 } > "$ENV_SNAP"
 echo "    snapshot lines: $(wc -l < "$ENV_SNAP" | xargs)"
 
-# 7.  Protection layer C — AOT byte-compile ---------------------------------
-# Without this, the first launch tangles + byte-compiles every .org
-# under modules/ as it discovers them: 1-5 seconds of synchronous
-# work before the user can type. Compile now (install shell, all tools
-# present) so the .elc files are on disk and `my/-load-module' loads
-# tier 1 (~10 ms each) from the first launch.
-#
-# Native-comp is NOT triggered here. emacs-plus@30 ships .eln for the
-# core; module .eln gets JIT-compiled lazily on first use (cheap with
-# LIBRARY_PATH set by the env snapshot above). Triggering AOT native
-# would add 30-120 s to the install with diminishing returns.
-echo "==> AOT byte-compiling all modules (so first launch starts fast)"
-# Nuke every .elc under modules/ FIRST so the rebuild starts from a
-# clean slate. Without this, install.sh's mtime-based "only compile
-# when .el is newer than .elc" skip would leave stale .elc behind
-# whenever the rsync above transferred .el files with older mtimes
-# than the existing .elc (rsync preserves source mtimes; the older
-# .elc would survive even though its content is from a previous
-# distro version). The loader's tier-1 cache check would then load
-# the stale .elc on the next launch, with no error but with
-# silently-wrong code. Deleting and rebuilding is cheap and
-# guarantees correctness.
-find "$EMACS_D/config/modules" -name "*.elc" -delete 2>/dev/null
-# Also nuke any stale `!`-prefixed .elc from a previous install that
-# byte-compiled them by mistake. The find above already covers them,
-# but list explicitly so a future grep makes the intent obvious.
-find "$EMACS_D/config/modules" -name '!*.elc' -delete 2>/dev/null
-EMACS_BIN="$(brew --prefix emacs-plus@30 2>/dev/null)/bin/emacs"
-[ -x "$EMACS_BIN" ] || EMACS_BIN="$(command -v emacs)"
-if [ -x "$EMACS_BIN" ]; then
-  # Pass the elisp through a tempfile heredoc, NOT inline `--eval '…'`.
-  # The intended regex `\.el\'` (end-of-string anchor inside an Elisp
-  # string) contains a literal single quote. Bash cannot escape a
-  # single quote inside a `'…'`-delimited string, so an inline
-  # --eval ' … "\\.el\\'" … ' is parsed as a stream of fragments and
-  # the install aborts with `syntax error near unexpected token '('`.
-  # The heredoc `<<'ELISP'` is single-quoted so the body is taken
-  # verbatim with no shell substitution or quoting at all.
-  AOT_TMPEL="$(mktemp -t emacs-aot-XXXXXX).el"
-  # Two exclusions, both rooted in the same constraint: the AOT step
-  # runs in `emacs -Q' and CANNOT see elpaca or any elpaca-managed
-  # package. Byte-compiling code that references those produces .elc
-  # that's broken at runtime.
-  #
-  #   1. `!`-prefixed bootstrap modules — `!00_startfirst.el' defines
-  #      AND uses the `elpaca' macro. Byte-compiling freezes the
-  #      macro call as a funcall against undefined `elpaca'. config.org's
-  #      loader source-loads these (skips byte-compile).
-  #
-  #   2. Files using `use-package' — `:ensure t' relies on
-  #      `elpaca-use-package-mode' to make use-package defer the body
-  #      until the package is built. Without elpaca-use-package on the
-  #      AOT load-path the use-package macro expands to immediate
-  #      `require' calls. On first launch (no packages built yet) every
-  #      such .elc errors "Cannot load <pkg>", and the after-init
-  #      activation of `doom-modeline-mode' takes the daemon down.
-  #
-  # Affected files (as of writing): 30_core.el, 40_org.el,
-  # 50_apple_reminders.el, 60_gptel.el. Grep'ing the file body is the
-  # robust check — survives future renames and new use-package modules.
-  # The runtime loader (`my/-load-module' in config.org) compiles
-  # these correctly on the first launch, when elpaca is fully active.
-  cat > "$AOT_TMPEL" <<'ELISP'
-(progn
-  (require 'bytecomp)
-  (setq byte-compile-warnings nil)
-  (dolist (f (directory-files-recursively
-              (expand-file-name "config/modules/" user-emacs-directory)
-              "\\.el\\'"))
-    (unless (or (string-prefix-p "!" (file-name-nondirectory f))
-                (with-temp-buffer
-                  (insert-file-contents f)
-                  (goto-char (point-min))
-                  (re-search-forward "(use-package\\b" nil t)))
-      (byte-compile-file f))))
-ELISP
-  "$EMACS_BIN" --batch -Q \
-    -L "$EMACS_D/config/modules" \
-    -L "$EMACS_D/config/modules/20_bootstrap" \
-    -l "$AOT_TMPEL" 2>/dev/null && \
-    echo "    AOT byte-compile: done" || \
-    echo "    AOT byte-compile: skipped (will compile lazily on first launch)"
-  rm -f "$AOT_TMPEL"
+# 7b. Ensure the persistent Emacs daemon is registered ---------------------
+# Do this in the installer because this is part of the minimal Emacs
+# runtime, not a personal integration. If the user already has an active
+# ad-hoc daemon, leave it untouched rather than starting a second server.
+if brew services list | awk -v service="$EMACS_FORMULA" \
+    '$1 == service && $2 == "started" { found = 1 } END { exit !found }'; then
+  echo "==> Restarting the existing Homebrew Emacs service"
+  brew services restart "$EMACS_FORMULA" || \
+    echo "WARNING: could not restart the Emacs service; the client launcher will report startup errors." >&2
+elif ! emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
+  echo "==> Registering Emacs daemon to start at login"
+  brew services start "$EMACS_FORMULA" || \
+    echo "WARNING: could not register the Emacs service; the client launcher will start it on demand." >&2
 else
-  echo "    AOT byte-compile: skipped — emacs binary not found"
-fi
-
-# 7b. Kick stale daemon so brew services respawns it with fresh files ------
-# Background: emacs-plus@30's LaunchAgent (~/Library/LaunchAgents/
-# homebrew.mxcl.emacs-plus@30.plist) has KeepAlive=true, so a daemon
-# started from a previous install / previous login is STILL RUNNING right
-# now — and has all the env from THAT process in memory. We just
-# overwrote early-init.el, env-snapshot.el and every .elc under
-# config/modules/. The running daemon won't notice any of that until
-# something restarts it. Without this kick, the user reinstalls, sees
-# the warnings *still* fire (because the on-disk fixes never reach the
-# in-memory daemon), and reasonably concludes "didn't we fix that?".
-#
-# A simple SIGTERM lets the daemon save its state cleanly; launchd then
-# respawns it within ~1s (KeepAlive) and the new process reads the new
-# early-init.el and the new env-snapshot.el. The final `open' below
-# connects to the fresh daemon via emacsclient.
-if pgrep -f 'emacs.*--fg-daemon' >/dev/null 2>&1; then
-  echo "==> Restarting daemon so it picks up new early-init.el + env-snapshot.el"
-  pkill -TERM -f 'emacs.*--fg-daemon' 2>/dev/null || true
-  # Give launchd KeepAlive a beat to respawn before the final `open' fires.
-  sleep 2
+  echo "==> An Emacs daemon is already active; leaving it running"
 fi
 
 # 8. Done ------------------------------------------------------------------
@@ -871,20 +656,13 @@ echo "======================================================================"
 echo "  ~/.emacs.d:  $EMACS_D  (real dir; init.el + early-init.el copied from $SRC_DIR/emacs.d/)"
 echo "  Config:      $CONFIG_DIR    (distro-managed; copied here on every install + refreshed by bootstrap)"
 echo "  Modules:     $CONFIG_DIR/modules/   (one .org per concern, ordered by NN- prefix)"
-echo "  Data root:   $DATA_DIR    (= my/data-dir; user org files, wiki, agenda; per-Mac, switchable via BW.Repo)"
-echo "  Secrets:     $SRC_DIR/emacs.d/secrets.el   (per-Mac, not in git)"
+echo "  Default data dir: $DATA_DIR (personal repository selected later in Emacs)"
+echo "  Secrets:          $EMACS_D/secrets.el (per-Mac, not in git)"
 echo ""
-echo "  First launch (init.el) loads $CONFIG_DIR/config.org, which"
-echo "  discovers and runs the modules in numeric order. The first module"
-echo "  (20_bootstrap.org) does:"
-echo "    1. Ask whether to use Bitwarden for secrets (recommended)"
-echo "    2. If yes — prompt for email + master, cache to macOS Keychain"
-echo "    3. Read or create the emacs_credentials Bitwarden item"
-echo "    4. Install + authenticate gh CLI"
-echo "    5. Clone (or create + push) your private data repo into $DATA_DIR"
-echo "    6. Unlock git-crypt if the repo uses it (key in BW under GitCryptKey)"
-echo "    7. Generate any missing starter content via elisp templates"
-echo "    8. Load API keys (Gemini/Anthropic/OpenAI/Groq) from BW or Keychain"
+echo "  First launch opens Emacs with the seeded config."
+echo "  Personal data, credentials, the private data repo, and optional"
+echo "  runtimes are configured later from inside Emacs via M-x my/credential-set"
+echo "  and M-x my/bootstrap (plus the relevant feature setup commands)."
 echo ""
 echo "  Update later:   bash $SRC_DIR/install.sh"
 echo "  Uninstall:      bash $SRC_DIR/uninstall.sh"

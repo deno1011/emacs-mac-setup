@@ -43,25 +43,13 @@
   (let ((env (getenv "EMACS_DATA_DIR")))
     (if env
         (expand-file-name (file-name-as-directory env))
-      user-emacs-directory))
-  "Root directory for the user's PERSONAL DATA — org files, wiki content,
-agenda files, GTD content, etc. NOT the literate config (that lives at
-`my/config-dir' = ~/.emacs.d/config/, regardless of which data-dir is
-selected).
-
-Default is `user-emacs-directory' (`~/.emacs.d/'). The choice matters
-because third-party packages — gptel-agent-runtime is one — read this
-variable AT LOAD TIME via byte-compiled code like
-`(directory-file-name my/data-dir)'. A nil value crashes them with
-\"Wrong type argument: stringp, nil\". The same packages typically
-ship a `(defvar my/data-dir user-emacs-directory …)' as a hint, but
-`defvar' is a no-op once the variable is bound, so init.el's binding
-wins.
-
-The bootstrap orchestrator overwrites this with the chosen folder
-(from Keychain.GitHubRepo / BW.Repo / setup-form Save) on first run
-and on every subsequent launch. Override per-Mac via `EMACS_DATA_DIR'
-(escape hatch for testing / scripted installs).")
+      :not-resolved))
+  "Root directory for personal data (Org files, wiki, agenda, GTD).
+This is separate from the literate config at `my/config-dir'. An
+explicit `EMACS_DATA_DIR' sets the path; otherwise it remains
+`:not-resolved' until the user configures personal data in Emacs.
+Feature modules must check `my/bootstrap-ready-p' before using it.
+Keeping it unresolved avoids routing personal files into `~/.emacs.d/'.")
 
 ;; 2. Where the literate config lives ------------------------------------
 (defvar my/config-dir (expand-file-name "config/" user-emacs-directory)

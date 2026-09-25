@@ -86,43 +86,18 @@ user's home directory."
 
 Reads the Keychain entry SERVICE=`emacs_credentials' /
 ACCOUNT=`GitHubRepo' (the user-chosen repo name), builds the
-absolute data-folder path \"~/<repo>/\", and assigns it to the
-Layer-3-owned variable `my/data-dir'.
+absolute data-folder path, and assigns it to `my/data-dir'. A
+missing or empty entry defers personal-data setup and returns
+`:skip', leaving the base Emacs configuration usable. The caller
+surfaces the setup hint.
 
-Idempotent: when `my/data-dir' already equals the computed path,
-returns `:skip' and does not write. When the value differs (a
-fresh resolution or a repo-name change), returns `:done' after
-the assignment.
-
-Failure modes (no state mutation):
-  - GitHubRepo entry missing in Keychain
-  - GitHubRepo entry present but empty
-Both surface as (:error MSG) carrying the exact `security'
-command to add or rewrite the Keychain entry."
+Idempotent: returns `:skip' when already resolved to the same path,
+and `:done' when it assigns a new path."
   (let ((repo (my/keychain-get my/data-dir-resolve--keychain-service
                                my/data-dir-resolve--keychain-account)))
     (cond
-     ((null repo)
-      `(:error
-        ,(format
-          "Keychain entry %s/%s is missing.\
-\n\nFIX: security add-generic-password -s %s -a %s -w \"<repo-name>\""
-          my/data-dir-resolve--keychain-service
-          my/data-dir-resolve--keychain-account
-          my/data-dir-resolve--keychain-service
-          my/data-dir-resolve--keychain-account)))
-     ((string-empty-p repo)
-      `(:error
-        ,(format
-          "Keychain entry %s/%s exists but is empty.\
-\n\nFIX: security delete-generic-password -s %s -a %s\
-\n     security add-generic-password    -s %s -a %s -w \"<repo-name>\""
-          my/data-dir-resolve--keychain-service
-          my/data-dir-resolve--keychain-account
-          my/data-dir-resolve--keychain-service
-          my/data-dir-resolve--keychain-account
-          my/data-dir-resolve--keychain-service
-          my/data-dir-resolve--keychain-account)))
+     ((or (null repo) (string-empty-p repo))
+      :skip)
      (t
       (let ((path (my/data-dir-resolve--build-path repo)))
         (cond
