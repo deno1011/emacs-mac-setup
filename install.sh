@@ -518,11 +518,30 @@ mkdir -p "$HOME/Applications"
 [ -e "$APP_DIR" ] && rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
-cat > "$APP_DIR/Contents/MacOS/Emacs Client" <<'EOF'
-#!/bin/bash
-exec "$HOME/bin/emacs-gui" "$@"
+cat > "$APP_DIR/Contents/MacOS/emacs-client-launcher.c" <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    const char *home = getenv("HOME");
+    if (home == NULL || *home == '\0') return 127;
+    char script[4096];
+    int n = snprintf(script, sizeof(script), "%s/bin/emacs-gui", home);
+    if (n < 0 || (size_t)n >= sizeof(script)) return 127;
+    char **args = calloc((size_t)argc + 2, sizeof(char *));
+    if (args == NULL) return 127;
+    args[0] = "/bin/bash";
+    args[1] = script;
+    for (int i = 1; i < argc; ++i) args[i + 1] = argv[i];
+    execv(args[0], args);
+    perror("Emacs Client: exec /bin/bash");
+    return 127;
+}
 EOF
-chmod +x "$APP_DIR/Contents/MacOS/Emacs Client"
+/usr/bin/clang -O2 -o "$APP_DIR/Contents/MacOS/Emacs Client" \
+  "$APP_DIR/Contents/MacOS/emacs-client-launcher.c"
+rm "$APP_DIR/Contents/MacOS/emacs-client-launcher.c"
 # Borrow the Emacs icon from emacs-plus's own .app bundle so the
 # wrapper shows the real GNU Emacs icon in Launchpad / Dock / Cmd-Tab
 # instead of the generic gray "broken document" icon. Without this
