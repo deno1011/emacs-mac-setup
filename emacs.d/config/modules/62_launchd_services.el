@@ -350,6 +350,11 @@ registration so live reloads heal too."
 (defun my/launchd-services--schedule-auto-heal ()
   "Schedule launchd self-heal after startup."
   (when (and my/launchd-services-auto-heal
+             ;; Do not run synchronous launchctl calls during first-run setup:
+             ;; before personal data is configured, optional services are not
+             ;; ready and a slow launchctl call can block the daemon's event
+             ;; loop before emacsclient can create its first frame.
+             (my/bootstrap-ready-p)
              (not noninteractive))
     (run-at-time
      my/launchd-services-startup-delay nil
