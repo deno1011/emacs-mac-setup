@@ -457,10 +457,16 @@ APPLESCRIPT
     exit 1
 }
 
-SERVICE_LABEL="homebrew.mxcl.emacs-plus@30"
-SERVICE_TARGET="gui/$(id -u)/$SERVICE_LABEL"
+# Homebrew's launchd label varies by version (`sh.brew.*' on current
+# Homebrew, `homebrew.mxcl.*' on older releases). Discover the registered
+# label instead of assuming one, or this wrapper may start a second daemon.
+SERVICE_LABEL="$(launchctl list | awk '$3 ~ /emacs-plus@30/ {print $3; exit}')"
+SERVICE_TARGET=""
+if [ -n "$SERVICE_LABEL" ]; then
+    SERVICE_TARGET="gui/$(id -u)/$SERVICE_LABEL"
+fi
 if ! emacsclient -e "(emacs-pid)" >/dev/null 2>&1; then
-    if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
+    if [ -n "$SERVICE_TARGET" ] && launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
         printf 'Waiting for registered Emacs service: %s\\n' "$SERVICE_LABEL" >> "$LOGFILE"
     else
         # Background the first startup so a slow package bootstrap cannot

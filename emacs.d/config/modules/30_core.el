@@ -381,20 +381,22 @@ the local commit is kept and a message is shown for manual resolution."
 
 (defun my/beorg-sync ()
   "Mirror my/data-dir/data/org/ to beorg's iCloud folder."
-  (unless (my/bootstrap-ready-p)
-    (user-error "beorg-sync: bootstrap not ready, my/data-dir is %S. \
-Fix the bootstrap (see *Warnings*) and retry"
-                my/data-dir))
-  (let ((org-d (file-name-as-directory
-                (expand-file-name "data/org" my/data-dir)))
-        (beorg (expand-file-name
-                "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
-                (getenv "HOME"))))
-    (when (and (file-directory-p org-d)
-               (file-directory-p beorg))
-      (start-process "beorg-sync" " *beorg-sync*"
-                     "rsync" "-a" "--delete"
-                     org-d (file-name-as-directory beorg)))))
+  ;; This runs from `after-init-hook', including when Emacs is starting as
+  ;; a daemon.  A `user-error' here aborts daemon startup (exit 255) before
+  ;; its server socket is available, so an unconfigured personal data folder
+  ;; must simply defer this optional sync.
+  (if (not (my/bootstrap-ready-p))
+      (message "beorg-sync: skipped until personal data is configured")
+    (let ((org-d (file-name-as-directory
+                  (expand-file-name "data/org" my/data-dir)))
+          (beorg (expand-file-name
+                  "Library/Mobile Documents/iCloud~com~appsonthemove~beorg/Documents/org"
+                  (getenv "HOME"))))
+      (when (and (file-directory-p org-d)
+                 (file-directory-p beorg))
+        (start-process "beorg-sync" " *beorg-sync*"
+                       "rsync" "-a" "--delete"
+                       org-d (file-name-as-directory beorg))))))
 
 (add-hook 'after-init-hook #'my/beorg-sync)
 
