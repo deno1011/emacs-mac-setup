@@ -578,17 +578,19 @@ installs or competing dependency managers."
 
 (defun my/external-provisioning--after-bootstrap (&rest _)
   "Retry deferred private components after a manual bootstrap completes."
-  (when my/external-provisioning-auto-start
+  (when (and my/external-provisioning-auto-start
+             (my/bootstrap-ready-p))
     (run-at-time 0 nil #'my/external-provisioning-start)))
 
 (when (fboundp 'my/bootstrap)
   (advice-add 'my/bootstrap :after #'my/external-provisioning--after-bootstrap))
 
 (unless noninteractive
-  ;; Bootstrap has already run before module 69 is discovered.  A short delay
-  ;; keeps first-window startup responsive while still making a fresh machine
-  ;; self-provision without an extra M-x command.
-  (when my/external-provisioning-auto-start
+  ;; Do not begin optional installs while the daemon is becoming reachable.
+  ;; After a fresh install the user configures personal data from inside
+  ;; Emacs; the bootstrap advice above then starts this queue in the background.
+  (when (and my/external-provisioning-auto-start
+             (my/bootstrap-ready-p))
     (run-at-time 3 nil #'my/external-provisioning-start)))
 
 (provide '69_external_provisioning)

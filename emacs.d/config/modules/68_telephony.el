@@ -467,6 +467,15 @@ The shipped Docker templates and EAR adapter remain installed."
     (kill-buffer buffer)))
 
 (my/telephony-register-services)
-(unless noninteractive
+(defun my/telephony--after-bootstrap (&rest _)
+  "Defer optional telephony provisioning until personal setup is complete."
+  (when (and (not noninteractive) (my/bootstrap-ready-p))
+    (run-at-time 5 nil #'my/telephony-install)))
+
+(when (fboundp 'my/bootstrap)
+  (advice-add 'my/bootstrap :after #'my/telephony--after-bootstrap))
+
+;; A new daemon must become reachable before any optional service work starts.
+(when (and (not noninteractive) (my/bootstrap-ready-p))
   (run-at-time 5 nil #'my/telephony-install))
 (provide '68_telephony)
