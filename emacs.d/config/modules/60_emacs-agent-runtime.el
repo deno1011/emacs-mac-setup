@@ -827,7 +827,7 @@ projections, index Org files, or download models intentionally."
 ;; gptel remains the chat UI/backend client. The old gptel-agent-runtime package
 ;; is intentionally not installed or loaded from this module anymore.
 (use-package gptel
-  :ensure t
+  :ensure (:wait t)
   :demand t
   :config
   (setq gptel-default-mode 'org-mode)
