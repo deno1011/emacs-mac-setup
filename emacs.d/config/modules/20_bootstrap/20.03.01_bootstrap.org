@@ -526,7 +526,14 @@ output. Show the user a persistent setup page on the first graphical frame.
             (special-mode)))
         (pop-to-buffer buffer)))))
 
-(add-hook 'after-make-frame-functions #'my/bootstrap--show-setup-hint)
+(defun my/bootstrap--schedule-setup-hint (frame)
+  "Schedule the setup page after FRAME has completed client initialization."
+  (when (and (not my/bootstrap--setup-hint-shown-p)
+             (not (my/bootstrap-ready-p))
+             (display-graphic-p frame))
+    (run-at-time 0.75 nil #'my/bootstrap--show-setup-hint frame)))
+
+(add-hook 'after-make-frame-functions #'my/bootstrap--schedule-setup-hint)
 (when (display-graphic-p)
   (run-with-idle-timer 1 nil #'my/bootstrap--show-setup-hint
                        (selected-frame)))
