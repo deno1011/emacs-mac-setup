@@ -9,6 +9,10 @@
 (defvar agent-shell-preferred-agent-config)
 (defvar agent-shell-show-welcome-message)
 (defvar agent-shell-text-file-capabilities)
+(defvar agent-shell-thought-process-expand-by-default)
+(defvar agent-shell-tool-use-expand-by-default)
+(defvar agent-shell-activity-group-expand-by-default)
+(defvar agent-shell-session-restore-verbosity)
 (defvar ear-session-open-function)
 (defvar my/emacs-agent-runtime-dir)
 
@@ -31,16 +35,18 @@
   "Return the EAR ACP server executable."
   (expand-file-name "bin/ear-acp" my/emacs-agent-runtime-dir))
 
-(defun my/ear-agent-shell-make-client (buffer)
-  "Create a public ACP client for BUFFER and the selected EAR agent."
+(defun my/ear-agent-shell-make-client (buffer &optional agent-id)
+  "Create a public ACP client for BUFFER and EAR AGENT-ID."
   (acp-make-client
    :command (my/ear-agent-shell-command)
-   :command-params (list "--agent" my/ear-agent-shell-selected-agent)
+   :command-params
+   (list "--agent" (or agent-id my/ear-agent-shell-selected-agent))
    :context-buffer buffer))
 
-(defun my/ear-agent-shell-make-config ()
-  "Return the Agent Shell configuration for the selected EAR agent."
-  (let ((agent-id my/ear-agent-shell-selected-agent))
+(defun my/ear-agent-shell-make-config (&optional selected-agent-id)
+  "Return an Agent Shell configuration for SELECTED-AGENT-ID."
+  (let ((agent-id (or selected-agent-id
+                      my/ear-agent-shell-selected-agent)))
     (agent-shell-make-agent-config
      :identifier (intern (format "ear-%s" agent-id))
      :mode-line-name (format "EAR %s" agent-id)
@@ -48,7 +54,9 @@
      :shell-prompt "EAR> "
      :shell-prompt-regexp "EAR> "
      :session-meta `((earAgentId . ,agent-id))
-     :client-maker #'my/ear-agent-shell-make-client
+     :client-maker
+     (lambda (buffer)
+       (my/ear-agent-shell-make-client buffer agent-id))
      :install-instructions
      (format "EAR ACP executable missing: %s"
              (my/ear-agent-shell-command)))))
@@ -67,9 +75,8 @@
                                    my/ear-agent-shell-selected-agent)
                 my/ear-agent-shell-selected-agent))))
     (setq my/ear-agent-shell-selected-agent selected)
-    (let ((agent-shell-preferred-agent-config
-           (my/ear-agent-shell-make-config)))
-      (agent-shell '(4)))))
+    (agent-shell-start
+     :config (my/ear-agent-shell-make-config selected))))
 
 ;;;###autoload
 (defun ear-attach (session-id)
@@ -87,7 +94,7 @@
                        my/ear-agent-shell-selected-agent))
          (my/ear-agent-shell-selected-agent agent-id))
     (agent-shell-start
-     :config (my/ear-agent-shell-make-config)
+     :config (my/ear-agent-shell-make-config agent-id)
      :session-id session-id)))
 
 (use-package agent-shell
@@ -95,7 +102,11 @@
   :demand t
   :init
   (setq agent-shell-show-welcome-message nil
-        agent-shell-text-file-capabilities nil)
+        agent-shell-text-file-capabilities nil
+        agent-shell-thought-process-expand-by-default nil
+        agent-shell-tool-use-expand-by-default nil
+        agent-shell-activity-group-expand-by-default nil
+        agent-shell-session-restore-verbosity 'last)
   :config
   (add-to-list 'agent-shell-agent-configs
                #'my/ear-agent-shell-make-config)

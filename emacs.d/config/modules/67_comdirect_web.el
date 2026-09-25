@@ -10,6 +10,8 @@
 (declare-function comdirect-web-transfer "comdirect-web")
 (declare-function my/emacs-agent-runtime-core-adapters-root-directory
                   "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-external-python
+                  "60_emacs-agent-runtime" (name))
 
 (defcustom my/comdirect-web-source 'local
   "Where comdirect-web is loaded from (`elpaca' private repo, or `local').
@@ -60,8 +62,11 @@ elpaca build can lag behind pushes and would run stale transfer logic."
   "When non-nil, the helper clicks submit after filling (moves real money)."
   :type 'boolean :group 'my/comdirect-web)
 
-(defcustom my/comdirect-web-python "/usr/bin/python3"
-  "Python 3 interpreter with `playwright' installed."
+(defcustom my/comdirect-web-python
+  (my/emacs-agent-runtime-external-python "comdirect")
+  "Python 3 interpreter with `playwright' installed.
+The external-provisioning module owns the matching user-local virtual
+environment; before it exists this falls back to the available `python3'."
   :type 'string :group 'my/comdirect-web)
 
 (defun my/comdirect-web-apply-config ()
@@ -75,14 +80,17 @@ elpaca build can lag behind pushes and would run stale transfer logic."
     (when (boundp (car pair))
       (set (car pair) (cdr pair)))))
 
-(defcustom my/comdirect-web-auto-install t
-  "When non-nil, install Playwright + Chromium automatically if missing."
+(defcustom my/comdirect-web-auto-install nil
+  "When non-nil, install Playwright + Chromium on this module's load.
+
+Normal setup uses `69_external_provisioning' instead.  Keeping this opt-in
+avoids a duplicate installer racing the central sequential provision queue."
   :type 'boolean :group 'my/comdirect-web)
 
 (defun my/comdirect-web-install-playwright-command ()
   "Return the shell command that installs Playwright and its Chromium browser."
   (let ((py (shell-quote-argument my/comdirect-web-python)))
-    (format "%s -m pip install --user playwright && %s -m playwright install chromium"
+    (format "%s -m pip install --upgrade playwright && %s -m playwright install chromium"
             py py)))
 
 (defun my/comdirect-web--playwright-ready-p ()

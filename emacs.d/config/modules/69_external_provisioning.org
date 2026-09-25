@@ -1,0 +1,660 @@
+#+TITLE: External Adapter Provisioning
+#+STARTUP: overview
+#+PROPERTY: header-args:emacs-lisp :tangle yes :lexical t
+
+Loaded by: [[file:../config.org][config.org]] ← [[file:~/.emacs.d/init.el][init.el]]
+
+* Purpose
+
+This module is the one configuration-owned provisioning path for optional EAR
+adapters and their local runtimes.  It intentionally does /not/ replace
+=install.sh=: the shell installer only installs the Emacs distribution, while
+this module converges the optional integration layer after Emacs is available.
+
+The component registry is declarative.  Each entry says /what/ is needed;
+generic Elisp implements the small set of provisioning mechanisms (Homebrew,
+npm, Git, Python virtual environments, and template files).  The queue runs
+one component at a time so a new machine remains responsive and a failure in
+one optional adapter never prevents unrelated adapters from becoming ready.
+
+** Boundaries
+
+- Reusable adapter source lives in EAR Core under =external/adapters/=.  The
+  registry clones only missing checkouts and never resets, pulls, or overwrites
+  an existing checkout.
+- Account-bound messenger adapters live below the private data repository.
+  Their source and dependency trees can be recreated; their =.env= files,
+  QR pairings, browser sessions, Keychain secrets, macOS permissions, and
+  SQLite history are never copied from another Mac or modified when present.
+- Python dependencies use per-adapter virtual environments below
+  =~/.emacs.d/ear/external/=.  They are machine-local, reproducible state, not
+  project source.
+- QMD, Ollama, MLX, Claude Code and Codex are installed as executables only.
+  The module never indexes private content, downloads a model, logs into an
+  account, starts a daemon, links a device, or sends a message.
+
+* Configuration and public commands
+
+#+begin_src emacs-lisp :tangle yes
+;;; 69_external_provisioning.el --- Declarative external integration setup -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+(require 'subr-x)
+
+(declare-function my/bootstrap-ready-p "20.03.01_bootstrap" ())
+(declare-function my/emacs-agent-runtime-core-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-private-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-private-root-directory
+                  "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-external-runtime-root-directory
+                  "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-external-python
+                  "60_emacs-agent-runtime" (name))
+(declare-function my/fints-queue-elpaca "66_fints_adapter" ())
+(declare-function my/fints-apply-config "66_fints_adapter" ())
+(declare-function my/comdirect-web-queue-elpaca "67_comdirect_web" ())
+(declare-function my/comdirect-web-apply-config "67_comdirect_web" ())
+(declare-function my/messenger-register-launchd-services "65_messenger" ())
+(declare-function my/messenger-bridge-runtime-directory "65_messenger" ())
+
+(defgroup my/external-provisioning nil
+  "Reproducible installation of optional EAR integrations."
+  :group 'emacs-agent-runtime)
+
+(defcustom my/external-provisioning-auto-start t
+  "When non-nil, converge enabled external components after Emacs starts.
+
+The work is asynchronous and sequential.  A ready component is a no-op, and a
+missing private data repository merely defers its private components until a
+later bootstrap or Emacs start."
+  :type 'boolean
+  :group 'my/external-provisioning)
+
+(defcustom my/external-provisioning-profile 'standard
+  "Provisioning profile selected by this Emacs installation.
+
+`standard' installs adapter source, command-line runtimes, and dependency
+environments without authentication or model downloads.  `full' additionally
+permits optional heavyweight desktop integrations such as Docker Desktop.
+`none' disables automatic provisioning while retaining the inspection commands."
+  :type '(choice (const :tag "Disabled" none)
+                 (const :tag "Standard external integrations" standard)
+                 (const :tag "Standard + heavyweight integrations" full))
+  :group 'my/external-provisioning)
+
+(defcustom my/external-provisioning-log-buffer "*EAR External Provisioning*"
+  "Buffer used for durable-in-session provisioning progress."
+  :type 'string
+  :group 'my/external-provisioning)
+
+(defcustom my/external-provisioning-components
+  '((:id node
+     :label "Node.js runtime"
+     :profiles (standard full)
+     :scope core :kind brew-formula :formula "node" :executable "node")
+    (:id python
+     :label "Python 3 runtime"
+     :profiles (standard full)
+     :scope core :kind brew-formula :formula "python" :executable "python3"
+     :probe-arguments ("-c" "import venv"))
+    (:id signal-cli
+     :label "signal-cli"
+     :profiles (standard full)
+     :scope core :kind brew-formula :formula "signal-cli" :executable "signal-cli")
+    (:id ollama
+     :label "Ollama runtime"
+     :profiles (standard full)
+     :scope core :kind brew-formula :formula "ollama" :executable "ollama")
+    (:id qmd
+     :label "QMD retrieval CLI"
+     :profiles (standard full)
+     :scope core :kind npm-global :package qmd :executable "qmd")
+    (:id claude-code-cli
+     :label "Claude Code CLI"
+     :profiles (standard full)
+     :scope core :kind npm-global :package claude-code :executable "claude")
+    (:id codex-cli
+     :label "Codex CLI"
+     :profiles (standard full)
+     :scope core :kind npm-global :package codex :executable "codex")
+
+    (:id messenger-bridge-source
+     :label "EAR messenger bridge source"
+     :profiles (standard full)
+     :scope core :kind git-checkout :checkout "emacs-messenger-bridge"
+     :repository "https://github.com/deno1011/emacs-messenger-bridge.git")
+    (:id fints-source
+     :label "FinTS adapter source"
+     :profiles (standard full)
+     :scope core :kind git-checkout :checkout "emacs-fints-adapter"
+     :repository "https://github.com/deno1011/emacs-fints-adapter.git")
+    (:id comdirect-web-source
+     :label "Comdirect web adapter source"
+     :profiles (standard full)
+     :scope core :kind git-checkout :checkout "comdirect-web"
+     :repository "https://github.com/deno1011/comdirect-web.git")
+    (:id apple-calendar-source
+     :label "Apple Calendar adapter source"
+     :profiles (standard full)
+     :scope core :kind git-checkout :checkout "org-apple-calendar"
+     :repository "https://github.com/deno1011/org-apple-calendar.git")
+    (:id apple-reminders-source
+     :label "Apple Reminders adapter source"
+     :profiles (standard full)
+     :scope core :kind git-checkout :checkout "org-apple-reminders"
+     :repository "https://github.com/deno1011/org-apple-reminders.git")
+
+    (:id fints-python
+     :label "FinTS Python environment"
+     :profiles (standard full)
+     :scope core :kind python-venv :environment "fints")
+    (:id fints-package
+     :label "python-fints package"
+     :profiles (standard full)
+     :scope core :kind python-package :environment "fints" :package "fints")
+    (:id comdirect-python
+     :label "Comdirect Playwright environment"
+     :profiles (standard full)
+     :scope core :kind python-venv :environment "comdirect")
+    (:id comdirect-playwright
+     :label "Playwright Python package"
+     :profiles (standard full)
+     :scope core :kind python-package :environment "comdirect" :package "playwright")
+    (:id comdirect-chromium
+     :label "Playwright Chromium"
+     :profiles (standard full)
+     :scope core :kind playwright-browser :environment "comdirect")
+    (:id mlx-python
+     :label "MLX Python environment"
+     :profiles (standard full)
+     :scope core :kind python-venv :environment "mlx")
+    (:id mlx-lm
+     :label "MLX LM runtime"
+     :profiles (standard full)
+     :scope core :kind python-package :environment "mlx" :package "mlx-lm"
+     :import "mlx_lm")
+
+    (:id telephony-bridge-node
+     :label "Asterisk bridge Node dependencies"
+     :profiles (standard full)
+     :scope core :kind node-project :checkout "telephony-bridge")
+    (:id telephony-local-node
+     :label "Local telephony Node dependencies"
+     :profiles (standard full)
+     :scope core :kind node-project :checkout "telephony-local")
+    (:id signal-source
+     :label "Signal bridge adapter source"
+     :profiles (standard full)
+     :scope private :kind git-checkout :checkout "signal-bridge-adapter"
+     :repository "https://github.com/deno1011/signal-bridge-adapter.git")
+    (:id signal-node
+     :label "Signal bridge Node dependencies"
+     :profiles (standard full)
+     :scope private :kind node-project :checkout "signal-bridge-adapter")
+    (:id signal-environment
+     :label "Signal bridge environment template"
+     :profiles (standard full)
+     :scope private :kind env-template :checkout "signal-bridge-adapter")
+    (:id whatsapp-source
+     :label "WhatsApp bridge adapter source"
+     :profiles (standard full)
+     :scope private :kind git-checkout :checkout "whatsapp-bridge-adapter"
+     :repository "https://github.com/deno1011/whatsapp-bridge-adapter.git")
+    (:id whatsapp-node
+     :label "WhatsApp bridge Node dependencies"
+     :profiles (standard full)
+     :scope private :kind node-project :checkout "whatsapp-bridge-adapter")
+    (:id whatsapp-environment
+     :label "WhatsApp bridge environment template"
+     :profiles (standard full)
+     :scope private :kind env-template :checkout "whatsapp-bridge-adapter")
+
+    (:id docker-desktop
+     :label "Docker Desktop for optional Asterisk"
+     :profiles (full)
+     :scope core :kind brew-cask :cask "docker"))
+  "Declarative external components known to this setup.
+
+Fields describe only identity, ownership scope, readiness mechanism, and the
+data consumed by a generic provisioner.  Existing source trees are never
+overwritten.  Add a new external integration here rather than adding an
+installer to `install.sh'."
+  :type '(repeat plist)
+  :group 'my/external-provisioning)
+
+(defvar my/external-provisioning-finished-hook nil
+  "Hook run after a provisioning queue drains.")
+
+(defvar my/external-provisioning--queue nil)
+(defvar my/external-provisioning--current nil)
+(defvar my/external-provisioning--process nil)
+(defvar my/external-provisioning--running nil)
+(defvar my/external-provisioning--states (make-hash-table :test #'eq))
+
+(defun my/external-provisioning--log (format-string &rest args)
+  "Append a timestamped diagnostic to the provisioning log buffer."
+  (with-current-buffer (get-buffer-create my/external-provisioning-log-buffer)
+    (goto-char (point-max))
+    (insert (format "%s %s\n" (format-time-string "%FT%T%z")
+                    (apply #'format format-string args)))))
+
+(defun my/external-provisioning--brew ()
+  "Return Homebrew's executable when it is available."
+  (or (executable-find "brew")
+      (cl-find-if #'file-executable-p
+                  '("/opt/homebrew/bin/brew" "/usr/local/bin/brew"))))
+
+(defun my/external-provisioning--core-root ()
+  "Return the configured reusable adapter root without forcing a checkout."
+  (if (fboundp 'my/emacs-agent-runtime-core-adapters-root-directory)
+      (my/emacs-agent-runtime-core-adapters-root-directory)
+    (expand-file-name "external/adapters/" my/emacs-agent-runtime-dir)))
+
+(defun my/external-provisioning--private-root ()
+  "Return the configured private adapter root, or nil before bootstrap."
+  (when (fboundp 'my/emacs-agent-runtime-private-adapters-root-directory)
+    (my/emacs-agent-runtime-private-adapters-root-directory)))
+
+(defun my/external-provisioning--private-ready-p ()
+  "Return non-nil when a private adapter root may safely be provisioned."
+  (let ((private-root
+         (and (fboundp 'my/emacs-agent-runtime-private-root-directory)
+              (my/emacs-agent-runtime-private-root-directory))))
+    (and (or (not (fboundp 'my/bootstrap-ready-p))
+             (my/bootstrap-ready-p))
+         (stringp private-root)
+         (file-directory-p private-root))))
+
+(defun my/external-provisioning--component-enabled-p (component)
+  "Return non-nil when COMPONENT belongs to the chosen profile."
+  (memq my/external-provisioning-profile (plist-get component :profiles)))
+
+(defun my/external-provisioning--component-directory (component)
+  "Return COMPONENT's source directory, if it owns a checkout."
+  (when-let ((checkout (plist-get component :checkout)))
+    (let ((root (pcase (plist-get component :scope)
+                  ('private (my/external-provisioning--private-root))
+                  (_ (my/external-provisioning--core-root)))))
+      (and root (expand-file-name (file-name-as-directory checkout) root)))))
+
+(defun my/external-provisioning--venv-python (environment)
+  "Return the exact managed Python path for ENVIRONMENT, or nil.
+
+Unlike the public adapter helper, this never falls back to system Python.  A
+failed virtual-environment step must not silently install packages globally."
+  (let ((candidate
+         (expand-file-name
+          (format "python/%s/bin/python" environment)
+          (if (fboundp 'my/emacs-agent-runtime-external-runtime-root-directory)
+              (my/emacs-agent-runtime-external-runtime-root-directory)
+            (expand-file-name "ear/external/" user-emacs-directory)))))
+    (and (file-executable-p candidate) candidate)))
+
+(defun my/external-provisioning--package-name (component)
+  "Return the concrete npm package requested by COMPONENT."
+  (pcase (plist-get component :package)
+    ('qmd (format "%s@%s" my/emacs-agent-runtime-qmd-package
+                  my/emacs-agent-runtime-qmd-version))
+    ('claude-code "@anthropic-ai/claude-code")
+    ('codex "@openai/codex@latest")
+    ((pred stringp) (plist-get component :package))
+    (_ nil)))
+
+(defun my/external-provisioning--playwright-ready-p (environment)
+  "Return non-nil when ENVIRONMENT has Playwright and a Chromium browser."
+  (let ((python (my/external-provisioning--venv-python environment))
+        (cache (expand-file-name "~/Library/Caches/ms-playwright")))
+    (and python
+         (eq 0 (call-process python nil nil nil "-c" "import playwright"))
+         (file-directory-p cache)
+         (cl-some (lambda (file) (string-prefix-p "chromium" file))
+                  (directory-files cache nil directory-files-no-dot-files-regexp)))))
+
+(defun my/external-provisioning--component-ready-p (component)
+  "Return non-nil when COMPONENT's declared durable state is already ready."
+  (pcase (plist-get component :kind)
+    ('brew-formula
+     (when-let ((executable (executable-find (plist-get component :executable))))
+       (let ((arguments (plist-get component :probe-arguments)))
+         (or (null arguments)
+             (eq 0 (apply #'call-process executable nil nil nil arguments))))))
+    ('npm-global (executable-find (plist-get component :executable)))
+    ('git-checkout
+     (let ((directory (my/external-provisioning--component-directory component)))
+       (and directory (file-directory-p (expand-file-name ".git" directory)))))
+    ('python-venv
+     (my/external-provisioning--venv-python (plist-get component :environment)))
+    ('python-package
+     (when-let ((python (my/external-provisioning--venv-python
+                         (plist-get component :environment))))
+       (eq 0 (call-process python nil nil nil "-c"
+                           (format "import %s"
+                                   (or (plist-get component :import)
+                                       (plist-get component :package)))))))
+    ('playwright-browser
+     (my/external-provisioning--playwright-ready-p
+      (plist-get component :environment)))
+    ('node-project
+     (when-let ((directory (my/external-provisioning--component-directory component)))
+       (file-directory-p (expand-file-name "node_modules" directory))))
+    ('env-template
+     (when-let ((directory (my/external-provisioning--component-directory component)))
+       (file-readable-p (expand-file-name ".env" directory))))
+    ('brew-cask
+     (or (file-directory-p "/Applications/Docker.app")
+         (file-directory-p (expand-file-name "~/Applications/Docker.app"))))
+    (_ nil)))
+
+(defun my/external-provisioning--seed-environment (component)
+  "Create COMPONENT's safe .env template without replacing user settings."
+  (let* ((directory (my/external-provisioning--component-directory component))
+         (template (and directory (expand-file-name ".env.example" directory)))
+         (target (and directory (expand-file-name ".env" directory)))
+         (bridge (directory-file-name
+                  (if (fboundp 'my/messenger-bridge-runtime-directory)
+                      (my/messenger-bridge-runtime-directory)
+                    (expand-file-name "messenger-bridge/" user-emacs-directory)))))
+    (unless (and directory (file-directory-p directory))
+      (user-error "Adapter source is not available yet"))
+    (unless (file-exists-p target)
+      (unless (file-readable-p template)
+        (user-error "Missing safe environment template: %s" template))
+      (copy-file template target nil)
+      (with-temp-buffer
+        (insert-file-contents target)
+        (goto-char (point-min))
+        (if (re-search-forward "^MESSENGER_BRIDGE_DIR=.*$" nil t)
+            (replace-match (format "MESSENGER_BRIDGE_DIR=%s" bridge) t t)
+          (goto-char (point-max))
+          (insert (format "\nMESSENGER_BRIDGE_DIR=%s\n" bridge)))
+        (write-region (point-min) (point-max) target nil 'silent))
+      (set-file-modes target #o600)
+      (my/external-provisioning--log "created safe template %s" target))
+    t))
+
+(defun my/external-provisioning--command (component)
+  "Return a direct process command for COMPONENT, or signal a useful error."
+  (pcase (plist-get component :kind)
+    ('brew-formula
+     (if-let ((brew (my/external-provisioning--brew)))
+         (list brew "install" (plist-get component :formula))
+       (user-error "Homebrew is required to install %s" (plist-get component :label))))
+    ('brew-cask
+     (if-let ((brew (my/external-provisioning--brew)))
+         (list brew "install" "--cask" "--no-binaries" "--appdir"
+               (expand-file-name "~/Applications") (plist-get component :cask))
+       (user-error "Homebrew is required to install %s" (plist-get component :label))))
+    ('npm-global
+     (if-let ((npm (executable-find "npm")))
+         (list npm "install" "--global" (my/external-provisioning--package-name component))
+       (user-error "Node/npm is required before %s" (plist-get component :label))))
+    ('git-checkout
+     (let ((directory (my/external-provisioning--component-directory component))
+           (git (executable-find "git")))
+       (unless git (user-error "Git is required before %s" (plist-get component :label)))
+       (unless directory (user-error "Private adapter root is not ready"))
+       (when (file-exists-p directory)
+         (user-error "Refusing to replace existing non-Git directory %s" directory))
+       (make-directory (file-name-directory (directory-file-name directory)) t)
+       (list git "clone" (plist-get component :repository) directory)))
+    ('python-venv
+     (let ((python (or (executable-find "python3") "/usr/bin/python3"))
+           (root (if (fboundp 'my/emacs-agent-runtime-external-runtime-root-directory)
+                     (my/emacs-agent-runtime-external-runtime-root-directory)
+                   (expand-file-name "ear/external/" user-emacs-directory))))
+       (unless (file-executable-p python)
+         (user-error "Python 3 is required before %s" (plist-get component :label)))
+       (let ((directory (expand-file-name
+                         (format "python/%s" (plist-get component :environment)) root)))
+         (make-directory (file-name-directory (directory-file-name directory)) t)
+         (list python "-m" "venv" directory))))
+    ('python-package
+     (if-let ((python (my/external-provisioning--venv-python
+                       (plist-get component :environment))))
+         (list python "-m" "pip" "install" "--upgrade" (plist-get component :package))
+       (user-error "Managed Python environment %s is not ready"
+                   (plist-get component :environment))))
+    ('playwright-browser
+     (if-let ((python (my/external-provisioning--venv-python
+                       (plist-get component :environment))))
+         (list python "-m" "playwright" "install" "chromium")
+       (user-error "Managed Python environment %s is not ready"
+                   (plist-get component :environment))))
+    ('node-project
+     (let ((directory (my/external-provisioning--component-directory component))
+           (npm (executable-find "npm")))
+       (unless npm (user-error "Node/npm is required before %s" (plist-get component :label)))
+       (unless (and directory (file-readable-p (expand-file-name "package.json" directory)))
+         (user-error "Node project source is not available for %s" (plist-get component :label)))
+       (append (list npm)
+               (if (file-readable-p (expand-file-name "package-lock.json" directory))
+                   '("ci" "--omit=dev")
+                 '("install" "--omit=dev")))))
+    (_ (user-error "No process command is defined for %s"
+                   (plist-get component :kind)))))
+
+(defun my/external-provisioning--refresh-npm-exec-path ()
+  "Add npm's global executable directory to this Emacs process when needed."
+  (when-let ((npm (executable-find "npm")))
+    (with-temp-buffer
+      (when (eq 0 (call-process npm nil t nil "prefix" "--global"))
+        (let ((bin (expand-file-name "bin" (string-trim (buffer-string)))))
+          (when (file-directory-p bin)
+            (add-to-list 'exec-path bin)
+            (setenv "PATH" (concat bin path-separator (getenv "PATH")))))))))
+
+(defun my/external-provisioning--refresh-adapters ()
+  "Refresh adapter loader bindings after source/dependency convergence."
+  (my/external-provisioning--refresh-npm-exec-path)
+  (when (fboundp 'my/emacs-agent-runtime-external-python)
+    (when (boundp 'my/fints-python)
+      (setq my/fints-python (my/emacs-agent-runtime-external-python "fints")))
+    (when (boundp 'my/comdirect-web-python)
+      (setq my/comdirect-web-python
+            (my/emacs-agent-runtime-external-python "comdirect"))))
+  (when (fboundp 'my/fints-queue-elpaca) (my/fints-queue-elpaca))
+  (when (fboundp 'my/fints-apply-config) (my/fints-apply-config))
+  (when (fboundp 'my/comdirect-web-queue-elpaca) (my/comdirect-web-queue-elpaca))
+  (when (fboundp 'my/comdirect-web-apply-config) (my/comdirect-web-apply-config))
+  (when (fboundp 'my/messenger-register-launchd-services)
+    (my/messenger-register-launchd-services)))
+
+(defun my/external-provisioning--set-state (component state &optional detail)
+  "Record COMPONENT STATE with DETAIL for status and troubleshooting."
+  (puthash (plist-get component :id)
+           (list :state state :detail detail :updated-at (current-time))
+           my/external-provisioning--states))
+
+(defun my/external-provisioning--scope-ready-p (component)
+  "Return non-nil when COMPONENT's ownership root is ready for mutation."
+  (or (not (eq (plist-get component :scope) 'private))
+      (my/external-provisioning--private-ready-p)))
+
+(defun my/external-provisioning--run-next ()
+  "Advance the sequential provisioning queue without blocking Emacs."
+  (setq my/external-provisioning--process nil)
+  (if (null my/external-provisioning--queue)
+      (progn
+        (setq my/external-provisioning--current nil
+              my/external-provisioning--running nil)
+        (my/external-provisioning--refresh-adapters)
+        (my/external-provisioning--log "queue finished")
+        (run-hooks 'my/external-provisioning-finished-hook))
+    (let ((component (pop my/external-provisioning--queue)))
+      (setq my/external-provisioning--current component)
+      (cond
+       ((not (my/external-provisioning--component-enabled-p component))
+        (my/external-provisioning--set-state component 'disabled "profile excludes component")
+        (my/external-provisioning--run-next))
+       ((not (my/external-provisioning--scope-ready-p component))
+        (my/external-provisioning--set-state component 'deferred
+                                             "private data repository is not ready")
+        (my/external-provisioning--log "%s deferred: private repository unavailable"
+                                       (plist-get component :label))
+        (my/external-provisioning--run-next))
+       ((my/external-provisioning--component-ready-p component)
+        (my/external-provisioning--set-state component 'ready "already present")
+        (my/external-provisioning--run-next))
+       ((eq (plist-get component :kind) 'env-template)
+        (condition-case err
+            (progn
+              (my/external-provisioning--seed-environment component)
+              (my/external-provisioning--set-state component 'completed "template created")
+              (my/external-provisioning--run-next))
+          (error
+           (my/external-provisioning--set-state component 'failed
+                                                (error-message-string err))
+           (my/external-provisioning--log "%s failed: %s"
+                                          (plist-get component :label) err)
+           (my/external-provisioning--run-next))))
+       (t
+        (condition-case err
+            (let* ((command (my/external-provisioning--command component))
+                   (directory (my/external-provisioning--component-directory component))
+                   (default-directory (or (and directory (file-directory-p directory)
+                                               directory)
+                                          default-directory)))
+              (my/external-provisioning--set-state component 'running
+                                                   (string-join command " "))
+              (my/external-provisioning--log "%s: %s"
+                                             (plist-get component :label)
+                                             (string-join command " "))
+              (setq my/external-provisioning--process
+                    (make-process
+                     :name (format "ear-provision-%s" (plist-get component :id))
+                     :buffer (get-buffer-create my/external-provisioning-log-buffer)
+                     :command command
+                     :noquery t
+                     :sentinel
+                     (lambda (process _event)
+                       (when (memq (process-status process) '(exit signal))
+                         (if (and (eq (process-status process) 'exit)
+                                  (zerop (process-exit-status process)))
+                             (progn
+                               (my/external-provisioning--set-state
+                                component 'completed "process completed")
+                               (my/external-provisioning--log "%s completed"
+                                                              (plist-get component :label)))
+                           (my/external-provisioning--set-state
+                            component 'failed
+                            (format "process exit %s" (process-exit-status process)))
+                           (my/external-provisioning--log "%s failed (exit %s)"
+                                                          (plist-get component :label)
+                                                          (process-exit-status process)))
+                         (my/external-provisioning--run-next))))))
+          (error
+           (my/external-provisioning--set-state component 'failed
+                                                (error-message-string err))
+           (my/external-provisioning--log "%s could not start: %s"
+                                          (plist-get component :label) err)
+           (my/external-provisioning--run-next))))))))
+
+;;;###autoload
+(defun my/external-provisioning-start ()
+  "Converge configured external components without blocking Emacs.
+
+Existing source trees and personal configuration are left untouched.  A running
+queue is never replaced: callers see its live log instead, preventing duplicate
+installs or competing dependency managers."
+  (interactive)
+  (cond
+   ((eq my/external-provisioning-profile 'none)
+    (message "EAR external provisioning is disabled by profile"))
+   (my/external-provisioning--running
+    (message "EAR external provisioning is already running; see %s"
+             my/external-provisioning-log-buffer))
+   (t
+    (setq my/external-provisioning--queue
+          (copy-sequence my/external-provisioning-components)
+          my/external-provisioning--running t)
+    (my/external-provisioning--log "queue started (profile %s)"
+                                   my/external-provisioning-profile)
+    (my/external-provisioning--run-next))))
+
+(defun my/external-provisioning--status-state (component)
+  "Return the latest known or structurally inferred state for COMPONENT."
+  (or (gethash (plist-get component :id) my/external-provisioning--states)
+      (cond
+       ((not (my/external-provisioning--component-enabled-p component))
+        (list :state 'disabled :detail "profile excludes component"))
+       ((not (my/external-provisioning--scope-ready-p component))
+        (list :state 'deferred :detail "private data repository is not ready"))
+       ((my/external-provisioning--component-ready-p component)
+        (list :state 'ready :detail "already present"))
+       (t (list :state 'pending :detail "not yet provisioned")))))
+
+;;;###autoload
+(defun my/external-provisioning-status ()
+  "Show every declared external component and its current provisioning state."
+  (interactive)
+  (let ((buffer (get-buffer-create "*EAR External Provisioning Status*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (format "EAR external provisioning: profile=%s  running=%s\n\n"
+                        my/external-provisioning-profile
+                        (if my/external-provisioning--running "yes" "no")))
+        (insert (format "%-28s %-11s %s\n" "Component" "State" "Detail"))
+        (insert (make-string 92 ?-) "\n")
+        (dolist (component my/external-provisioning-components)
+          (let ((state (my/external-provisioning--status-state component)))
+            (insert (format "%-28s %-11s %s\n"
+                            (plist-get component :label)
+                            (plist-get state :state)
+                            (or (plist-get state :detail) "")))))
+        (goto-char (point-min))
+        (special-mode)))
+    (pop-to-buffer buffer)))
+
+;;;###autoload
+(defun my/external-provisioning-show-log ()
+  "Open the live sequential external-provisioning log."
+  (interactive)
+  (pop-to-buffer (get-buffer-create my/external-provisioning-log-buffer)))
+
+(defun my/external-provisioning--after-bootstrap (&rest _)
+  "Retry deferred private components after a manual bootstrap completes."
+  (when my/external-provisioning-auto-start
+    (run-at-time 0 nil #'my/external-provisioning-start)))
+
+(when (fboundp 'my/bootstrap)
+  (advice-add 'my/bootstrap :after #'my/external-provisioning--after-bootstrap))
+
+(unless noninteractive
+  ;; Bootstrap has already run before module 69 is discovered.  A short delay
+  ;; keeps first-window startup responsive while still making a fresh machine
+  ;; self-provision without an extra M-x command.
+  (when my/external-provisioning-auto-start
+    (run-at-time 3 nil #'my/external-provisioning-start)))
+
+(provide '69_external_provisioning)
+;;; 69_external_provisioning.el ends here
+#+end_src
+
+* Operational flow
+
+1. Emacs loads its normal setup and the bootstrap resolves the private data
+   repository.
+2. This module enqueues the selected profile after the first window is ready.
+   A component that is already healthy is skipped immediately.
+3. Missing software runs as one background process at a time.  Its output goes
+   to =*EAR External Provisioning*=, while =M-x my/external-provisioning-status=
+   shows the current state of every declarative component.
+4. Once the queue drains, FinTS, Comdirect and messenger loader bindings are
+   refreshed.  A newly cloned adapter can therefore be loaded during the same
+   Emacs session; no Core source is changed.
+5. The Doctor and adapter-specific commands then guide the inherently personal
+   steps: Keychain credentials, a FinTS Product-ID, browser login, device QR
+   linking, macOS permissions, selected local models, and SIP settings.
+
+* Commands
+
+- =M-x my/external-provisioning-start= — start or retry the declarative queue.
+- =M-x my/external-provisioning-status= — inspect every component.
+- =M-x my/external-provisioning-show-log= — inspect command output.
+
+Changing =my/external-provisioning-profile= in the normal configuration is the
+only selection needed for ordinary installs.  No external setup shell script is
+required.

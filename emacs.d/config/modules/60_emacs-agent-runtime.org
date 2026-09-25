@@ -166,6 +166,17 @@ configuration, auth state, or private deployment data here."
           directory)
   :group 'emacs-agent-runtime)
 
+(defcustom my/emacs-agent-runtime-external-runtime-directory
+  (expand-file-name "ear/external/" user-emacs-directory)
+  "User-local runtime root for provisioned external adapter dependencies.
+
+Adapter source checkouts remain in their Core or private repositories.  This
+directory contains only reproducible machine-local runtime state such as Python
+virtual environments.  It is deliberately outside both Git worktrees and is
+safe to recreate on a fresh machine."
+  :type 'directory
+  :group 'emacs-agent-runtime)
+
 (defcustom my/emacs-agent-runtime-auto-start-scheduler-jobs t
   "When non-nil, start EAR scheduler jobs marked with `:auto-start'."
   :type 'boolean
@@ -357,7 +368,9 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
   "Return the configured user-owned EAR repository root."
   (let ((directory
          (or my/emacs-agent-runtime-private-directory
-             (and (stringp my/data-dir) my/data-dir))))
+             (and (boundp 'my/data-dir)
+                  (stringp my/data-dir)
+                  my/data-dir))))
     (when (stringp directory)
       (file-name-as-directory (expand-file-name directory)))))
 
@@ -389,6 +402,25 @@ instead of hitting \"Credit balance is too low\" via pay-per-use billing."
                (expand-file-name "ear-extensions/adapters/" root)))))
     (when (stringp directory)
       (file-name-as-directory (expand-file-name directory)))))
+
+(defun my/emacs-agent-runtime-external-runtime-root-directory ()
+  "Return the machine-local root for provisioned external dependencies."
+  (file-name-as-directory
+   (expand-file-name my/emacs-agent-runtime-external-runtime-directory)))
+
+(defun my/emacs-agent-runtime-external-python (name)
+  "Return the managed Python interpreter for external runtime NAME.
+
+Before the matching virtual environment has been provisioned, fall back to a
+normal `python3' executable so Doctor and the owning adapter can report a
+useful prerequisite state instead of failing during configuration load."
+  (let ((candidate
+         (expand-file-name
+          (format "python/%s/bin/python" name)
+          (my/emacs-agent-runtime-external-runtime-root-directory))))
+    (if (file-executable-p candidate)
+        candidate
+      (or (executable-find "python3") "/usr/bin/python3"))))
 
 (defun my/emacs-agent-runtime-source-overlay-root-directory ()
   "Return the configured user-owned EAR source overlay root."
@@ -922,7 +954,9 @@ keeps the generic retrieval boundary in =ear-retrieval=; this setup module only
 provides local defaults such as the executable name, reviewed package version,
 projection directory, and Apple Silicon hints.
 
-Recommended install, when you explicitly want QMD on a machine:
+The normal setup path is =69_external_provisioning.org=: its =standard=
+profile installs the reviewed QMD executable after Node is ready.  This command
+remains a focused repair/install override when QMD alone needs attention:
 
 #+begin_src emacs-lisp :tangle no
 M-x my/emacs-agent-runtime-qmd-install
@@ -1153,18 +1187,21 @@ Step 8 for the storage model.
   nil)
 
 ;; -- MLX (local, Apple Silicon, via mlx-lm standalone server) --------
-;; Start server: mlx_lm.server --model mlx-community/Qwen3-14B-4bit --port 8080
+;; The launchd service selects the model; this list advertises compatible
+;; OpenAI-style model identifiers to gptel and EAR.
 (let ((backend (gptel-make-openai "MLX"
                   :stream t
                   :protocol "http"
                   :host "localhost:8080"
                   :endpoint "/v1/chat/completions"
                   :key "mlx"
-                  :models '(mlx-community/Qwen3-14B-4bit
+                  :models '(mlx-community/Llama-3.2-3B-Instruct-4bit
+                            mlx-community/Qwen3-14B-4bit
                             mlx-community/gemma-3-12b-it-4bit))))
   (setq my/gptel-backends
         (append my/gptel-backends
-                `(("Qwen3 14B (MLX)"    ,backend . mlx-community/Qwen3-14B-4bit)
+                `(("Llama 3.2 3B (MLX)" ,backend . mlx-community/Llama-3.2-3B-Instruct-4bit)
+                  ("Qwen3 14B (MLX)"    ,backend . mlx-community/Qwen3-14B-4bit)
                   ("Gemma 3 12B (MLX)"  ,backend . mlx-community/gemma-3-12b-it-4bit)))))
 
 ;; -- Ollama (local) ---------------------------------------------------

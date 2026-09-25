@@ -1,0 +1,472 @@
+;;; 68_telephony.el --- EAR Asterisk Docker deployment -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(require 'json)
+(require 'subr-x)
+(require 'url)
+
+(declare-function my/launchd-service-register "62_launchd_services" (service))
+(declare-function my/launchd-service-ensure "62_launchd_services" (service))
+(declare-function my/launchd-service-stop "62_launchd_services" (label))
+(declare-function my/emacs-agent-runtime-core-adapters-root-directory
+                  "60_emacs-agent-runtime" ())
+(defvar my/launchd-services)
+
+(defgroup my/telephony nil "EAR Asterisk telephony." :group 'external)
+(defcustom my/telephony-adapter-directory
+  (expand-file-name "telephony-bridge/"
+                    (my/emacs-agent-runtime-core-adapters-root-directory))
+  "Shipped Asterisk bridge adapter directory."
+  :type 'directory :group 'my/telephony)
+(defcustom my/telephony-local-adapter-directory
+  (expand-file-name "telephony-local/"
+                    (my/emacs-agent-runtime-core-adapters-root-directory))
+  "Shipped no-egress local adapter directory."
+  :type 'directory :group 'my/telephony)
+(defcustom my/telephony-runtime-bin-directory "~/.emacs.d/ear/bin/"
+  "User-local directory for reproducibly built telephony helpers."
+  :type 'directory :group 'my/telephony)
+(defcustom my/asterisk-runtime-directory "~/.emacs.d/ear/asterisk/" "Private generated Asterisk runtime configuration." :type 'directory :group 'my/telephony)
+(defcustom my/asterisk-auto-start t
+  "When non-nil, restore an already configured container after Emacs starts.
+This does not create credentials and does not launch Docker Desktop.  It only
+  runs Compose when personal configuration exists and Docker is already ready."
+  :type 'boolean :group 'my/telephony)
+(defconst my/telephony-service-label "org.ear.telephony-bridge")
+(defconst my/telephony-local-service-label "org.ear.telephony-local")
+(defconst my/telephony-service-version "3")
+(defvar my/asterisk--docker-context nil
+  "Docker context selected for the current Emacs process.")
+(defvar my/asterisk--provision-process nil)
+(defvar my/asterisk--compose-process nil)
+(defvar my/asterisk--docker-wait-attempts 0)
+
+(defun my/telephony--speech-source-directory ()
+  (expand-file-name "speech/" my/telephony-local-adapter-directory))
+
+(defun my/telephony--speech-app-directory ()
+  (expand-file-name "EARSpeechListen.app/" my/telephony-runtime-bin-directory))
+
+(defun my/telephony--file-sha256 (file)
+  (with-temp-buffer
+    (insert-file-contents-literally file)
+    (secure-hash 'sha256 (current-buffer))))
+
+(defun my/telephony-speech-install ()
+  "Idempotently build and locally sign the native speech helper."
+  (interactive)
+  (unless (eq system-type 'darwin)
+    (user-error "The shipped speech helper currently requires macOS"))
+  (let* ((source-dir (my/telephony--speech-source-directory))
+         (source (expand-file-name "EARSpeechListen.swift" source-dir))
+         (info (expand-file-name "Info.plist" source-dir))
+         (wrapper-source (expand-file-name "ear-speech-listen" source-dir))
+         (app (my/telephony--speech-app-directory))
+         (contents (expand-file-name "Contents/" app))
+         (macos (expand-file-name "MacOS/" contents))
+         (binary (expand-file-name "ear-speech-listen" macos))
+         (wrapper (expand-file-name "ear-speech-listen"
+                                    my/telephony-runtime-bin-directory))
+         (marker (expand-file-name ".source-sha256" contents))
+         (expected (secure-hash 'sha256
+                                (concat (my/telephony--file-sha256 source)
+                                        (my/telephony--file-sha256 info)
+                                        (my/telephony--file-sha256 wrapper-source))))
+         (installed (when (file-readable-p marker)
+                      (with-temp-buffer
+                        (insert-file-contents marker)
+                        (string-trim (buffer-string))))))
+    (unless (and (equal expected installed) (file-executable-p binary)
+                 (file-executable-p wrapper))
+      (unless (executable-find "swiftc")
+        (user-error "Apple Command Line Tools are required (swiftc missing)"))
+      (when (file-directory-p app) (delete-directory app t))
+      (make-directory macos t)
+      (copy-file info (expand-file-name "Info.plist" contents) t)
+      (with-current-buffer (get-buffer-create "*EAR Speech Build*")
+        (erase-buffer)
+        (unless (zerop (call-process "swiftc" nil t t "-O" "-framework" "Speech"
+                                     "-framework" "AVFoundation" "-o" binary source))
+          (display-buffer (current-buffer))
+          (error "EAR speech helper build failed; see %s" (buffer-name))))
+      (set-file-modes binary #o755)
+      (copy-file wrapper-source wrapper t)
+      (set-file-modes wrapper #o755)
+      (unless (zerop (call-process "codesign" nil nil nil "--force" "--deep"
+                                   "--sign" "-" app))
+        (error "Could not locally sign EAR speech helper"))
+      (with-temp-file marker (insert expected "\n")))
+    wrapper))
+
+(defun my/telephony--keychain-get (service)
+  (with-temp-buffer (when (zerop (call-process "security" nil t nil "find-generic-password" "-w" "-s" service)) (string-trim (buffer-string)))))
+(defun my/telephony--keychain-set (service value)
+  (unless (zerop (call-process "security" nil nil nil "add-generic-password" "-U" "-s" service "-a" (user-login-name) "-w" value)) (user-error "Could not store %s" service)))
+(defun my/telephony--keychain-delete (service)
+  (call-process "security" nil nil nil "delete-generic-password" "-s" service))
+(defun my/asterisk--docker-app ()
+  (cl-find-if #'file-directory-p
+              (list "/Applications/Docker.app"
+                    (expand-file-name "~/Applications/Docker.app"))))
+(defun my/telephony--docker-path ()
+  (or (executable-find "docker")
+      (cl-find-if #'file-executable-p
+                  (list "/Applications/Docker.app/Contents/Resources/bin/docker"
+                        (expand-file-name
+                         "~/Applications/Docker.app/Contents/Resources/bin/docker")))))
+(defun my/telephony--docker ()
+  (or (my/telephony--docker-path) (user-error "Docker CLI missing")))
+(defun my/asterisk--context-arguments (context)
+  (if context (list "--context" context) nil))
+(defun my/asterisk--context-ready-p (context)
+  (when-let ((docker (my/telephony--docker-path)))
+    (zerop (apply #'call-process docker nil nil nil
+                  (append (my/asterisk--context-arguments context) '("info"))))))
+(defun my/asterisk--detect-docker-context ()
+  "Return a working Docker context without requiring user knowledge.
+Docker Desktop is the supported macOS engine; other systems use their current
+Docker context."
+  (cl-find-if #'my/asterisk--context-ready-p
+              (if (eq system-type 'darwin) '("desktop-linux") '(nil))))
+(defun my/asterisk--docker-directory () (expand-file-name "docker/" my/telephony-adapter-directory))
+(defun my/asterisk--compose-args (&rest rest)
+  (append (my/asterisk--context-arguments my/asterisk--docker-context)
+          (list "compose" "--project-directory" (my/asterisk--docker-directory)
+                "-f" (expand-file-name "compose.yaml" (my/asterisk--docker-directory))) rest))
+(defun my/asterisk--docker-ready-p ()
+  (let ((context (my/asterisk--detect-docker-context)))
+    (when (or context (my/asterisk--context-ready-p nil))
+      (setq my/asterisk--docker-context context)
+      t)))
+(defun my/asterisk--configured-p ()
+  (cl-every (lambda (name) (file-readable-p (expand-file-name name my/asterisk-runtime-directory)))
+            '("pjsip.conf" "extensions.conf" "manager.conf" "rtp.conf")))
+(defun my/asterisk--wait-for-docker (&optional seconds)
+  (let ((deadline (+ (float-time) (or seconds 60))))
+    (while (and (< (float-time) deadline) (not (my/asterisk--docker-ready-p))) (sleep-for 1))
+    (my/asterisk--docker-ready-p)))
+(defun my/asterisk--ensure-docker ()
+  (unless (my/asterisk--docker-ready-p)
+    (when (eq system-type 'darwin)
+      (when (my/asterisk--docker-app)
+        (call-process "open" nil nil nil "-a" "Docker")))
+    (unless (my/asterisk--wait-for-docker 60)
+      (user-error "Docker Desktop unavailable; run M-x my/asterisk-container-runtime-install or start Docker Desktop"))))
+
+(defun my/asterisk--compose-start-async ()
+  "Build and start Asterisk without blocking Emacs."
+  (when (and (my/asterisk--configured-p)
+             (not (process-live-p my/asterisk--compose-process)))
+    (let ((process-environment
+           (cons (concat "EAR_ASTERISK_CONFIG_DIR="
+                         (expand-file-name my/asterisk-runtime-directory))
+                 process-environment))
+          (buffer (get-buffer-create "*EAR Asterisk Docker*")))
+      (with-current-buffer buffer (erase-buffer))
+      (setq my/asterisk--compose-process
+            (make-process
+             :name "ear-asterisk-compose"
+             :buffer buffer
+             :command (cons (my/telephony--docker)
+                            (apply #'my/asterisk--compose-args
+                                   '("up" "-d" "--build")))
+             :noquery t
+             :sentinel
+             (lambda (process _event)
+               (when (memq (process-status process) '(exit signal))
+                 (if (zerop (process-exit-status process))
+                     (progn
+                       (my/asterisk--ensure-bridge-service)
+                       (message "EAR Asterisk and telephony bridge are ready"))
+                   (display-buffer (process-buffer process))
+                   (message "EAR Asterisk deployment failed; see %s"
+                            (buffer-name (process-buffer process)))))))))))
+
+(defun my/asterisk--docker-ready-callback ()
+  (cond
+   ((my/asterisk--docker-ready-p)
+    (setq my/asterisk--docker-wait-attempts 0)
+    (my/asterisk--compose-start-async))
+   ((< (cl-incf my/asterisk--docker-wait-attempts) 120)
+    (run-at-time 1 nil #'my/asterisk--docker-ready-callback))
+   (t
+    (setq my/asterisk--docker-wait-attempts 0)
+    (message "Docker Desktop needs user attention before EAR telephony can start"))))
+
+(defun my/asterisk--start-docker-and-wait ()
+  (call-process "open" nil nil nil "-a" "Docker")
+  (setq my/asterisk--docker-wait-attempts 0)
+  (run-at-time 1 nil #'my/asterisk--docker-ready-callback))
+
+(defun my/asterisk-container-runtime-install ()
+  "Idempotently provision Docker Desktop and continue EAR deployment."
+  (interactive)
+  (cond
+   ((my/asterisk--docker-ready-p)
+    (my/asterisk--compose-start-async))
+   ((my/asterisk--docker-app)
+    (my/asterisk--start-docker-and-wait))
+   ((process-live-p my/asterisk--provision-process)
+    (message "Docker Desktop provisioning is already running"))
+   (t
+    (let ((brew (or (executable-find "brew")
+                    (user-error "Homebrew is required by the setup repository")))
+          (buffer (get-buffer-create "*EAR Container Runtime Install*")))
+      (with-current-buffer buffer (erase-buffer))
+      (setq my/asterisk--provision-process
+            (make-process
+             :name "ear-docker-desktop-install"
+             :buffer buffer
+             ;; A user-local app and bundled CLI avoid an invisible sudo prompt.
+             :command (list brew "install" "--cask" "--no-binaries"
+                            "--appdir" (expand-file-name "~/Applications")
+                            "docker")
+             :noquery t
+             :sentinel
+             (lambda (process _event)
+               (when (memq (process-status process) '(exit signal))
+                 (if (zerop (process-exit-status process))
+                     (my/asterisk--start-docker-and-wait)
+                   (display-buffer (process-buffer process))
+                   (message "Docker Desktop provisioning failed; see %s"
+                            (buffer-name (process-buffer process))))))))))))
+
+(defun my/asterisk--secret-or-create ()
+  (or (my/telephony--keychain-get "ear.asterisk.secret")
+      (let ((value (secure-hash 'sha256 (format "%s:%s:%s" (float-time) (random) (user-uid)))))
+        (my/telephony--keychain-set "ear.asterisk.secret" value) value)))
+(defun my/asterisk--render-template (source destination replacements)
+  (with-temp-buffer
+    (insert-file-contents source)
+    (dolist (pair replacements)
+      (goto-char (point-min))
+      (while (search-forward (car pair) nil t) (replace-match (cdr pair) t t)))
+    (make-directory (file-name-directory destination) t)
+    (write-region (point-min) (point-max) destination nil 'silent))
+  (set-file-modes destination #o600))
+
+(defun my/asterisk-materialize-configuration ()
+  "Materialize private Keychain values into Docker-mounted Asterisk files."
+  (interactive)
+  (let* ((docker-dir (my/asterisk--docker-directory))
+         (runtime (file-name-as-directory (expand-file-name my/asterisk-runtime-directory)))
+         (registrar (my/telephony--keychain-get "ear.asterisk.sip-registrar"))
+         (username (my/telephony--keychain-get "ear.asterisk.sip-username"))
+         (password (my/telephony--keychain-get "ear.asterisk.sip-password"))
+         (ami-secret (my/asterisk--secret-or-create)))
+    (unless (and registrar username password) (user-error "SIP provider incomplete; run M-x my/asterisk-configure-sip-provider"))
+    (make-directory runtime t) (set-file-modes runtime #o700)
+    (my/asterisk--render-template (expand-file-name "pjsip.conf.template" docker-dir) (expand-file-name "pjsip.conf" runtime)
+                                  `(("{{SIP_REGISTRAR}}" . ,registrar) ("{{SIP_USERNAME}}" . ,username) ("{{SIP_PASSWORD}}" . ,password)))
+    (my/asterisk--render-template (expand-file-name "manager.conf.template" docker-dir) (expand-file-name "manager.conf" runtime)
+                                  `(("{{AMI_SECRET}}" . ,ami-secret)))
+    (dolist (name '("extensions.conf" "rtp.conf"))
+      (copy-file (expand-file-name name docker-dir) (expand-file-name name runtime) t)
+      (set-file-modes (expand-file-name name runtime) #o600))
+    (my/telephony--keychain-set "ear.asterisk.host" "127.0.0.1")
+    (my/telephony--keychain-set "ear.asterisk.username" "ear")
+    (my/telephony--keychain-set "ear.asterisk.channel-driver" "pjsip")
+    (my/telephony--keychain-set "ear.asterisk.pjsip-trunk" "provider")
+    (message "Asterisk configuration materialized in %s" runtime)))
+
+(defun my/asterisk-configure-sip-provider ()
+  "Configure one personal SIP provider without writing credentials to source files."
+  (interactive)
+  (my/telephony--keychain-set "ear.asterisk.sip-registrar" (read-string "SIP registrar (host[:port]): "))
+  (my/telephony--keychain-set "ear.asterisk.sip-username" (read-string "SIP username/telephone id: "))
+  (my/telephony--keychain-set "ear.asterisk.sip-password" (read-passwd "SIP password: "))
+  (my/telephony--keychain-set "ear.telephony.allowed" (read-string "Allowed E.164 destinations, comma separated: " "+491795417386"))
+  (my/asterisk-materialize-configuration)
+  (my/telephony-install)
+  (message "SIP provider configured; automatic deployment continues in the background"))
+
+(defun my/asterisk-configure-allowed-destinations (destinations)
+  "Set comma-separated E.164 DESTINATIONS allowed for outbound calls."
+  (interactive (list (read-string "Allowed E.164 destinations, comma separated: "
+                                  (or (my/telephony--keychain-get "ear.telephony.allowed") ""))))
+  (my/telephony--keychain-set "ear.telephony.allowed" destinations)
+  (message "Telephony destination allowlist updated; restart the bridge to apply it"))
+
+(defun my/asterisk-forget-sip-provider ()
+  "Remove personal SIP credentials and generated runtime configuration.
+The shipped Docker templates and EAR adapter remain installed."
+  (interactive)
+  (unless (yes-or-no-p "Remove SIP credentials and generated Asterisk config? ")
+    (user-error "Cancelled"))
+  (ignore-errors (my/asterisk-docker-stop))
+  (dolist (service '("ear.asterisk.sip-registrar" "ear.asterisk.sip-username"
+                     "ear.asterisk.sip-password" "ear.asterisk.secret"
+                     "ear.asterisk.host" "ear.asterisk.username"
+                     "ear.asterisk.channel-driver" "ear.asterisk.pjsip-trunk"
+                     "ear.telephony.allowed"))
+    (my/telephony--keychain-delete service))
+  (when (file-directory-p (expand-file-name my/asterisk-runtime-directory))
+    (delete-directory (expand-file-name my/asterisk-runtime-directory) t))
+  (message "Personal Asterisk configuration removed"))
+
+(defun my/asterisk-docker-call (&rest args)
+  (let ((process-environment (cons (concat "EAR_ASTERISK_CONFIG_DIR=" (expand-file-name my/asterisk-runtime-directory)) process-environment)))
+    (with-current-buffer (get-buffer-create "*EAR Asterisk Docker*")
+      (erase-buffer)
+      (let ((status (apply #'call-process (my/telephony--docker) nil t t (apply #'my/asterisk--compose-args args))))
+        (display-buffer (current-buffer)) status))))
+(defun my/telephony--registered-service (label)
+  (and (boundp 'my/launchd-services)
+       (cl-find label my/launchd-services
+                :key (lambda (item) (plist-get item :label)) :test #'equal)))
+
+(defun my/telephony--service-plist (label)
+  (expand-file-name (format "~/Library/LaunchAgents/%s.plist" label)))
+
+(defun my/telephony--installed-service-version (label)
+  (let ((plist (my/telephony--service-plist label)))
+    (when (file-readable-p plist)
+      (with-temp-buffer
+        (when (zerop (call-process "plutil" nil t nil "-extract"
+                                   "EnvironmentVariables.EAR_SERVICE_VERSION"
+                                   "raw" plist))
+          (string-trim (buffer-string)))))))
+
+(defun my/telephony--ensure-versioned-service (label)
+  "Install or heal LABEL only when its declarative version changed."
+  (when-let ((service (my/telephony--registered-service label)))
+    (unless (equal (my/telephony--installed-service-version label)
+                   my/telephony-service-version)
+      (when (file-exists-p (my/telephony--service-plist label))
+        (my/launchd-service-stop label)
+        (delete-file (my/telephony--service-plist label))))
+    (my/launchd-service-ensure service)))
+
+(defun my/asterisk--ensure-bridge-service ()
+  (my/telephony--ensure-versioned-service my/telephony-service-label))
+
+(defun my/asterisk-docker-install ()
+  "Request the same automatic deployment normally run by setup."
+  (interactive)
+  (when (my/telephony--keychain-get "ear.asterisk.sip-registrar")
+    (my/asterisk-materialize-configuration))
+  (my/asterisk-container-runtime-install))
+(defun my/asterisk-docker-start () "Start Asterisk container." (interactive) (my/asterisk--ensure-docker) (my/asterisk-docker-call "up" "-d"))
+(defun my/asterisk-docker-stop () "Stop Asterisk container without deleting configuration." (interactive) (my/asterisk-docker-call "stop"))
+(defun my/asterisk-docker-restart () "Restart Asterisk container." (interactive) (my/asterisk-docker-call "restart"))
+(defun my/asterisk-docker-logs () "Show recent Asterisk logs." (interactive) (my/asterisk-docker-call "logs" "--tail" "200"))
+(defun my/asterisk-docker-status () "Show Asterisk container status." (interactive) (my/asterisk-docker-call "ps"))
+
+(defun my/asterisk--startup-restore ()
+  "Provision infrastructure and restore configured telephony asynchronously."
+  (when my/asterisk-auto-start
+    (my/asterisk-container-runtime-install)))
+
+(defun my/telephony--ready (_service)
+  (cond ((not (file-exists-p (expand-file-name "index.js" my/telephony-adapter-directory))) "Asterisk adapter missing")
+        ((not (my/telephony--keychain-get "ear.asterisk.sip-registrar")) "SIP provider missing")
+        ((not (file-exists-p (expand-file-name "pjsip.conf" my/asterisk-runtime-directory))) "runtime config missing")
+        ((not (my/asterisk--docker-ready-p)) "Docker daemon not running")
+        (t t)))
+(defun my/telephony--local-ready (_service)
+  (if (file-exists-p
+       (expand-file-name "index.js" my/telephony-local-adapter-directory))
+      t
+    "local telephony adapter missing"))
+(defun my/telephony-register-services ()
+  (when (fboundp 'my/launchd-service-register)
+    (my/launchd-service-register
+     (list :label my/telephony-local-service-label
+           :name "EAR local telephony adapter"
+           :program-arguments
+           (list (or (executable-find "node") "/usr/local/bin/node")
+                 (expand-file-name "index.js"
+                                   my/telephony-local-adapter-directory))
+           :working-directory
+           (expand-file-name my/telephony-local-adapter-directory)
+           :environment `(("HOME" . ,(expand-file-name "~"))
+                          ("TELEPHONY_LOCAL_SAY" . "1")
+                          ("EAR_SERVICE_VERSION" . ,my/telephony-service-version))
+           :stdout (expand-file-name
+                    "~/.emacs.d/ear/telephony-local.log")
+           :stderr (expand-file-name
+                    "~/.emacs.d/ear/telephony-local.error.log")
+           :ready #'my/telephony--local-ready))
+    (my/launchd-service-register
+     (list :label my/telephony-service-label :name "EAR Asterisk bridge"
+           :program-arguments (list (or (executable-find "node") "/usr/local/bin/node") (expand-file-name "index.js" my/telephony-adapter-directory))
+           :working-directory (expand-file-name my/telephony-adapter-directory)
+           :environment `(("HOME" . ,(expand-file-name "~"))
+                          ("EAR_SERVICE_VERSION" . ,my/telephony-service-version))
+           :stdout (expand-file-name "~/.emacs.d/ear/telephony-bridge.log") :stderr (expand-file-name "~/.emacs.d/ear/telephony-bridge.error.log") :ready #'my/telephony--ready))))
+
+(defun my/telephony-local-install ()
+  "Converge only local no-egress voice infrastructure to declared state."
+  (interactive)
+  (my/telephony-speech-install)
+  (my/telephony-register-services)
+  (my/telephony--ensure-versioned-service my/telephony-local-service-label))
+
+(defun my/telephony-install ()
+  "Converge local voice plus optional Asterisk infrastructure."
+  (interactive)
+  (my/telephony-local-install)
+  (my/asterisk-container-runtime-install)
+  (when (my/asterisk--configured-p)
+    (my/asterisk--compose-start-async)))
+
+(defun my/telephony-local-conversation ()
+  "Choose an EAR agent and start a local interactive spoken conversation."
+  (interactive)
+  (my/telephony-local-install)
+  (require 'ear-sessions-api)
+  (call-interactively #'ear-voice-conversation-start))
+
+(defun my/telephony-local-conversation-stop ()
+  "Stop the active local EAR voice conversation."
+  (interactive)
+  (require 'ear-sessions-api)
+  (ear-voice-conversation-stop))
+
+(defun my/telephony-local-test (greeting)
+  "Run a bounded no-egress call smoke with GREETING on the Mac."
+  (interactive (list (read-string "Local greeting: " "Hallo, dies ist ein lokaler EAR Test.")))
+  (let* ((url-request-method "POST")
+         (url-request-extra-headers '(("Content-Type" . "application/json")))
+         (url-request-data
+          (encode-coding-string
+           (json-encode `((to . "local-loopback")
+                          (agentId . "voice.speaker-base")
+                          (welcomeGreeting . ,greeting)
+                          (maxDurationSeconds . 30)))
+           'utf-8))
+         (buffer (url-retrieve-synchronously
+                  "http://127.0.0.1:8788/calls" t t 10)))
+    (unless buffer
+      (user-error "Local adapter unavailable; inspect launchd service %s"
+                  my/telephony-local-service-label))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "\n\n" nil t)
+          (let* ((json-object-type 'alist)
+                 (result (json-read))
+                 (call (alist-get 'call result)))
+            (message "Local call connected: %s (egress=%s)"
+                     (alist-get 'callId call) (alist-get 'egress call))))
+      (kill-buffer buffer))))
+(defun my/telephony-doctor ()
+  "Report Docker, Asterisk, provider, registration, and bridge readiness."
+  (interactive)
+  (let ((reason (my/telephony--ready nil)))
+    (cond ((not (eq reason t)) (message "Telephony not ready: %s" reason))
+          ((not (zerop (my/asterisk-docker-call "exec" "-T" "asterisk" "asterisk" "-rx" "pjsip show registrations"))) (message "Asterisk runs but registration check failed; see *EAR Asterisk Docker*"))
+          (t (message "Asterisk Docker and local configuration are ready; inspect registration output, then use M-x my/telephony-test-call")))))
+(defun my/telephony-test-call (number)
+  "Request one bounded call to allowlisted NUMBER."
+  (interactive (list (read-string "Test destination (E.164): ")))
+  (let* ((url-request-method "POST") (url-request-extra-headers '(("Content-Type" . "application/json")))
+         (url-request-data (encode-coding-string (json-encode `((to . ,number) (agentId . "personal.voice-assistant") (maxDurationSeconds . 180))) 'utf-8))
+         (buffer (url-retrieve-synchronously "http://127.0.0.1:8787/calls" t t 15)))
+    (unless buffer (user-error "Asterisk bridge unavailable; run M-x my/telephony-doctor"))
+    (with-current-buffer buffer (goto-char (point-min)) (re-search-forward "\n\n" nil t) (message "Telephony: %s" (string-trim (buffer-substring-no-properties (point) (point-max)))))
+    (kill-buffer buffer)))
+
+(my/telephony-register-services)
+(unless noninteractive
+  (run-at-time 5 nil #'my/telephony-install))
+(provide '68_telephony)

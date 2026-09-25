@@ -222,21 +222,32 @@ user/product installs can set it to `elpaca`, which installs EAR from
 `deno1011/emacs-agent-runtime` as an Elpaca package. QMD is not an Elpaca
 dependency of EAR; it stays an optional external CLI managed by this config.
 
-Optional local retrieval uses QMD through EAR's neutral `ear-retrieval`
-boundary. QMD is not a hard dependency and is not installed by `install.sh`.
-To add the reviewed CLI from inside Emacs, run:
+### External adapter provisioning
 
-```text
-M-x my/emacs-agent-runtime-qmd-install
-```
+`69_external_provisioning.org` converges optional integrations after Emacs is
+available. It is deliberately separate from `install.sh`: the shell installer
+remains small and installs the distribution, while Emacs owns the declarative
+adapter registry and user-local runtime state.
 
-The command is configured in `60_emacs-agent-runtime.org`: it uses
-`@tobilu/qmd@2.6.3` and npm by default, or Bun if
-`my/emacs-agent-runtime-qmd-package-manager` is customized to `bun`.
-Installing QMD only provides the `qmd` command; it does not start a daemon,
-download models, export projections, or index private Org files. EAR keeps Org
-as source of truth and expects generated Markdown projections under the
-configured QMD projection directory.
+The standard profile provisions the source/dependency layer for Signal and
+WhatsApp bridges, FinTS, Comdirect Playwright, Apple adapters, QMD, Ollama,
+MLX, Claude Code and Codex. It uses independent Core adapter checkouts under
+`<EAR>/external/adapters/`, account-bound messenger checkouts under
+`<private-data>/ear-extensions/adapters/`, and recreatable virtual environments
+under `~/.emacs.d/ear/external/`. Existing checkouts and `.env` files are never
+overwritten.
+
+No account or content side effect is automated: QR/device pairing, Keychain
+credentials, browser/bank sessions, macOS permissions, selected local model
+downloads, indexing, and SIP settings remain deliberately local user actions.
+The optional `full` profile additionally permits Docker Desktop for Asterisk.
+
+Use `M-x my/external-provisioning-status` to inspect the state and
+`M-x my/external-provisioning-show-log` for process output. Normally no command
+is needed: `my/external-provisioning-auto-start` starts the sequential,
+idempotent queue after Emacs launches. Optional local retrieval still uses QMD
+through EAR's neutral `ear-retrieval` boundary; installing QMD only provides
+the executable and does not index private content.
 
 Optional EAR dashboard diagrams use notation-specific renderer CLIs: Graphviz
 for DOT graphs, PlantUML for state/sequence diagrams, Mermaid CLI for workflows,
@@ -252,19 +263,13 @@ M-x my/org-diagram-renderers-install
 the setup-owned install command as the fix.
 
 Optional local generation uses MLX through EAR's normal runtime registry. The
-setup configures `mlx-community/Llama-3.2-3B-Instruct-4bit` as the default
-Apple-Silicon-friendly first model, but does not download Python packages or
-model weights during install or Emacs startup. To provision a fresh machine:
-
-```text
-M-x my/emacs-agent-runtime-mlx-install
-M-x my/emacs-agent-runtime-mlx-start-server
-```
-
-The install command creates `~/.emacs.d/ear-mlx/venv/`, installs `mlx-lm`, and
-warms the configured model so Hugging Face downloads happen explicitly. EAR then
-registers `mlx-local` as a runtime spec pointing at the local
-`mlx_lm.server` OpenAI-compatible endpoint.
+external-provisioning queue creates its `mlx-lm` environment under
+`~/.emacs.d/ear/external/python/mlx/`, which is also the path used by the MLX
+LaunchAgent. The default service model is
+`mlx-community/Llama-3.2-3B-Instruct-4bit`; model weights are still downloaded
+only when that service is explicitly started, never by `install.sh` or by the
+provisioning queue itself. EAR registers the OpenAI-compatible local endpoint
+as the `mlx-local` runtime.
 
 The current EAR test-user setup intentionally enables God Mode, write tools,
 Codex approval bypass, and persistent jobs so coaching behavior can be tested
@@ -463,9 +468,10 @@ when bootstrap halted (which is the case where you most need it).
 | `EMACS_AGENT_RUNTIME_BRANCH=branch` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh checks out a non-`main` EAR branch |
 | `EMACS_AGENT_RUNTIME_DIR=/path` | env var (persisted in `~/.emacs.d/distro-source.el`) | install.sh clones EAR to a custom path and the Emacs loader uses that path |
 | `my/emacs-agent-runtime-source` | Emacs custom variable | `local` for development checkout, `elpaca` for package-managed installs |
-| `M-x my/emacs-agent-runtime-qmd-install` | Emacs command | optionally installs the reviewed QMD retrieval CLI from config; never runs from `install.sh` |
+| `my/external-provisioning-profile` | Emacs custom variable | chooses `standard`, `full`, or `none` for declarative adapter provisioning |
+| `M-x my/external-provisioning-status` | Emacs command | inspect every external component, including deferred private adapters |
+| `M-x my/external-provisioning-show-log` | Emacs command | view sequential provisioning output and failures |
 | `M-x my/org-diagram-renderers-install` | Emacs command | optionally installs Graphviz, PlantUML, Mermaid CLI, and D2 for Org/EAR diagrams; never runs from `install.sh` |
-| `M-x my/emacs-agent-runtime-mlx-install` | Emacs command | optionally creates the MLX venv, installs `mlx-lm`, and downloads the configured model; never runs from `install.sh` |
 | `EMACS_MAC_ASYNC_TASKS_REPO=user/fork` + `_TAG=v0.1.0` | env vars | install.sh fetches `async-tasks.el` from a fork / pinned release |
 | `~/.emacs.d/config/modules/NN_yours.org` | add a high-numbered module | discovery loads modules in numeric order, so a high `NN` shadows earlier modules' settings |
 | iCloud CalDAV / account secrets | `M-x my/caldav-setup` → macOS Keychain | per-Mac account & secret values (CalDAV URL with DSID, calendar UUID, Apple ID, app-password) live in the Keychain, never in a config file |
@@ -485,8 +491,8 @@ rsyncs `emacs.d/config/` to
 `~/.emacs.d/config/`, copies `init.el` + `early-init.el`,
 regenerates `env-snapshot.el`, and runs AOT byte-compile. Never
 touches `~/.emacs.d/custom.el`, `~/.emacs.d/secrets.el`, or your
-data folder. QMD remains a config-owned optional command and is not installed
-by `install.sh`.
+data folder. External adapters and their machine-local dependency environments
+remain config-owned and are not installed by `install.sh`.
 
 After the install, restart the daemon to pick up changes:
 

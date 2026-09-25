@@ -17,6 +17,9 @@ or setup steps.
 (require 'cl-lib)
 (require 'subr-x)
 
+(declare-function my/emacs-agent-runtime-external-runtime-root-directory
+                  "60_emacs-agent-runtime" ())
+
 (defgroup my/launchd-services nil
   "Self-healing macOS LaunchAgent services used by this Emacs setup."
   :group 'external)
@@ -382,14 +385,19 @@ registration so live reloads heal too."
   :group 'my/launchd-services)
 
 (defcustom my/launchd-services-mlx-root
-  (expand-file-name "ear-mlx" user-emacs-directory)
-  "Runtime directory for the local EAR MLX server."
+  (expand-file-name
+   "python/mlx/"
+   (my/emacs-agent-runtime-external-runtime-root-directory))
+  "Managed MLX virtual-environment root for the local EAR MLX server.
+
+`69_external_provisioning' creates this environment.  It is machine-local
+runtime state, not a source checkout or a private-data artifact."
   :type 'directory
   :group 'my/launchd-services)
 
 (defun my/launchd-services--mlx-server ()
   "Return the mlx_lm server executable path."
-  (expand-file-name "venv/bin/mlx_lm.server"
+  (expand-file-name "bin/mlx_lm.server"
                     my/launchd-services-mlx-root))
 
 (defun my/launchd-services--mlx-ready (_service)
@@ -419,6 +427,9 @@ registration so live reloads heal too."
   :working-directory my/launchd-services-mlx-root
   :run-at-load nil
   :keep-alive nil
+  ;; Starting mlx_lm with a model can download multi-gigabyte weights.  Runtime
+  ;; provisioning and service activation are intentionally separate actions.
+  :auto-start nil
   :stdout (expand-file-name "mlx-server.out.log" my/launchd-services-mlx-root)
   :stderr (expand-file-name "mlx-server.err.log" my/launchd-services-mlx-root)
   :ready #'my/launchd-services--mlx-ready))

@@ -54,6 +54,19 @@ inbound polling for the same bridge directory.")
         (executable-find "launchctl")
         "launchctl")))
 
+(defun my/messenger-bridge-runtime-directory ()
+  "Return the configured messenger bridge directory as an absolute directory.
+Respect an explicit `messenger-bridge-directory' customisation and otherwise
+use the portable default below `user-emacs-directory'."
+  (file-name-as-directory
+   (expand-file-name
+    (if (and (boundp 'messenger-bridge-directory)
+             (stringp messenger-bridge-directory)
+             (not (string-empty-p messenger-bridge-directory)))
+        messenger-bridge-directory
+      "messenger-bridge/")
+    user-emacs-directory)))
+
 (when (not noninteractive)
   (use-package messenger-bridge
     :ensure (messenger-bridge
@@ -373,7 +386,10 @@ EXTRA-ENV is a shell fragment prepended to the command."
   (string-join
    (delq nil
          (list
-          "MESSENGER_BRIDGE_DIR=/Users/denisbutic/.emacs.d/messenger-bridge"
+          (format "MESSENGER_BRIDGE_DIR=%s"
+                  (shell-quote-argument
+                   (directory-file-name
+                    (my/messenger-bridge-runtime-directory))))
           "WA_AUTH_DIR=./auth-business"
           "WA_CHANNEL_ID=whatsapp-business"
           "WA_RELAY_MODE=allowlist"
@@ -434,6 +450,8 @@ pairing-code login."
          (auth (expand-file-name "auth-business" dir))
          (entrypoint (expand-file-name "index.js" dir))
          (node (my/whatsapp-adapter--node))
+         (bridge-dir (directory-file-name
+                      (my/messenger-bridge-runtime-directory)))
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
                          my/whatsapp-business-adapter--service-label)
@@ -455,7 +473,7 @@ pairing-code login."
   <key>WorkingDirectory</key><string>%s</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MESSENGER_BRIDGE_DIR</key><string>/Users/denisbutic/.emacs.d/messenger-bridge</string>
+    <key>MESSENGER_BRIDGE_DIR</key><string>%s</string>
     <key>WA_AUTH_DIR</key><string>./auth-business</string>
     <key>WA_CHANNEL_ID</key><string>whatsapp-business</string>
     <key>WA_RELAY_MODE</key><string>allowlist</string>
@@ -471,7 +489,7 @@ pairing-code login."
   <key>StandardErrorPath</key><string>/tmp/whatsapp-business-bridge.err.log</string>
 </dict>
 </plist>
-" my/whatsapp-business-adapter--service-label node entrypoint dir)))
+" my/whatsapp-business-adapter--service-label node entrypoint dir bridge-dir)))
     (ignore-errors (call-process (my/messenger--launchctl)
                                  nil nil nil "unload" plist))
     (if (zerop (call-process (my/messenger--launchctl)
@@ -667,24 +685,19 @@ number (like WhatsApp Web) and relays messages to/from the bridge's
 =inbox/=outbox/=.
 
 The QR scan is interactive (you scan with your phone) and involves a
-secondary-number/ToS decision, so it is *not* auto-provisioned. Instead
-=M-x my/doctor= walks you through it: it detects how far setup got (not
-cloned → npm install → not linked → linked) and prints the exact next command.
-The QR step is =M-x my/whatsapp-adapter-link=, which renders it inside Emacs.
+secondary-number/ToS decision, so it is *not* auto-provisioned.
+=69_external_provisioning.org= creates the private checkout, installs Node
+dependencies, and seeds a mode-0600 =.env= template without touching it later.
+The remaining personal QR step is =M-x my/whatsapp-adapter-link=, which renders
+it inside Emacs; =M-x my/doctor= reports the state at every point.
 
 ⚠️ Unofficial (Baileys) → against WhatsApp ToS, the number can be banned. Use a
 *secondary* number.
 
 ** One-time setup
 
-#+begin_example
-git clone https://github.com/deno1011/whatsapp-bridge-adapter.git <private-data-repo>/ear-extensions/adapters/whatsapp-bridge-adapter
-cd <private-data-repo>/ear-extensions/adapters/whatsapp-bridge-adapter
-npm install
-cp .env.example .env
-#+end_example
-
-Edit =.env=:
+On a normal setup, wait for the external-provisioning queue to finish, then
+edit the seeded =.env= only for personal values:
 - =MESSENGER_BRIDGE_DIR= — MUST equal =messenger-bridge-directory= in Emacs
   (default =~/.emacs.d/messenger-bridge=).
 - =WA_ALLOWED_JIDS= — safety whitelist (leave empty for the first run).
@@ -768,15 +781,10 @@ SECONDARY device of your existing Signal account — no new number.
 
 ** One-time setup
 
-#+begin_example
-brew install signal-cli
-git clone https://github.com/deno1011/signal-bridge-adapter.git <private-data-repo>/ear-extensions/adapters/signal-bridge-adapter
-cd <private-data-repo>/ear-extensions/adapters/signal-bridge-adapter && npm install
-cp .env.example .env          # set MESSENGER_BRIDGE_DIR (SAME as WhatsApp) + SIGNAL_ACCOUNT
-#+end_example
-
-Then, inside Emacs (these handle the keg-only-node PATH for you, so prefer them
-over a raw terminal):
+The external-provisioning queue installs =signal-cli=, creates the private
+adapter checkout, installs its Node dependencies, and seeds a safe =.env=
+template.  Then complete the inherently personal steps inside Emacs (these
+handle the Node PATH for you, so prefer them over a raw terminal):
 
 - =M-x my/signal-adapter-link= — renders the device-link QR in a buffer; scan
   it in Signal ▸ Settings ▸ Linked Devices ▸ Link New Device. Then set

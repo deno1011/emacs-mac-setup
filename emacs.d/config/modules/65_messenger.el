@@ -26,6 +26,19 @@ inbound polling for the same bridge directory.")
         (executable-find "launchctl")
         "launchctl")))
 
+(defun my/messenger-bridge-runtime-directory ()
+  "Return the configured messenger bridge directory as an absolute directory.
+Respect an explicit `messenger-bridge-directory' customisation and otherwise
+use the portable default below `user-emacs-directory'."
+  (file-name-as-directory
+   (expand-file-name
+    (if (and (boundp 'messenger-bridge-directory)
+             (stringp messenger-bridge-directory)
+             (not (string-empty-p messenger-bridge-directory)))
+        messenger-bridge-directory
+      "messenger-bridge/")
+    user-emacs-directory)))
+
 (when (not noninteractive)
   (use-package messenger-bridge
     :ensure (messenger-bridge
@@ -334,7 +347,10 @@ EXTRA-ENV is a shell fragment prepended to the command."
   (string-join
    (delq nil
          (list
-          "MESSENGER_BRIDGE_DIR=/Users/denisbutic/.emacs.d/messenger-bridge"
+          (format "MESSENGER_BRIDGE_DIR=%s"
+                  (shell-quote-argument
+                   (directory-file-name
+                    (my/messenger-bridge-runtime-directory))))
           "WA_AUTH_DIR=./auth-business"
           "WA_CHANNEL_ID=whatsapp-business"
           "WA_RELAY_MODE=allowlist"
@@ -395,6 +411,8 @@ pairing-code login."
          (auth (expand-file-name "auth-business" dir))
          (entrypoint (expand-file-name "index.js" dir))
          (node (my/whatsapp-adapter--node))
+         (bridge-dir (directory-file-name
+                      (my/messenger-bridge-runtime-directory)))
          (plist (expand-file-name
                  (format "Library/LaunchAgents/%s.plist"
                          my/whatsapp-business-adapter--service-label)
@@ -416,7 +434,7 @@ pairing-code login."
   <key>WorkingDirectory</key><string>%s</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MESSENGER_BRIDGE_DIR</key><string>/Users/denisbutic/.emacs.d/messenger-bridge</string>
+    <key>MESSENGER_BRIDGE_DIR</key><string>%s</string>
     <key>WA_AUTH_DIR</key><string>./auth-business</string>
     <key>WA_CHANNEL_ID</key><string>whatsapp-business</string>
     <key>WA_RELAY_MODE</key><string>allowlist</string>
@@ -432,7 +450,7 @@ pairing-code login."
   <key>StandardErrorPath</key><string>/tmp/whatsapp-business-bridge.err.log</string>
 </dict>
 </plist>
-" my/whatsapp-business-adapter--service-label node entrypoint dir)))
+" my/whatsapp-business-adapter--service-label node entrypoint dir bridge-dir)))
     (ignore-errors (call-process (my/messenger--launchctl)
                                  nil nil nil "unload" plist))
     (if (zerop (call-process (my/messenger--launchctl)

@@ -22,6 +22,8 @@
 (declare-function fints-transfer "fints")
 (declare-function my/emacs-agent-runtime-core-adapters-root-directory
                   "60_emacs-agent-runtime" ())
+(declare-function my/emacs-agent-runtime-external-python
+                  "60_emacs-agent-runtime" (name))
 
 (defcustom my/fints-source 'local
   "Where the FinTS adapter is loaded from.
@@ -75,10 +77,12 @@
   "Keychain account name for the PIN."
   :type 'string :group 'my/fints)
 
-(defcustom my/fints-python "/usr/bin/python3"
+(defcustom my/fints-python
+  (my/emacs-agent-runtime-external-python "fints")
   "Python 3 interpreter with the `fints' package installed.
-The system python is used by default because the Homebrew python is
-externally-managed (PEP 668) and rejects a plain --user install."
+The external-provisioning module owns a user-local virtual environment.  Until
+that environment exists this resolves to the available `python3' executable so
+the Doctor can explain the missing dependency."
   :type 'string :group 'my/fints)
 
 (defcustom my/fints-state-directory "~/.emacs.d/fints-state/"
@@ -167,7 +171,8 @@ The local minibuffer masks the value; it never passes through EAR or a model."
 
 (defun my/fints-install-python-fints-command ()
   "Return the shell command that installs python-fints for `my/fints-python'."
-  (format "%s -m pip install --user fints" (shell-quote-argument my/fints-python)))
+  (format "%s -m pip install --upgrade fints"
+          (shell-quote-argument my/fints-python)))
 
 ;;;###autoload
 (defun my/fints-install-python-fints ()

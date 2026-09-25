@@ -24,9 +24,14 @@
 (defvar my/emacs-agent-runtime-qmd-command)
 (defvar my/emacs-agent-runtime-qmd-package-manager)
 (defvar my/emacs-agent-runtime-qmd-projection-directory)
+(defvar my/external-provisioning-components)
+(defvar my/external-provisioning-profile)
+(defvar my/external-provisioning--running)
 (defvar my/org-diagram-renderers)
 (declare-function my/emacs-agent-runtime-qmd-install-command
                   "60_emacs-agent-runtime")
+(declare-function my/external-provisioning--status-state
+                  "69_external_provisioning" (component))
 (declare-function my/org-diagram-renderers-install-command
                   "40_org")
 (declare-function ear-list-tools "ear-core")
@@ -311,6 +316,47 @@ and :fix. The :label is supplied by this macro."
                                          ", "))))
        (t (list :status :ok :detail detail)))))))
 
+(my/doctor-define-check "EAR external adapter provisioning"
+  (cond
+   ((not (fboundp 'my/external-provisioning--status-state))
+    (list :status :warn
+          :detail "external provisioning module is not loaded"
+          :fix "reload modules/69_external_provisioning"))
+   ((eq my/external-provisioning-profile 'none)
+    (list :status :warn
+          :detail "external provisioning is disabled by profile"
+          :fix "set my/external-provisioning-profile to standard, then restart Emacs"))
+   (t
+    (let* ((states (mapcar #'my/external-provisioning--status-state
+                           my/external-provisioning-components))
+           (failed (cl-count 'failed states :key (lambda (state)
+                                                    (plist-get state :state))))
+           (deferred (cl-count 'deferred states :key (lambda (state)
+                                                        (plist-get state :state))))
+           (pending (cl-count 'pending states :key (lambda (state)
+                                                       (plist-get state :state))))
+           (ready (cl-count-if (lambda (state)
+                                 (memq (plist-get state :state)
+                                       '(ready completed)))
+                               states)))
+      (cond
+       ((> failed 0)
+        (list :status :warn
+              :detail (format "%d ready; %d failed - inspect provisioning log"
+                              ready failed)
+              :fix "M-x my/external-provisioning-show-log"))
+       (my/external-provisioning--running
+        (list :status :warn
+              :detail (format "%d ready; provisioning queue is still running" ready)
+              :fix "M-x my/external-provisioning-status"))
+       ((or (> pending 0) (> deferred 0))
+        (list :status :warn
+              :detail (format "%d ready; %d pending; %d deferred" ready pending deferred)
+              :fix "M-x my/external-provisioning-start"))
+       (t
+       (list :status :ok
+              :detail (format "%d declared external components are ready" ready))))))))
+
 (my/doctor-define-check "FinTS bank backend"
   (let ((status (and (fboundp 'my/fints-doctor-status)
                      (my/fints-doctor-status))))
@@ -326,7 +372,7 @@ and :fix. The :label is supplied by this macro."
      ((not (plist-get status :python-ready))
       (list :status :fail
             :detail "python-fints is unavailable in the configured Python"
-            :fix "M-x my/fints-install-python-fints"))
+            :fix "M-x my/external-provisioning-start (or M-x my/fints-install-python-fints for repair)"))
      ((not (plist-get status :user-ready))
       (list :status :fail
             :detail "FinTS login is missing from the macOS Keychain"
@@ -461,11 +507,9 @@ and :fix. The :label is supplied by this macro."
      ((not (eq system-type 'darwin))
       (list :status :ok :detail "not macOS — skipped"))
      ((not (file-directory-p dir))
-      (list :status :ok
+     (list :status :ok
             :detail "not installed — WhatsApp messaging is optional"
-            :fix (format "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git %s && cd %s && npm install && cp .env.example .env"
-                         (shell-quote-argument dir)
-                         (shell-quote-argument dir))))
+            :fix "M-x my/external-provisioning-start"))
      ((not (file-directory-p nm))
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
@@ -513,9 +557,7 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p dir))
       (list :status :ok
             :detail "not installed — secondary WhatsApp Business messaging is optional"
-            :fix (format "git clone https://github.com/deno1011/whatsapp-bridge-adapter.git %s && cd %s && npm install"
-                         (shell-quote-argument dir)
-                         (shell-quote-argument dir))))
+            :fix "M-x my/external-provisioning-start"))
      ((not (file-directory-p nm))
       (list :status :warn
             :detail "adapter cloned but dependencies missing"
@@ -560,9 +602,7 @@ and :fix. The :label is supplied by this macro."
      ((not (file-directory-p dir))
       (list :status :ok
             :detail "not installed — Signal messaging is optional"
-            :fix (format "brew install signal-cli && git clone https://github.com/deno1011/signal-bridge-adapter.git %s && cd %s && npm install && cp .env.example .env"
-                         (shell-quote-argument dir)
-                         (shell-quote-argument dir))))
+            :fix "M-x my/external-provisioning-start"))
      ((not cli)
       (list :status :warn
             :detail "adapter cloned but signal-cli missing"
