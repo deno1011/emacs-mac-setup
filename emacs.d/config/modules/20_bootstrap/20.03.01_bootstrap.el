@@ -341,7 +341,7 @@ message but do not halt the loop."
              'action (lambda (_button) (call-interactively #'my/bootstrap)))
             (insert "\n\nOptional API credentials can be entered or marked skipped in the same form.\n")
             (special-mode)))
-        (pop-to-buffer buffer))))
+        (pop-to-buffer buffer)))))
 
 (add-hook 'after-make-frame-functions #'my/bootstrap--show-setup-hint)
 (when (display-graphic-p)
