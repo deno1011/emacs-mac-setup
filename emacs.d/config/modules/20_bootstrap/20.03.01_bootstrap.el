@@ -306,7 +306,47 @@ message but do not halt the loop."
             (throw 'halt nil)))))
     (setq results (nreverse results))
     (message "Bootstrap: %s" (my/bootstrap--format-result results))
+    (when (my/bootstrap-ready-p)
+      (setq my/bootstrap--setup-hint-shown-p nil)
+      (let ((buffer (get-buffer "*Emacs Setup*")))
+        (when buffer (kill-buffer buffer))))
     results))
+
+(defun my/bootstrap--show-setup-hint (&optional frame)
+  "Show the first-run setup page in FRAME when personal data is unresolved."
+  (when (and (not my/bootstrap--setup-hint-shown-p)
+             (not (my/bootstrap-ready-p))
+             (frame-live-p frame)
+             (display-graphic-p frame))
+    (setq my/bootstrap--setup-hint-shown-p t)
+    (require 'button)
+    (with-selected-frame frame
+      (let ((buffer (get-buffer-create "*Emacs Setup*")))
+        (with-current-buffer buffer
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert "Emacs is running, but your private data is not connected.\n\n")
+            (insert "The Keychain entry emacs_credentials/GitHubRepo is missing, so ")
+            (insert "Org files, wiki, agenda, and other personal data are not loaded.\n\n")
+            (insert "To connect them, choose the repository name used on this Mac ")
+            (insert "(usually `emacs') and enter any requested GitHub credentials.\n\n")
+            (insert-text-button
+             "Open credential setup"
+             'follow-link t
+             'action (lambda (_button) (call-interactively #'my/credential-set)))
+            (insert "\n\nAfter saving the repository details, run bootstrap to clone or load it:\n\n")
+            (insert-text-button
+             "Run M-x my/bootstrap"
+             'follow-link t
+             'action (lambda (_button) (call-interactively #'my/bootstrap)))
+            (insert "\n\nOptional API credentials can be entered or marked skipped in the same form.\n")
+            (special-mode)))
+        (pop-to-buffer buffer))))
+
+(add-hook 'after-make-frame-functions #'my/bootstrap--show-setup-hint)
+(when (display-graphic-p)
+  (run-with-idle-timer 1 nil #'my/bootstrap--show-setup-hint
+                       (selected-frame)))
 
 (condition-case _err
     (my/bootstrap)
