@@ -303,16 +303,15 @@ not raw personal Org files."
 
 (defconst my/emacs-agent-runtime-subscription-token-key
   "ANTHROPIC_SUBSCRIPTION_API_KEY"
-  "Keychain account (service `emacs_credentials') for the Claude subscription token.
-Obtained via `claude setup-token'.  A subscription token is not an API key; it is
-exported as CLAUDE_CODE_OAUTH_TOKEN so EAR's `claude -p' workers authenticate against
-claude.ai instead of falling back to pay-per-use billing.")
+  "Keychain account for the Claude subscription token.
+Obtained via `claude setup-token'. A subscription token is not an API key;
+it is exported as CLAUDE_CODE_OAUTH_TOKEN for EAR's `claude -p' workers.")
 
 (defun my/emacs-agent-runtime-apply-subscription-token ()
-  "Export the stored Claude subscription token so `claude -p' uses claude.ai.
-Reads the token from the Keychain and sets CLAUDE_CODE_OAUTH_TOKEN; ANTHROPIC_API_KEY
-is cleared because a subscription token is not an API key.  Worker `claude -p' processes
-inherit this from the daemon environment.  No-op when no token is configured."
+  "Export the stored Claude subscription token for `claude -p'.
+Read it from Keychain and set CLAUDE_CODE_OAUTH_TOKEN. Clear
+ANTHROPIC_API_KEY because a subscription token is not an API key.
+Worker processes inherit this from the daemon. No-op if unset."
   (when (fboundp 'my/api-key-fetch)
     (let ((token (my/api-key-fetch my/emacs-agent-runtime-subscription-token-key)))
       (when (and (stringp token) (not (string-empty-p token)))
@@ -321,11 +320,9 @@ inherit this from the daemon environment.  No-op when no token is configured."
         t))))
 
 (defun my/emacs-agent-runtime-set-subscription-token (token)
-  "Store the Claude subscription TOKEN in the Keychain and apply it now.
-Get the token first with `claude setup-token' (requires a Claude subscription).
-Stored under account ANTHROPIC_SUBSCRIPTION_API_KEY (service `emacs_credentials') and
-exported as CLAUDE_CODE_OAUTH_TOKEN so EAR's `claude -p' authenticates against claude.ai
-instead of hitting \"Credit balance is too low\" via pay-per-use billing."
+  "Store TOKEN in Keychain and apply it now.
+Get TOKEN with `claude setup-token'. It is stored under
+ANTHROPIC_SUBSCRIPTION_API_KEY and exported as CLAUDE_CODE_OAUTH_TOKEN."
   (interactive
    (list (read-passwd "Claude subscription OAuth token (from `claude setup-token'): ")))
   (unless (fboundp 'my/api-key-store)

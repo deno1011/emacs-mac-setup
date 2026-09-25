@@ -779,6 +779,7 @@ leaving functions such as =set-local= undefined after a restart.
 
 #+begin_src emacs-lisp
 (use-package compat
+  :ensure (:wait t)
   :demand t
   :config
   (when (< emacs-major-version 31)

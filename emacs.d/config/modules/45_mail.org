@@ -423,7 +423,10 @@ In =mu4e-headers=: =v= picks the view method (html/text/…), =M-n=/=M-p= scroll
 the rendered message.
 
 #+begin_src emacs-lisp :tangle yes
-(when (and (fboundp 'xwidget-webkit-browse-url) (not noninteractive))
+(when (and (fboundp 'xwidget-webkit-browse-url)
+           (not noninteractive)
+           (my/mail--mu4e-load-path))
+  (add-to-list 'load-path (my/mail--mu4e-load-path))
   ;; mu4e-views declares mu4e as a dependency, but ours comes from brew — tell
   ;; elpaca to treat it as already provided, then just INSTALL the package.
   (with-eval-after-load 'elpaca

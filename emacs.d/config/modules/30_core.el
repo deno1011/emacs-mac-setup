@@ -477,6 +477,7 @@ the local commit is kept and a message is shown for manual resolution."
 (my/install-ripgrep)
 
 (use-package compat
+  :ensure (:wait t)
   :demand t
   :config
   (when (< emacs-major-version 31)

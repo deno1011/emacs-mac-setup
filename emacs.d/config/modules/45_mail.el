@@ -337,7 +337,10 @@ first candidate as a fallback."
      "* TODO %a\n%i%?")
    t))
 
-(when (and (fboundp 'xwidget-webkit-browse-url) (not noninteractive))
+(when (and (fboundp 'xwidget-webkit-browse-url)
+           (not noninteractive)
+           (my/mail--mu4e-load-path))
+  (add-to-list 'load-path (my/mail--mu4e-load-path))
   ;; mu4e-views declares mu4e as a dependency, but ours comes from brew — tell
   ;; elpaca to treat it as already provided, then just INSTALL the package.
   (with-eval-after-load 'elpaca

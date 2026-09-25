@@ -165,6 +165,9 @@ QR-linked (auth/ present)."
   :type 'directory
   :group 'emacs-agent-runtime)
 
+(declare-function term-mode "term" ())
+(declare-function term-char-mode "term" ())
+
 (defun my/messenger--link-term (name dir command)
   "Run COMMAND in DIR inside an ansi-term buffer NAME so a login QR renders
 in Emacs.  Prepends the detected node bin dir to PATH (Homebrew node is

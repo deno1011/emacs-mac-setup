@@ -654,6 +654,36 @@ else
   echo "==> An Emacs daemon is already active; leaving it running"
 fi
 
+# Homebrew's launchd job inherits the GUI session locale, which may be a
+# macOS language preference Emacs does not recognize (for example `fa_IR').
+# Pin a locale that this host actually provides into the service plist so the
+# daemon starts cleanly after login as well as during this install.
+if [ "$(uname -s)" = Darwin ] && command -v plutil >/dev/null 2>&1; then
+  SERVICE_LANG="${LANG:-en_US.UTF-8}"
+  if ! locale -a 2>/dev/null | awk -v wanted="$SERVICE_LANG" \
+      'tolower($1) == tolower(wanted) { found=1 } END { exit !found }'; then
+    SERVICE_LANG="en_US.UTF-8"
+  fi
+  SERVICE_INFO="$(brew services info "$EMACS_FORMULA" --json 2>/dev/null || true)"
+  SERVICE_PLIST="$(printf '%s' "$SERVICE_INFO" | /usr/bin/python3 -c \
+    'import json,sys; x=json.load(sys.stdin); print(x[0].get("file", "") if x else "")' \
+    2>/dev/null || true)"
+  SERVICE_LABEL="$(printf '%s' "$SERVICE_INFO" | /usr/bin/python3 -c \
+    'import json,sys; x=json.load(sys.stdin); print(x[0].get("service_name", "") if x else "")' \
+    2>/dev/null || true)"
+  if [ -n "$SERVICE_PLIST" ] && [ -f "$SERVICE_PLIST" ] && [ -n "$SERVICE_LABEL" ]; then
+    /usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables dict' "$SERVICE_PLIST" 2>/dev/null || true
+    if ! /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:LANG $SERVICE_LANG" "$SERVICE_PLIST" 2>/dev/null; then
+      /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:LANG string $SERVICE_LANG" "$SERVICE_PLIST"
+    fi
+    echo "==> Setting Emacs daemon locale to $SERVICE_LANG"
+    launchctl bootout "gui/$(id -u)/$SERVICE_LABEL" 2>/dev/null || true
+    if ! launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"; then
+      echo "WARNING: could not reload the Emacs service with its locale setting." >&2
+    fi
+  fi
+fi
+
 # 8. Done ------------------------------------------------------------------
 echo ""
 echo "======================================================================"

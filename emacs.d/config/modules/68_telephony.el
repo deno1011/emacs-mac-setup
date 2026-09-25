@@ -9,6 +9,8 @@
 (declare-function my/launchd-service-stop "62_launchd_services" (label))
 (declare-function my/emacs-agent-runtime-core-adapters-root-directory
                   "60_emacs-agent-runtime" ())
+(declare-function ear-voice-conversation-start "ear-sessions-api" ())
+(declare-function ear-voice-conversation-stop "ear-sessions-api" ())
 (defvar my/launchd-services)
 
 (defgroup my/telephony nil "EAR Asterisk telephony." :group 'external)
