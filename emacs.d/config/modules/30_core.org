@@ -246,19 +246,27 @@ uninstall later") stay the same.
   (if-let ((brew (executable-find "brew")))
       (let* ((log-file (expand-file-name "system-packages.log" user-emacs-directory))
              (entry    (format "%s:%s\n" type package))
-             (proc     (apply #'start-process
-                              (format "install-%s" package)
-                              (format "*install-%s*" package)
-                              brew brew-args)))
-        (set-process-sentinel
-         proc
-         (lambda (p _e)
-           (when (= (process-exit-status p) 0)
-             (unless (and (file-exists-p log-file)
-                          (with-temp-buffer
-                            (insert-file-contents log-file)
-                            (search-forward entry nil t)))
-               (append-to-file entry nil log-file))))))
+             ;; Homebrew 6's ask mode can wait for a confirmation that a
+             ;; launchd Emacs has no visible prompt to provide.
+             (process-environment (copy-sequence process-environment)))
+        (setenv "HOMEBREW_NO_ASK" "1")
+        (setenv "NONINTERACTIVE" "1")
+        (setenv "HOMEBREW_NO_AUTO_UPDATE" "1")
+        (setenv "HOMEBREW_NO_INSTALL_CLEANUP" "1")
+        (setenv "HOMEBREW_NO_ENV_HINTS" "1")
+        (let ((proc (apply #'start-process
+                           (format "install-%s" package)
+                           (format "*install-%s*" package)
+                           brew brew-args)))
+          (set-process-sentinel
+           proc
+           (lambda (p _e)
+             (when (= (process-exit-status p) 0)
+               (unless (and (file-exists-p log-file)
+                            (with-temp-buffer
+                              (insert-file-contents log-file)
+                              (search-forward entry nil t)))
+                 (append-to-file entry nil log-file)))))))
     ;; ADD-OTHER-OS HERE: branch on system-type + apt / dnf / pacman /
     ;; winget instead of silently giving up.  See the documentation
     ;; block at the top of this section for the recommended shape.
