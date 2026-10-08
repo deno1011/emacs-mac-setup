@@ -283,6 +283,41 @@ already-running Emacs."
                  account (cadr result))
         nil))))))
 
+(defun my/bootstrap--display-results (results)
+  "Display RESULTS in a persistent buffer and add setup actions."
+  (require 'button)
+  (let ((buffer (get-buffer-create "*Emacs Bootstrap*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "Emacs setup status\n==================\n\n")
+        (dolist (triple results)
+          (let* ((label (nth 0 triple))
+                 (outcome (nth 2 triple))
+                 (summary (cond
+                           ((eq outcome :done) "Complete")
+                           ((eq outcome :skip) "Not configured")
+                           ((and (consp outcome) (eq (car outcome) :error))
+                            (concat "Needs attention: " (cadr outcome)))
+                           (t (format "%s" outcome)))))
+            (insert (format "%-28s %s\n" label summary))))
+        (if (my/bootstrap-ready-p)
+            (insert "\nPrivate data is connected and bootstrap is ready.\n")
+          (insert "\nThe data-folder credential is missing. Choose the repo/data-folder\n")
+          (insert "name, enter any requested GitHub credentials, then run bootstrap again.\n\n")
+          (insert-text-button
+           "Open credential setup"
+           'follow-link t
+           'action (lambda (_button) (call-interactively #'my/credential-set)))
+          (insert "    ")
+          (insert-text-button
+           "Run bootstrap again"
+           'follow-link t
+           'action (lambda (_button) (call-interactively #'my/bootstrap)))
+          (insert "\n"))
+        (special-mode)))
+    (pop-to-buffer buffer)))
+
 (defun my/bootstrap ()
   "Run the bootstrap subsystem to bring Emacs to a ready state.
 Idempotent: every Layer-2 ensure-* is required to return
@@ -293,8 +328,9 @@ with a *Warnings* popup and a one-line *Messages* nudge. Non-
 required failures are collected and surfaced in the final
 message but do not halt the loop."
   (interactive)
-  (setq my/bootstrap--failed-p nil)
-  (let (results)
+  (let ((interactive-call (called-interactively-p 'interactive))
+        results)
+    (setq my/bootstrap--failed-p nil)
     (catch 'halt
       (dolist (step my/bootstrap--ensure-steps)
         (let* ((triple   (my/bootstrap--run-step step))
@@ -309,6 +345,8 @@ message but do not halt the loop."
             (throw 'halt nil)))))
     (setq results (nreverse results))
     (message "Bootstrap: %s" (my/bootstrap--format-result results))
+    (when interactive-call
+      (my/bootstrap--display-results results))
     (when (my/bootstrap-ready-p)
       (setq my/bootstrap--setup-hint-shown-p nil)
       (let ((buffer (get-buffer "*Emacs Setup*")))
