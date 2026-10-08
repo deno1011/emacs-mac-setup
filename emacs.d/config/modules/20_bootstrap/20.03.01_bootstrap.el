@@ -142,28 +142,32 @@ command in its error payload.")))
 LABEL is the human step name. FN is the Layer-2 function symbol.
 ERR-MSG is the (:error MSG) payload from the step.
 
-Emits a `display-warning' at :emergency level with a structured
-WHAT / WHY / FIX block, plus a one-line `message' nudge pointing
-at *Warnings*. Sets `my/bootstrap--failed-p' to t and signals an
-error so the load-time auto-fire stops cleanly."
+Emits a `display-warning' at :emergency level and leaves the full
+WHAT / WHY / FIX report in `*Emacs Bootstrap*'. Sets
+`my/bootstrap--failed-p' to t and signals an error so the
+load-time auto-fire stops cleanly."
   (setq my/bootstrap--failed-p t)
-  (display-warning
-   'emacs-setup
-   (format
-    "Bootstrap halted at required step: %s
-
-WHY: %s
-
-FIX: %s
-
-After fixing, run  M-x my/bootstrap  to retry.
-
-Feature modules that depend on `my/data-dir' will NOT execute
-correctly until this step succeeds. See BOOTSTRAP.md §5 for the
-public-contract details."
-    label err-msg (my/bootstrap--repair-hint fn))
-   :emergency)
-  (message "Bootstrap halted at %s — see *Warnings* for repair instructions" label)
+  (require 'button)
+  (let* ((report
+          (format
+           "BOOTSTRAP HALTED\n================\n\nStep: %s\n\nWHY:\n%s\n\nFIX:\n%s\n\nAfter fixing, run M-x my/bootstrap to retry.\n\nFeature modules that depend on my/data-dir will not run correctly until this step succeeds."
+           label err-msg (my/bootstrap--repair-hint fn)))
+         (buffer (get-buffer-create "*Emacs Bootstrap*")))
+    (display-warning 'emacs-setup report :emergency)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert report "\n\n")
+        (insert-text-button
+         "Retry bootstrap"
+         'follow-link t
+         'action (lambda (_button) (call-interactively #'my/bootstrap)))
+        (special-mode)
+        (setq-local truncate-lines nil)
+        (visual-line-mode 1)
+        (goto-char (point-min))))
+    (pop-to-buffer buffer))
+  (message "Bootstrap halted at %s — full details remain in *Emacs Bootstrap*" label)
   (error "Bootstrap halted at %s: %s" label err-msg))
 
 (defun my/bootstrap-ready-p ()
