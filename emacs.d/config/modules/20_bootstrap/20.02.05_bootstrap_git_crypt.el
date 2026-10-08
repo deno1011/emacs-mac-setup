@@ -20,6 +20,7 @@
 
 (defvar my/data-dir)
 (declare-function my/keychain-get                     "20.01.01_bootstrap_keychain")
+(declare-function my/git-crypt-install                "20.01.04_bootstrap_git_crypt")
 (declare-function my/git-crypt-installed-p            "20.01.04_bootstrap_git_crypt")
 (declare-function my/git-crypt-repo-uses-encryption-p "20.01.04_bootstrap_git_crypt")
 (declare-function my/git-crypt-repo-unlocked-p        "20.01.04_bootstrap_git_crypt")
@@ -59,10 +60,10 @@ full set of paths."
    ((my/git-crypt-repo-unlocked-p my/data-dir)
     :skip)
    ((not (my/git-crypt-installed-p))
-    '(:error "Data repo uses git-crypt but the git-crypt binary is not installed.
-
-FIX: brew install git-crypt
-Then run M-x my/bootstrap."))
+    (let ((install-result (my/git-crypt-install)))
+      (if (eq install-result :ok)
+          (my/git-crypt-ensure-unlocked)
+        install-result)))
    (t
     (let* ((repo  (file-name-nondirectory (directory-file-name my/data-dir)))
            (acct  (my/git-crypt-ensure-unlocked--account-for-repo my/data-dir))

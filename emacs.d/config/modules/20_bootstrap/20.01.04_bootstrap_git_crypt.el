@@ -1,6 +1,7 @@
 ;;; 20.01.04_bootstrap_git_crypt.el --- Bootstrap Layer 1 git-crypt primitives -*- lexical-binding: t -*-
 ;;
 ;; Public API (callable from Layer 2):
+;;   (my/git-crypt-install)                 → :ok / (:error MSG)
 ;;   (my/git-crypt-installed-p)             → t / nil
 ;;   (my/git-crypt-repo-uses-encryption-p DIR) → t / nil
 ;;   (my/git-crypt-repo-unlocked-p DIR)     → t / nil
@@ -10,7 +11,47 @@
 ;;   (none)
 ;;
 ;; Depends on:
-;;   external binary `git-crypt' (brew install git-crypt)
+;;   Homebrew (used to install git-crypt when needed)
+
+(defun my/git-crypt-install ()
+  "Install git-crypt with Homebrew when it is not already available.
+
+Returns :ok when the executable is available, or (:error MSG) with
+Homebrew output when installation fails. Handles launchd Emacs
+processes whose PATH omits Homebrew's bin directory."
+  (if (my/git-crypt-installed-p)
+      :ok
+    (let ((brew (or (executable-find "brew")
+                    (and (file-executable-p "/opt/homebrew/bin/brew")
+                         "/opt/homebrew/bin/brew")
+                    (and (file-executable-p "/usr/local/bin/brew")
+                         "/usr/local/bin/brew")))
+          status output)
+      (if (not brew)
+          '(:error "Homebrew was not found; cannot install git-crypt automatically.")
+        (let ((brew-bin (file-name-directory brew)))
+          (let ((process-environment (copy-sequence process-environment))
+                (exec-path (cons brew-bin exec-path)))
+            (setenv "PATH" (concat brew-bin path-separator (getenv "PATH")))
+            (setenv "NONINTERACTIVE" "1")
+            (setenv "HOMEBREW_NO_AUTO_UPDATE" "1")
+            (setenv "HOMEBREW_NO_INSTALL_CLEANUP" "1")
+            (setenv "HOMEBREW_NO_ENV_HINTS" "1")
+            (setenv "HOMEBREW_NO_ASK" "1")
+            (message "Installing git-crypt with Homebrew…")
+            (with-temp-buffer
+              (setq status (call-process brew nil t t "install" "git-crypt")
+                    output (string-trim (buffer-string)))))
+          (if (and (integerp status) (= status 0))
+              (progn
+                (add-to-list 'exec-path brew-bin)
+                (setenv "PATH" (concat brew-bin path-separator (getenv "PATH")))
+                (if (my/git-crypt-installed-p)
+                    :ok
+                  `(:error ,(format "Homebrew finished, but git-crypt is still not on PATH.\n%s"
+                                    output))))
+            `(:error ,(format "Homebrew could not install git-crypt (exit %s).\n%s"
+                              status output))))))))
 
 (defun my/git-crypt-installed-p ()
   "Return t when the git-crypt binary is on PATH, nil otherwise."
